@@ -213,6 +213,14 @@ void RTPInterface::clearServerRequestAlternativeByteHandler(UsageEnvironment& en
   setServerRequestAlternativeByteHandler(env, socketNum, NULL, NULL);
 }
 
+
+extern "C" {
+typedef void (WrittenCallback)(const unsigned char *data,int size,int socket,int stream_channel_id);
+static WrittenCallback *written_callback = 0;
+void SetWrittenCallback(WrittenCallback *f) {written_callback = f;}
+}
+
+
 Boolean RTPInterface::sendPacket(unsigned char* packet, unsigned packetSize) {
   Boolean success = True; // we'll return False instead if any of the sends fail
 
@@ -226,6 +234,10 @@ Boolean RTPInterface::sendPacket(unsigned char* packet, unsigned packetSize) {
     if (!sendRTPorRTCPPacketOverTCP(packet, packetSize,
 				    stream->fStreamSocketNum, stream->fStreamChannelId)) {
       success = False;
+    } else {
+      if (written_callback)
+        (*written_callback)(packet, packetSize,
+                            stream->fStreamSocketNum, stream->fStreamChannelId);
     }
   }
 
@@ -351,21 +363,24 @@ Boolean RTPInterface::sendRTPorRTCPPacketOverTCP(u_int8_t* packet, unsigned pack
 #endif
 
 Boolean RTPInterface::sendDataOverTCP(int socketNum, u_int8_t const* data, unsigned dataSize, Boolean forceSendToSucceed) {
+  if (dataSize <= 0) return True; // gaj: catch silly invocations
   int sendResult = send(socketNum, (char const*)data, dataSize, 0/*flags*/);
+  int err = (sendResult < 0) ? envir().getErrno() : 0;
   if (sendResult < (int)dataSize) {
     // The TCP send() failed - at least partially.
-
-    unsigned numBytesSentSoFar = sendResult < 0 ? 0 : (unsigned)sendResult;
-    if (numBytesSentSoFar > 0 || (forceSendToSucceed && envir().getErrno() == EAGAIN)) {
+      // gaj: send must always succeed - or close the socket
+    if (sendResult >= 0 || err == EAGAIN) {
+      const unsigned numBytesSentSoFar = sendResult < 0 ? 0 : (unsigned)sendResult;
       // The OS's TCP send buffer has filled up (because the stream's bitrate has exceeded
       // the capacity of the TCP connection!).
       // Force this data write to succeed, by blocking if necessary until it does:
-      unsigned numBytesRemainingToSend = dataSize - numBytesSentSoFar;
+      const unsigned numBytesRemainingToSend = dataSize - numBytesSentSoFar;
 #ifdef DEBUG_SEND
       fprintf(stderr, "sendDataOverTCP: resending %d-byte send (blocking)\n", numBytesRemainingToSend); fflush(stderr);
 #endif
       makeSocketBlocking(socketNum, RTPINTERFACE_BLOCKING_WRITE_TIMEOUT_MS);
       sendResult = send(socketNum, (char const*)(&data[numBytesSentSoFar]), numBytesRemainingToSend, 0/*flags*/);
+      err = (sendResult < 0) ? envir().getErrno() : 0;
       if ((unsigned)sendResult != numBytesRemainingToSend) {
 	// The blocking "send()" failed, or timed out.  In either case, we assume that the
 	// TCP connection has failed (or is 'hanging' indefinitely), and we stop using it
@@ -375,13 +390,17 @@ Boolean RTPInterface::sendDataOverTCP(int socketNum, u_int8_t const* data, unsig
 #ifdef DEBUG_SEND
 	fprintf(stderr, "sendDataOverTCP: blocking send() failed (delivering %d bytes out of %d); closing socket %d\n", sendResult, numBytesRemainingToSend, socketNum); fflush(stderr);
 #endif
+envir() << "RTPInterface::sendDataOverTCP(" << socketNum << "," << dataSize << "," << (forceSendToSucceed?"T":"F") << "): "
+           "blocking send(" << numBytesRemainingToSend << ") returned " << sendResult <<  ", errno=" << err << "\n";
 	removeStreamSocket(socketNum, 0xFF);
 	return False;
       }
       makeSocketNonBlocking(socketNum);
 
       return True;
-    } else if (sendResult < 0 && envir().getErrno() != EAGAIN) {
+    } else {
+envir() << "RTPInterface::sendDataOverTCP(" << socketNum << "," << dataSize << "," << (forceSendToSucceed?"T":"F") << "): "
+           "send(" << dataSize << ") returned " << sendResult <<  ", errno=" << err << "\n";
       // Because the "send()" call failed, assume that the socket is now unusable, so stop
       // using it (for both RTP and RTCP):
       removeStreamSocket(socketNum, 0xFF);
