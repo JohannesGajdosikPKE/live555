@@ -13,7 +13,7 @@ You should have received a copy of the GNU Lesser General Public License
 along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
-// Copyright (c) 1996-2019, Live Networks, Inc.  All rights reserved
+// Copyright (c) 1996-2021, Live Networks, Inc.  All rights reserved
 // LIVE555 Proxy Server
 // main program
 
@@ -35,7 +35,6 @@ char* password = NULL;
 Boolean proxyREGISTERRequests = False;
 char* usernameForREGISTER = NULL;
 char* passwordForREGISTER = NULL;
-unsigned interPacketGapMaxTime = 0;
 
 static RTSPServer* createRTSPServer(Port port) {
   if (proxyREGISTERRequests) {
@@ -52,7 +51,6 @@ void usage() {
        << " [-p <rtspServer-port>]"
        << " [-u <username> <password>]"
        << " [-R] [-U <username-for-REGISTER> <password-for-REGISTER>]"
-       << " [-D <max-inter-packet-gap-time>]"
        << " <rtsp-url-1> ... <rtsp-url-n>\n";
   exit(1);
 }
@@ -60,7 +58,7 @@ void usage() {
 int main(int argc, char** argv) {
   // Increase the maximum size of video frames that we can 'proxy' without truncation.
   // (Such frames are unreasonably large; the back-end servers should really not be sending frames this large!)
-  OutPacketBuffer::maxSize = 2000000; // bytes
+  OutPacketBuffer::maxSize = 100000; // bytes
 
   // Begin by setting up our usage environment:
   TaskScheduler* scheduler = BasicTaskScheduler::createNew();
@@ -153,19 +151,6 @@ int main(int argc, char** argv) {
       break;
     }
 
-    case 'D': { // specify maximum number of seconds to wait for packets:
-      if (argc > 2 && argv[2][0] != '-') {
-        if (sscanf(argv[2], "%u", &interPacketGapMaxTime) == 1) {
-          ++argv; --argc;
-          break;
-        }
-      }
-
-      // If we get here, the option was specified incorrectly:
-      usage();
-      break;
-    }
-
     default: {
       usage();
       break;
@@ -174,15 +159,15 @@ int main(int argc, char** argv) {
 
     ++argv; --argc;
   }
-  if (argc < 2 && !proxyREGISTERRequests) usage(); // there must be at least one "rtsp://" URL at the end 
-  // Make sure that the remaining arguments appear to be "rtsp://" URLs:
+  if (argc < 2 && !proxyREGISTERRequests) usage(); // there must be at least one URL at the end 
+  // Make sure that the remaining arguments appear to be "rtsp://" (or "rtsps://") URLs:
   int i;
   for (i = 1; i < argc; ++i) {
-    if (strncmp(argv[i], "rtsp://", 7) != 0) usage();
+    if (strncmp(argv[i], "rtsp://", 7) != 0 && strncmp(argv[i], "rtsps://", 8) != 0) usage();
   }
   // Do some additional checking for invalid command-line argument combinations:
   if (authDBForREGISTER != NULL && !proxyREGISTERRequests) {
-    *env << "The '-U <username> <password>' option can be used only with -R\n";
+    *env << "The '-U <username-for-REGISTER> <password-for-REGISTER>' option can be used only with -R\n";
     usage();
   }
   if (streamRTPOverTCP) {
@@ -236,7 +221,7 @@ int main(int argc, char** argv) {
     ServerMediaSession* sms
       = ProxyServerMediaSession::createNew(*env, rtspServer,
 					   proxiedStreamURL, streamName,
-					   username, password, tunnelOverHTTPPortNum, verbosityLevel, -1, NULL, interPacketGapMaxTime);
+					   username, password, tunnelOverHTTPPortNum, verbosityLevel);
     rtspServer->addServerMediaSession(sms);
 
     char* proxyStreamURL = rtspServer->rtspURL(sms);

@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2019 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2021 Live Networks, Inc.  All rights reserved.
 // A generic media server class, used to implement a RTSP server, and any other server that uses
 //  "ServerMediaSession" objects to describe media to be served.
 // Implementation
@@ -32,15 +32,44 @@ void GenericMediaServer::addServerMediaSession(ServerMediaSession* serverMediaSe
   
   char const* sessionName = serverMediaSession->streamName();
   if (sessionName == NULL) sessionName = "";
-  removeServerMediaSession(sessionName); // in case an existing "ServerMediaSession" with this name already exists
+  removeServerMediaSession(sessionName);
+      // in case an existing "ServerMediaSession" with this name already exists
   
   fServerMediaSessions->Add(sessionName, (void*)serverMediaSession);
 }
 
-ServerMediaSession* GenericMediaServer
-::lookupServerMediaSession(char const* streamName, Boolean /*isFirstLookupInSession*/) {
-  // Default implementation:
-  return (ServerMediaSession*)(fServerMediaSessions->Lookup(streamName));
+void GenericMediaServer
+::lookupServerMediaSession(char const* streamName,
+			   lookupServerMediaSessionCompletionFunc* completionFunc,
+			   void* completionClientData,
+			   Boolean /*isFirstLookupInSession*/) {
+  // Default implementation: Do a synchronous lookup, and call the completion function:
+  if (completionFunc != NULL) {
+    (*completionFunc)(completionClientData, getServerMediaSession(streamName));
+  }
+}
+
+struct lsmsMemberFunctionRecord {
+  GenericMediaServer* fServer;
+  void (GenericMediaServer::*fMemberFunc)(ServerMediaSession*);
+};
+
+static void lsmsMemberFunctionCompletionFunc(void* clientData, ServerMediaSession* sessionLookedUp) {
+  lsmsMemberFunctionRecord* memberFunctionRecord = (lsmsMemberFunctionRecord*)clientData;
+  (memberFunctionRecord->fServer->*(memberFunctionRecord->fMemberFunc))(sessionLookedUp);
+  delete memberFunctionRecord;
+}
+
+void GenericMediaServer
+::lookupServerMediaSession(char const* streamName,
+			   void (GenericMediaServer::*memberFunc)(ServerMediaSession*)) {
+  struct lsmsMemberFunctionRecord* memberFunctionRecord = new struct lsmsMemberFunctionRecord;
+  memberFunctionRecord->fServer = this;
+  memberFunctionRecord->fMemberFunc = memberFunc;
+  
+  GenericMediaServer
+    ::lookupServerMediaSession(streamName,
+			       lsmsMemberFunctionCompletionFunc, memberFunctionRecord);
 }
 
 void GenericMediaServer::removeServerMediaSession(ServerMediaSession* serverMediaSession) {
@@ -55,7 +84,7 @@ void GenericMediaServer::removeServerMediaSession(ServerMediaSession* serverMedi
 }
 
 void GenericMediaServer::removeServerMediaSession(char const* streamName) {
-  removeServerMediaSession((ServerMediaSession*)(fServerMediaSessions->Lookup(streamName)));
+  lookupServerMediaSession(streamName, &GenericMediaServer::removeServerMediaSession);
 }
 
 void GenericMediaServer::closeAllClientSessionsForServerMediaSession(ServerMediaSession* serverMediaSession) {
@@ -73,7 +102,8 @@ void GenericMediaServer::closeAllClientSessionsForServerMediaSession(ServerMedia
 }
 
 void GenericMediaServer::closeAllClientSessionsForServerMediaSession(char const* streamName) {
-  closeAllClientSessionsForServerMediaSession((ServerMediaSession*)(fServerMediaSessions->Lookup(streamName)));
+  lookupServerMediaSession(streamName,
+			   &GenericMediaServer::closeAllClientSessionsForServerMediaSession);
 }
 
 void GenericMediaServer::deleteServerMediaSession(ServerMediaSession* serverMediaSession) {
@@ -84,27 +114,34 @@ void GenericMediaServer::deleteServerMediaSession(ServerMediaSession* serverMedi
 }
 
 void GenericMediaServer::deleteServerMediaSession(char const* streamName) {
-  deleteServerMediaSession((ServerMediaSession*)(fServerMediaSessions->Lookup(streamName)));
+  lookupServerMediaSession(streamName, &GenericMediaServer::deleteServerMediaSession);
 }
 
 GenericMediaServer
-::GenericMediaServer(UsageEnvironment& env, int ourSocket, Port ourPort,
+::GenericMediaServer(UsageEnvironment& env, int ourSocketIPv4, int ourSocketIPv6, Port ourPort,
 		     unsigned reclamationSeconds)
   : Medium(env),
-    fServerSocket(ourSocket), fServerPort(ourPort), fReclamationSeconds(reclamationSeconds),
+    fServerSocketIPv4(ourSocketIPv4), fServerSocketIPv6(ourSocketIPv6),
+    fServerPort(ourPort), fReclamationSeconds(reclamationSeconds),
     fServerMediaSessions(HashTable::create(STRING_HASH_KEYS)),
     fClientConnections(HashTable::create(ONE_WORD_HASH_KEYS)),
-    fClientSessions(HashTable::create(STRING_HASH_KEYS)) {
-  ignoreSigPipeOnSocket(fServerSocket); // so that clients on the same host that are killed don't also kill us
+    fClientSessions(HashTable::create(STRING_HASH_KEYS)),
+    fPreviousClientSessionId(0)
+{
+  ignoreSigPipeOnSocket(fServerSocketIPv4); // so that clients on the same host that are killed don't also kill us
+  ignoreSigPipeOnSocket(fServerSocketIPv6); // ditto
   
   // Arrange to handle connections from others:
-  env.taskScheduler().turnOnBackgroundReadHandling(fServerSocket, incomingConnectionHandler, this);
+  env.taskScheduler().turnOnBackgroundReadHandling(fServerSocketIPv4, incomingConnectionHandlerIPv4, this);
+  env.taskScheduler().turnOnBackgroundReadHandling(fServerSocketIPv6, incomingConnectionHandlerIPv6, this);
 }
 
 GenericMediaServer::~GenericMediaServer() {
   // Turn off background read handling:
-  envir().taskScheduler().turnOffBackgroundReadHandling(fServerSocket);
-  ::closeSocket(fServerSocket);
+  envir().taskScheduler().turnOffBackgroundReadHandling(fServerSocketIPv4);
+  ::closeSocket(fServerSocketIPv4);
+  envir().taskScheduler().turnOffBackgroundReadHandling(fServerSocketIPv6);
+  ::closeSocket(fServerSocketIPv6);
 }
 
 void GenericMediaServer::cleanup() {
@@ -138,7 +175,7 @@ void GenericMediaServer::cleanup() {
 
 #define LISTEN_BACKLOG_SIZE 20
 
-int GenericMediaServer::setUpOurSocket(UsageEnvironment& env, Port& ourPort) {
+int GenericMediaServer::setUpOurSocket(UsageEnvironment& env, Port& ourPort, int domain) {
   int ourSocket = -1;
   
   do {
@@ -149,7 +186,8 @@ int GenericMediaServer::setUpOurSocket(UsageEnvironment& env, Port& ourPort) {
     NoReuse dummy(env); // Don't use this socket if there's already a local server using it
 #endif
     
-    ourSocket = setupStreamSocket(env, ourPort, True, True);
+    ourSocket = setupStreamSocket(env, ourPort, domain, True, True);
+        // later fix to support IPv6
     if (ourSocket < 0) break;
     
     // Make sure we have a big send buffer:
@@ -163,7 +201,7 @@ int GenericMediaServer::setUpOurSocket(UsageEnvironment& env, Port& ourPort) {
     
     if (ourPort.num() == 0) {
       // bind() will have chosen a port for us; return it also:
-      if (!getSourcePort(env, ourSocket, ourPort)) break;
+      if (!getSourcePort(env, ourSocket, domain, ourPort)) break;
     }
     
     return ourSocket;
@@ -173,16 +211,23 @@ int GenericMediaServer::setUpOurSocket(UsageEnvironment& env, Port& ourPort) {
   return -1;
 }
 
-void GenericMediaServer::incomingConnectionHandler(void* instance, int /*mask*/) {
+void GenericMediaServer::incomingConnectionHandlerIPv4(void* instance, int /*mask*/) {
   GenericMediaServer* server = (GenericMediaServer*)instance;
-  server->incomingConnectionHandler();
+  server->incomingConnectionHandlerIPv4();
 }
-void GenericMediaServer::incomingConnectionHandler() {
-  incomingConnectionHandlerOnSocket(fServerSocket);
+void GenericMediaServer::incomingConnectionHandlerIPv6(void* instance, int /*mask*/) {
+  GenericMediaServer* server = (GenericMediaServer*)instance;
+  server->incomingConnectionHandlerIPv6();
+}
+void GenericMediaServer::incomingConnectionHandlerIPv4() {
+  incomingConnectionHandlerOnSocket(fServerSocketIPv4);
+}
+void GenericMediaServer::incomingConnectionHandlerIPv6() {
+  incomingConnectionHandlerOnSocket(fServerSocketIPv6);
 }
 
 void GenericMediaServer::incomingConnectionHandlerOnSocket(int serverSocket) {
-  struct sockaddr_in clientAddr;
+  struct sockaddr_storage clientAddr;
   SOCKLEN_T clientAddrLen = sizeof clientAddr;
   int clientSocket = accept(serverSocket, (struct sockaddr*)&clientAddr, &clientAddrLen);
   if (clientSocket < 0) {
@@ -209,7 +254,7 @@ void GenericMediaServer::incomingConnectionHandlerOnSocket(int serverSocket) {
 ////////// GenericMediaServer::ClientConnection implementation //////////
 
 GenericMediaServer::ClientConnection
-::ClientConnection(GenericMediaServer& ourServer, int clientSocket, struct sockaddr_in clientAddr)
+::ClientConnection(GenericMediaServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr)
   : fOurServer(ourServer), fOurSocket(clientSocket), fClientAddr(clientAddr) {
   // Add ourself to our 'client connections' table:
   fOurServer.fClientConnections->Add((char const*)this, this);
@@ -241,7 +286,7 @@ void GenericMediaServer::ClientConnection::incomingRequestHandler(void* instance
 }
 
 void GenericMediaServer::ClientConnection::incomingRequestHandler() {
-  struct sockaddr_in dummy; // 'from' address, meaningless in this case
+  struct sockaddr_storage dummy; // 'from' address, meaningless in this case
   
   int bytesRead = readSocket(envir(), fOurSocket, &fRequestBuffer[fRequestBytesAlreadySeen], fRequestBufferBytesLeft, dummy);
   handleRequestBytes(bytesRead);
@@ -309,6 +354,7 @@ void GenericMediaServer::ClientSession::livenessTimeoutTask(ClientSession* clien
   fprintf(stderr, "Client session (id \"%08X\", stream name \"%s\") has timed out (due to inactivity)\n",
 	  clientSession->fOurSessionId, streamName);
 #endif
+  clientSession->fLivenessCheckTask = NULL;
   delete clientSession;
 }
 
@@ -318,11 +364,14 @@ GenericMediaServer::ClientSession* GenericMediaServer::createNewClientSessionWit
 
   // Choose a random (unused) 32-bit integer for the session id
   // (it will be encoded as a 8-digit hex number).  (We avoid choosing session id 0,
-  // because that has a special use by some servers.)
+  // because that has a special use by some servers.  Similarly, we avoid choosing the same
+  // session id twice in a row.)
   do {
     sessionId = (u_int32_t)our_random32();
     snprintf(sessionIdStr, sizeof sessionIdStr, "%08X", sessionId);
-  } while (sessionId == 0 || lookupClientSession(sessionIdStr) != NULL);
+  } while (sessionId == 0 || sessionId == fPreviousClientSessionId
+	   || lookupClientSession(sessionIdStr) != NULL);
+  fPreviousClientSessionId = sessionId;
 
   ClientSession* clientSession = createNewClientSession(sessionId);
   if (clientSession != NULL) fClientSessions->Add(sessionIdStr, clientSession);
@@ -340,6 +389,10 @@ GenericMediaServer::lookupClientSession(u_int32_t sessionId) {
 GenericMediaServer::ClientSession*
 GenericMediaServer::lookupClientSession(char const* sessionIdStr) {
   return (GenericMediaServer::ClientSession*)fClientSessions->Lookup(sessionIdStr);
+}
+
+ServerMediaSession* GenericMediaServer::getServerMediaSession(char const* streamName) {
+  return (ServerMediaSession*)(fServerMediaSessions->Lookup(streamName));
 }
 
 
@@ -385,7 +438,8 @@ UserAuthenticationDatabase::~UserAuthenticationDatabase() {
 
 void UserAuthenticationDatabase::addUserRecord(char const* username,
 					       char const* password) {
-  fTable->Add(username, (void*)(strDup(password)));
+  char* oldPassword = (char*)fTable->Add(username, (void*)(strDup(password)));
+  delete[] oldPassword; // if any
 }
 
 void UserAuthenticationDatabase::removeUserRecord(char const* username) {
