@@ -48,6 +48,8 @@ public:
     saveCopyOfPPS(pps, ppsSize);
   }
 
+    // gaj:
+  static double fDefaultFrameRate;
 protected:
   H264or5VideoStreamFramer(int hNumber, // 264 or 265
 			   UsageEnvironment& env, FramedSource* inputSource,

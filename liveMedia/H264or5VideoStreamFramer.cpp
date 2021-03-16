@@ -72,6 +72,9 @@ private:
 
 ////////// H264or5VideoStreamFramer implementation //////////
 
+// gaj
+double H264or5VideoStreamFramer::fDefaultFrameRate = 25.0;
+
 H264or5VideoStreamFramer
 ::H264or5VideoStreamFramer(int hNumber, UsageEnvironment& env, FramedSource* inputSource,
 			   Boolean createParser, Boolean includeStartCodeInOutput)
@@ -84,7 +87,7 @@ H264or5VideoStreamFramer
     ? new H264or5VideoStreamParser(hNumber, this, inputSource, includeStartCodeInOutput)
     : NULL;
   fNextPresentationTime = fPresentationTimeBase;
-  fFrameRate = 25.0; // We assume a frame rate of 25 fps, unless we learn otherwise (from parsing a VPS or SPS NAL unit)
+  fFrameRate = fDefaultFrameRate; // We assume a frame rate of 25 fps, unless we learn otherwise (from parsing a VPS or SPS NAL unit)
 }
 
 H264or5VideoStreamFramer::~H264or5VideoStreamFramer() {
