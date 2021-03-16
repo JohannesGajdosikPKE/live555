@@ -141,6 +141,11 @@ WAVAudioFileSource::WAVAudioFileSource(UsageEnvironment& env, FILE* fid)
     if (!get2Bytes(fid, audioFormat)) break;
 
     fAudioFormat = (unsigned char)audioFormat;
+
+if (audioFormat == 0xFFFE) fAudioFormat = WA_PCM;
+
+
+
     if (fAudioFormat != WA_PCM && fAudioFormat != WA_PCMA && fAudioFormat != WA_PCMU && fAudioFormat != WA_IMA_ADPCM) {
       // It's a format that we don't (yet) understand
       env.setResultMsg("Audio format is not one that we handle (PCM/PCMU/PCMA or IMA ADPCM)");
