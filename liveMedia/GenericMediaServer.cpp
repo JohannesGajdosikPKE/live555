@@ -194,7 +194,8 @@ void GenericMediaServer::incomingConnectionHandlerOnSocket(int serverSocket) {
   }
   ignoreSigPipeOnSocket(clientSocket); // so that clients on the same host that are killed don't also kill us
   makeSocketNonBlocking(clientSocket);
-  increaseSendBufferTo(envir(), clientSocket, 50*1024);
+// gaj: original 50*1024 is much too small
+  increaseSendBufferTo(envir(), clientSocket, 1024*1024);
   
 #ifdef DEBUG
   envir() << "accept()ed connection from " << AddressString(clientAddr).val() << "\n";
