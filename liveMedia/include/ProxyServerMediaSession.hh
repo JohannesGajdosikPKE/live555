@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2019 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2020 Live Networks, Inc.  All rights reserved.
 // A subclass of "ServerMediaSession" that can be used to create a (unicast) RTSP servers that acts as a 'proxy' for
 // another (unicast or multicast) RTSP/RTP stream.
 // C++ header
@@ -43,8 +43,7 @@ class ProxyRTSPClient: public RTSPClient {
 public:
   ProxyRTSPClient(class ProxyServerMediaSession& ourServerMediaSession, char const* rtspURL,
                   char const* username, char const* password,
-                  portNumBits tunnelOverHTTPPortNum, int verbosityLevel, int socketNumToServer,
-                  unsigned interPacketGapMaxTime = 0);
+                  portNumBits tunnelOverHTTPPortNum, int verbosityLevel, int socketNumToServer);
   virtual ~ProxyRTSPClient();
 
   void continueAfterDESCRIBE(char const* sdpDescription);
@@ -61,13 +60,12 @@ private:
 
   void scheduleLivenessCommand();
   static void sendLivenessCommand(void* clientData);
-  void checkInterPacketGaps_(Boolean delayReset);
-  static void checkInterPacketGaps(void* clientData);
   void doReset();
   static void doReset(void* clientData);
 
   void scheduleDESCRIBECommand();
   static void sendDESCRIBE(void* clientData);
+  void sendDESCRIBE();
 
   static void subsessionTimeout(void* clientData);
   void handleSubsessionTimeout();
@@ -82,10 +80,8 @@ private:
   class ProxyServerMediaSubsession *fSetupQueueHead, *fSetupQueueTail;
   unsigned fNumSetupsDone;
   unsigned fNextDESCRIBEDelay; // in seconds
-  unsigned fTotNumPacketsReceived;
-  unsigned fInterPacketGapMaxTime; // in seconds
   Boolean fServerSupportsGetParameter, fLastCommandWasPLAY, fDoneDESCRIBE;
-  TaskToken fLivenessCommandTask, fDESCRIBECommandTask, fSubsessionTimerTask, fResetTask, fInterPacketGapsTask;
+  TaskToken fLivenessCommandTask, fDESCRIBECommandTask, fSubsessionTimerTask, fResetTask;
 };
 
 
@@ -94,13 +90,13 @@ createNewProxyRTSPClientFunc(ProxyServerMediaSession& ourServerMediaSession,
 			     char const* rtspURL,
 			     char const* username, char const* password,
 			     portNumBits tunnelOverHTTPPortNum, int verbosityLevel,
-			     int socketNumToServer, unsigned interPacketGapMaxTime);
+			     int socketNumToServer);
 ProxyRTSPClient*
 defaultCreateNewProxyRTSPClientFunc(ProxyServerMediaSession& ourServerMediaSession,
 				    char const* rtspURL,
 				    char const* username, char const* password,
 				    portNumBits tunnelOverHTTPPortNum, int verbosityLevel,
-				    int socketNumToServer, unsigned interPacketGapMaxTime);
+				    int socketNumToServer);
 
 class ProxyServerMediaSession: public ServerMediaSession {
 public:
@@ -113,8 +109,7 @@ public:
 					        // for streaming the *proxied* (i.e., back-end) stream
 					    int verbosityLevel = 0,
 					    int socketNumToServer = -1,
-					    MediaTranscodingTable* transcodingTable = NULL,
-					    unsigned interPacketGapMaxTime = 0);
+					    MediaTranscodingTable* transcodingTable = NULL);
       // Hack: "tunnelOverHTTPPortNum" == 0xFFFF (i.e., all-ones) means: Stream RTP/RTCP-over-TCP, but *not* using HTTP
       // "verbosityLevel" == 1 means display basic proxy setup info; "verbosityLevel" == 2 means display RTSP client protocol also.
       // If "socketNumToServer" is >= 0, then it is the socket number of an already-existing TCP connection to the server.
@@ -128,7 +123,7 @@ public:
     // initialized to 0; set to 1 when the back-end "DESCRIBE" completes.
     // (This can be used as a 'watch variable' in "doEventLoop()".)
   Boolean describeCompletedSuccessfully() const { return fClientMediaSession != NULL; }
-    // This can be used - along with "describeCompletdFlag" - to check whether the back-end "DESCRIBE" completed *successfully*.
+    // This can be used - along with "describeCompletedFlag" - to check whether the back-end "DESCRIBE" completed *successfully*.
 
 protected:
   ProxyServerMediaSession(UsageEnvironment& env, GenericMediaServer* ourMediaServer,
@@ -137,7 +132,6 @@ protected:
 			  portNumBits tunnelOverHTTPPortNum, int verbosityLevel,
 			  int socketNumToServer,
 			  MediaTranscodingTable* transcodingTable,
-			  unsigned interPacketGapMaxTime = 0,
 			  createNewProxyRTSPClientFunc* ourCreateNewProxyRTSPClientFunc
 			  = defaultCreateNewProxyRTSPClientFunc,
 			  portNumBits initialPortNum = 6970,

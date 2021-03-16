@@ -13,7 +13,7 @@ You should have received a copy of the GNU Lesser General Public License
 along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
-// Copyright (c) 1996-2019, Live Networks, Inc.  All rights reserved
+// Copyright (c) 1996-2020, Live Networks, Inc.  All rights reserved
 // A subclass of "RTSPServer" that creates "ServerMediaSession"s on demand,
 // based on whether or not the specified stream name exists as a file
 // Implementation
@@ -35,7 +35,7 @@ DynamicRTSPServer::createNew(UsageEnvironment& env, Port ourPort,
 DynamicRTSPServer::DynamicRTSPServer(UsageEnvironment& env, int ourSocket,
 				     Port ourPort,
 				     UserAuthenticationDatabase* authDatabase, unsigned reclamationTestSeconds)
-  : RTSPServerSupportingHTTPStreaming(env, ourSocket, ourPort, authDatabase, reclamationTestSeconds) {
+  : RTSPServer(env, ourSocket, ourPort, authDatabase, reclamationTestSeconds) {
 }
 
 DynamicRTSPServer::~DynamicRTSPServer() {
@@ -48,11 +48,11 @@ ServerMediaSession* DynamicRTSPServer
 ::lookupServerMediaSession(char const* streamName, Boolean isFirstLookupInSession) {
   // First, check whether the specified "streamName" exists as a local file:
   FILE* fid = fopen(streamName, "rb");
-  Boolean fileExists = fid != NULL;
+  Boolean const fileExists = fid != NULL;
 
   // Next, check whether we already have a "ServerMediaSession" for this file:
   ServerMediaSession* sms = RTSPServer::lookupServerMediaSession(streamName);
-  Boolean smsExists = sms != NULL;
+  Boolean const smsExists = sms != NULL;
 
   // Handle the four possibilities for "fileExists" and "smsExists":
   if (!fileExists) {
@@ -138,12 +138,12 @@ static ServerMediaSession* createNewSMS(UsageEnvironment& env,
   } else if (strcmp(extension, ".264") == 0) {
     // Assumed to be a H.264 Video Elementary Stream file:
     NEW_SMS("H.264 Video");
-    OutPacketBuffer::maxSize = 2000000; // allow for some possibly large H.264 frames
+    OutPacketBuffer::maxSize = 100000; // allow for some possibly large H.264 frames
     sms->addSubsession(H264VideoFileServerMediaSubsession::createNew(env, fileName, reuseSource));
   } else if (strcmp(extension, ".265") == 0) {
     // Assumed to be a H.265 Video Elementary Stream file:
     NEW_SMS("H.265 Video");
-    OutPacketBuffer::maxSize = 2000000; // allow for some possibly large H.265 frames
+    OutPacketBuffer::maxSize = 100000; // allow for some possibly large H.265 frames
     sms->addSubsession(H265VideoFileServerMediaSubsession::createNew(env, fileName, reuseSource));
   } else if (strcmp(extension, ".mp3") == 0) {
     // Assumed to be a MPEG-1 or 2 Audio file:
@@ -199,13 +199,13 @@ static ServerMediaSession* createNewSMS(UsageEnvironment& env,
   } else if (strcmp(extension, ".dv") == 0) {
     // Assumed to be a DV Video file
     // First, make sure that the RTPSinks' buffers will be large enough to handle the huge size of DV frames (as big as 288000).
-    OutPacketBuffer::maxSize = 2000000;
+    OutPacketBuffer::maxSize = 300000;
 
     NEW_SMS("DV Video");
     sms->addSubsession(DVVideoFileServerMediaSubsession::createNew(env, fileName, reuseSource));
   } else if (strcmp(extension, ".mkv") == 0 || strcmp(extension, ".webm") == 0) {
     // Assumed to be a Matroska file (note that WebM ('.webm') files are also Matroska files)
-    OutPacketBuffer::maxSize = 2000000; // allow for some possibly large VP8 or VP9 frames
+    OutPacketBuffer::maxSize = 300000; // allow for some possibly large VP8 or VP9 frames
     NEW_SMS("Matroska video+audio+(optional)subtitles");
 
     // Create a Matroska file server demultiplexor for the specified file.
