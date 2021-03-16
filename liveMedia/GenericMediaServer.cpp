@@ -21,6 +21,11 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include "GenericMediaServer.hh"
 #include <GroupsockHelper.hh>
+#include <BasicUsageEnvironment.hh>
+
+#include <thread>
+#include <iostream>
+
 #if defined(__WIN32__) || defined(_WIN32) || defined(_QNX4)
 #define snprintf _snprintf
 #endif
@@ -32,6 +37,7 @@ void GenericMediaServer::addServerMediaSession(ServerMediaSession* serverMediaSe
   
   char const* sessionName = serverMediaSession->streamName();
   if (sessionName == NULL) sessionName = "";
+  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
   removeServerMediaSession(sessionName);
       // in case an existing "ServerMediaSession" with this name already exists
   
@@ -39,12 +45,13 @@ void GenericMediaServer::addServerMediaSession(ServerMediaSession* serverMediaSe
 }
 
 void GenericMediaServer
-::lookupServerMediaSession(char const* streamName,
+::lookupServerMediaSession(UsageEnvironment& env, char const* streamName,
 			   lookupServerMediaSessionCompletionFunc* completionFunc,
 			   void* completionClientData,
 			   Boolean /*isFirstLookupInSession*/) {
   // Default implementation: Do a synchronous lookup, and call the completion function:
   if (completionFunc != NULL) {
+    std::lock_guard<std::recursive_mutex> guard(internal_mutex);
     (*completionFunc)(completionClientData, getServerMediaSession(streamName));
   }
 }
@@ -61,14 +68,14 @@ static void lsmsMemberFunctionCompletionFunc(void* clientData, ServerMediaSessio
 }
 
 void GenericMediaServer
-::lookupServerMediaSession(char const* streamName,
+::lookupServerMediaSession(UsageEnvironment& env, char const* streamName,
 			   void (GenericMediaServer::*memberFunc)(ServerMediaSession*)) {
   struct lsmsMemberFunctionRecord* memberFunctionRecord = new struct lsmsMemberFunctionRecord;
   memberFunctionRecord->fServer = this;
   memberFunctionRecord->fMemberFunc = memberFunc;
   
   GenericMediaServer
-    ::lookupServerMediaSession(streamName,
+    ::lookupServerMediaSession(env, streamName,
 			       lsmsMemberFunctionCompletionFunc, memberFunctionRecord);
 }
 
@@ -84,12 +91,13 @@ void GenericMediaServer::removeServerMediaSession(ServerMediaSession* serverMedi
 }
 
 void GenericMediaServer::removeServerMediaSession(char const* streamName) {
-  lookupServerMediaSession(streamName, &GenericMediaServer::removeServerMediaSession);
+  lookupServerMediaSession(envir(), streamName, &GenericMediaServer::removeServerMediaSession);
 }
 
 void GenericMediaServer::closeAllClientSessionsForServerMediaSession(ServerMediaSession* serverMediaSession) {
   if (serverMediaSession == NULL) return;
   
+  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
   HashTable::Iterator* iter = HashTable::Iterator::create(*fClientSessions);
   GenericMediaServer::ClientSession* clientSession;
   char const* key; // dummy
@@ -102,20 +110,61 @@ void GenericMediaServer::closeAllClientSessionsForServerMediaSession(ServerMedia
 }
 
 void GenericMediaServer::closeAllClientSessionsForServerMediaSession(char const* streamName) {
-  lookupServerMediaSession(streamName,
+  lookupServerMediaSession(envir(), streamName,
 			   &GenericMediaServer::closeAllClientSessionsForServerMediaSession);
 }
 
 void GenericMediaServer::deleteServerMediaSession(ServerMediaSession* serverMediaSession) {
   if (serverMediaSession == NULL) return;
   
+  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
   closeAllClientSessionsForServerMediaSession(serverMediaSession);
   removeServerMediaSession(serverMediaSession);
 }
 
 void GenericMediaServer::deleteServerMediaSession(char const* streamName) {
-  lookupServerMediaSession(streamName, &GenericMediaServer::deleteServerMediaSession);
+  lookupServerMediaSession(envir(), streamName, &GenericMediaServer::deleteServerMediaSession);
 }
+
+class GenericMediaServer::Worker {
+public:
+  Worker(void)
+    : worker_thread([this](void) {
+//        std::cout << "Worker::mainThread(" << std::this_thread::get_id() << "): start" << std::endl << std::flush;
+        scheduler = BasicTaskScheduler::createNew();
+//        std::cout << "Worker::mainThread(" << std::this_thread::get_id() << "): scheduler created" << std::endl << std::flush;
+        env = new DeletableUsageEnvironment(*scheduler);
+        {
+          std::unique_lock<std::mutex> lck(mtx);
+          watchVariable = 0;
+          cv.notify_one();
+        }
+        env->taskScheduler().doEventLoop(&watchVariable);
+        delete env; env = nullptr;
+        delete scheduler; scheduler = nullptr;
+      }) {
+    std::unique_lock<std::mutex> lck(mtx);
+    while (watchVariable) cv.wait(lck);
+  }
+  ~Worker(void) {
+    worker_thread.join();
+  }
+  void stop(void) {watchVariable = 1;}
+  UsageEnvironment& getEnv(void) const {return *env;}
+  unsigned int getLoad(void) const {return scheduler->getLoad();}
+private:
+  BasicTaskScheduler *scheduler = nullptr;
+  struct DeletableUsageEnvironment : public BasicUsageEnvironment {
+    DeletableUsageEnvironment(TaskScheduler& s) : BasicUsageEnvironment(s) {}
+  } *env = nullptr;
+  char volatile watchVariable = 1;
+  std::thread worker_thread;
+    // mutex and contition variable only to be able to wait for thread to start:
+  std::mutex mtx;
+  std::condition_variable cv;
+};
+
+#define NR_OF_WORKER_THREADS 32
 
 GenericMediaServer
 ::GenericMediaServer(UsageEnvironment& env, int ourSocketIPv4, int ourSocketIPv6, Port ourPort,
@@ -126,7 +175,8 @@ GenericMediaServer
     fServerMediaSessions(HashTable::create(STRING_HASH_KEYS)),
     fClientConnections(HashTable::create(ONE_WORD_HASH_KEYS)),
     fClientSessions(HashTable::create(STRING_HASH_KEYS)),
-    fPreviousClientSessionId(0)
+    fPreviousClientSessionId(0),
+    workers(new Worker[NR_OF_WORKER_THREADS])
 {
   ignoreSigPipeOnSocket(fServerSocketIPv4); // so that clients on the same host that are killed don't also kill us
   ignoreSigPipeOnSocket(fServerSocketIPv6); // ditto
@@ -137,11 +187,25 @@ GenericMediaServer
 }
 
 GenericMediaServer::~GenericMediaServer() {
+  delete[] workers;
   // Turn off background read handling:
   envir().taskScheduler().turnOffBackgroundReadHandling(fServerSocketIPv4);
   ::closeSocket(fServerSocketIPv4);
   envir().taskScheduler().turnOffBackgroundReadHandling(fServerSocketIPv6);
   ::closeSocket(fServerSocketIPv6);
+}
+
+UsageEnvironment &GenericMediaServer::getBestThreadedUsageEnvironment(void) {
+  unsigned int best_load = 0;
+  Worker *best_worker = nullptr;
+  for (int i = 0; i < NR_OF_WORKER_THREADS; i++) {
+    const unsigned int load = workers[i].getLoad();
+    if (best_worker == nullptr || load < best_load) {
+      best_load = load;
+      best_worker = workers + i;
+    }
+  }
+  return best_worker->getEnv();
 }
 
 void GenericMediaServer::cleanup() {
@@ -150,6 +214,10 @@ void GenericMediaServer::cleanup() {
   // because by that time, the subclass destructor will already have been called, and this may
   // affect (break) the destruction of the "ClientSession" and "ClientConnection" objects, which
   // themselves will have been subclassed.)
+
+  for (int i = 0; i < NR_OF_WORKER_THREADS; i++) workers[i].stop();
+
+  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
 
   // Close all client session objects:
   GenericMediaServer::ClientSession* clientSession;
@@ -254,20 +322,22 @@ void GenericMediaServer::incomingConnectionHandlerOnSocket(int serverSocket) {
 ////////// GenericMediaServer::ClientConnection implementation //////////
 
 GenericMediaServer::ClientConnection
-::ClientConnection(GenericMediaServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr)
-  : fOurServer(ourServer), fOurSocket(clientSocket), fClientAddr(clientAddr) {
+::ClientConnection(UsageEnvironment &threaded_env, GenericMediaServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr)
+  : threaded_env(threaded_env), fOurServer(ourServer), fOurSocket(clientSocket), fClientAddr(clientAddr) {
   // Add ourself to our 'client connections' table:
-  fOurServer.fClientConnections->Add((char const*)this, this);
+  fOurServer.addClientConnection(this);
   
   // Arrange to handle incoming requests:
   resetRequestBuffer();
-  envir().taskScheduler()
-    .setBackgroundHandling(fOurSocket, SOCKET_READABLE|SOCKET_EXCEPTION, incomingRequestHandler, this);
+  envir().taskScheduler().executeCommand(
+    [this]() {
+      envir().taskScheduler().setBackgroundHandling(fOurSocket, SOCKET_READABLE|SOCKET_EXCEPTION, incomingRequestHandler, this);
+    });
 }
 
 GenericMediaServer::ClientConnection::~ClientConnection() {
   // Remove ourself from the server's 'client connections' hash table before we go:
-  fOurServer.fClientConnections->Remove((char const*)this);
+  fOurServer.removeClientConnection(this);
   
   closeSockets();
 }
@@ -301,8 +371,8 @@ void GenericMediaServer::ClientConnection::resetRequestBuffer() {
 ////////// GenericMediaServer::ClientSession implementation //////////
 
 GenericMediaServer::ClientSession
-::ClientSession(GenericMediaServer& ourServer, u_int32_t sessionId)
-  : fOurServer(ourServer), fOurSessionId(sessionId), fOurServerMediaSession(NULL),
+::ClientSession(UsageEnvironment& threaded_env, GenericMediaServer& ourServer, u_int32_t sessionId)
+  : threaded_env(threaded_env), fOurServer(ourServer), fOurSessionId(sessionId), fOurServerMediaSession(NULL),
     fLivenessCheckTask(NULL) {
   noteLiveness();
 }
@@ -358,9 +428,11 @@ void GenericMediaServer::ClientSession::livenessTimeoutTask(ClientSession* clien
   delete clientSession;
 }
 
-GenericMediaServer::ClientSession* GenericMediaServer::createNewClientSessionWithId() {
+GenericMediaServer::ClientSession* GenericMediaServer::createNewClientSessionWithId(UsageEnvironment& env) {
   u_int32_t sessionId;
   char sessionIdStr[8+1];
+
+  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
 
   // Choose a random (unused) 32-bit integer for the session id
   // (it will be encoded as a 8-digit hex number).  (We avoid choosing session id 0,
@@ -373,7 +445,7 @@ GenericMediaServer::ClientSession* GenericMediaServer::createNewClientSessionWit
 	   || lookupClientSession(sessionIdStr) != NULL);
   fPreviousClientSessionId = sessionId;
 
-  ClientSession* clientSession = createNewClientSession(sessionId);
+  ClientSession* clientSession = createNewClientSession(env, sessionId);
   if (clientSession != NULL) fClientSessions->Add(sessionIdStr, clientSession);
 
   return clientSession;
@@ -388,10 +460,12 @@ GenericMediaServer::lookupClientSession(u_int32_t sessionId) {
 
 GenericMediaServer::ClientSession*
 GenericMediaServer::lookupClientSession(char const* sessionIdStr) {
+  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
   return (GenericMediaServer::ClientSession*)fClientSessions->Lookup(sessionIdStr);
 }
 
 ServerMediaSession* GenericMediaServer::getServerMediaSession(char const* streamName) {
+  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
   return (ServerMediaSession*)(fServerMediaSessions->Lookup(streamName));
 }
 
@@ -430,6 +504,7 @@ UserAuthenticationDatabase::~UserAuthenticationDatabase() {
   
   // Delete the allocated 'password' strings that we stored in the table, and then the table itself:
   char* password;
+  std::lock_guard<std::mutex> guard(fTable_mutex);
   while ((password = (char*)fTable->RemoveNext()) != NULL) {
     delete[] password;
   }
@@ -438,16 +513,19 @@ UserAuthenticationDatabase::~UserAuthenticationDatabase() {
 
 void UserAuthenticationDatabase::addUserRecord(char const* username,
 					       char const* password) {
+  std::lock_guard<std::mutex> guard(fTable_mutex);
   char* oldPassword = (char*)fTable->Add(username, (void*)(strDup(password)));
   delete[] oldPassword; // if any
 }
 
 void UserAuthenticationDatabase::removeUserRecord(char const* username) {
+  std::lock_guard<std::mutex> guard(fTable_mutex);
   char* password = (char*)(fTable->Lookup(username));
   fTable->Remove(username);
   delete[] password;
 }
 
 char const* UserAuthenticationDatabase::lookupPassword(char const* username) {
+  std::lock_guard<std::mutex> guard(fTable_mutex);
   return (char const*)(fTable->Lookup(username));
 }

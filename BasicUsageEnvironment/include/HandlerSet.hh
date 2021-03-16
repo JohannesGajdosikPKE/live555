@@ -53,12 +53,14 @@ public:
   void clearHandler(int socketNum);
   void moveHandler(int oldSocketNum, int newSocketNum);
 
+  unsigned int getNrOfHandlers(void) const {return nr_of_handlers;}
 private:
   HandlerDescriptor* lookupHandler(int socketNum);
 
 private:
   friend class HandlerIterator;
   HandlerDescriptor fHandlers;
+  unsigned int nr_of_handlers;
 };
 
 class HandlerIterator {

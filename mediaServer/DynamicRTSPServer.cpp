@@ -47,7 +47,7 @@ static ServerMediaSession* createNewSMS(UsageEnvironment& env,
 					char const* fileName, FILE* fid); // forward
 
 void DynamicRTSPServer
-::lookupServerMediaSession(char const* streamName,
+::lookupServerMediaSession(UsageEnvironment& env, char const* streamName,
 			   lookupServerMediaSessionCompletionFunc* completionFunc,
 			   void* completionClientData,
 			   Boolean isFirstLookupInSession) {
@@ -76,7 +76,7 @@ void DynamicRTSPServer
     } 
 
     if (sms == NULL) {
-      sms = createNewSMS(envir(), streamName, fid); 
+      sms = createNewSMS(env, streamName, fid); 
       addServerMediaSession(sms);
     }
 

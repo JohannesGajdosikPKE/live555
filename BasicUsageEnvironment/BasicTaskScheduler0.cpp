@@ -59,6 +59,7 @@ BasicTaskScheduler0::~BasicTaskScheduler0() {
 TaskToken BasicTaskScheduler0::scheduleDelayedTask(int64_t microseconds,
 						 TaskFunc* proc,
 						 void* clientData) {
+  assertSameThread();
   if (microseconds < 0) microseconds = 0;
   DelayInterval timeToDelay((long)(microseconds/1000000), (long)(microseconds%1000000));
   AlarmHandler* alarmHandler = new AlarmHandler(proc, clientData, timeToDelay);
@@ -68,12 +69,14 @@ TaskToken BasicTaskScheduler0::scheduleDelayedTask(int64_t microseconds,
 }
 
 void BasicTaskScheduler0::unscheduleDelayedTask(TaskToken& prevTask) {
+  assertSameThread();
   DelayQueueEntry* alarmHandler = fDelayQueue.removeEntry((intptr_t)prevTask);
   prevTask = NULL;
   delete alarmHandler;
 }
 
 void BasicTaskScheduler0::doEventLoop(char volatile* watchVariable) {
+  assertSameThread();
   // Repeatedly loop, handling readble sockets and timed events:
   while (1) {
     if (watchVariable != NULL && *watchVariable != 0) break;
@@ -82,6 +85,7 @@ void BasicTaskScheduler0::doEventLoop(char volatile* watchVariable) {
 }
 
 EventTriggerId BasicTaskScheduler0::createEventTrigger(TaskFunc* eventHandlerProc) {
+  assertSameThread();
   unsigned i = fLastUsedTriggerNum;
   EventTriggerId mask = fLastUsedTriggerMask;
 
@@ -107,6 +111,7 @@ EventTriggerId BasicTaskScheduler0::createEventTrigger(TaskFunc* eventHandlerPro
 }
 
 void BasicTaskScheduler0::deleteEventTrigger(EventTriggerId eventTriggerId) {
+  assertSameThread();
   fTriggersAwaitingHandling &=~ eventTriggerId;
 
   if (eventTriggerId == fLastUsedTriggerMask) { // common-case optimization:
@@ -127,6 +132,7 @@ void BasicTaskScheduler0::deleteEventTrigger(EventTriggerId eventTriggerId) {
 }
 
 void BasicTaskScheduler0::triggerEvent(EventTriggerId eventTriggerId, void* clientData) {
+  assertSameThread();
   // First, record the "clientData".  (Note that we allow "eventTriggerId" to be a combination of bits for multiple events.)
   EventTriggerId mask = 0x80000000;
   for (unsigned i = 0; i < MAX_NUM_EVENT_TRIGGERS; ++i) {
@@ -140,6 +146,10 @@ void BasicTaskScheduler0::triggerEvent(EventTriggerId eventTriggerId, void* clie
   // (Note that because this function (unlike others in the library) can be called from an external thread, we do this last, to
   //  reduce the risk of a race condition.)
   fTriggersAwaitingHandling |= eventTriggerId;
+}
+
+unsigned int BasicTaskScheduler0::getLoad(void) const {
+  return fHandlers->getNrOfHandlers();
 }
 
 
@@ -165,7 +175,7 @@ HandlerDescriptor::~HandlerDescriptor() {
 }
 
 HandlerSet::HandlerSet()
-  : fHandlers(&fHandlers) {
+  : fHandlers(&fHandlers), nr_of_handlers(0) {
   fHandlers.socketNum = -1; // shouldn't ever get looked at, but in case...
 }
 
@@ -183,6 +193,7 @@ void HandlerSet
   if (handler == NULL) { // No existing handler, so create a new descr:
     handler = new HandlerDescriptor(fHandlers.fNextHandler);
     handler->socketNum = socketNum;
+    nr_of_handlers++;
   }
 
   handler->conditionSet = conditionSet;
@@ -192,7 +203,10 @@ void HandlerSet
 
 void HandlerSet::clearHandler(int socketNum) {
   HandlerDescriptor* handler = lookupHandler(socketNum);
-  delete handler;
+  if (handler) {
+    delete handler;
+    nr_of_handlers--;
+  }
 }
 
 void HandlerSet::moveHandler(int oldSocketNum, int newSocketNum) {

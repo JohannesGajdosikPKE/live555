@@ -24,6 +24,10 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "BasicUsageEnvironment0.hh"
 #endif
 
+#include <queue>
+#include <functional>
+#include <mutex>
+
 class BasicUsageEnvironment: public BasicUsageEnvironment0 {
 public:
   static BasicUsageEnvironment* createNew(TaskScheduler& taskScheduler);
@@ -53,6 +57,7 @@ public:
     // (You should set it to 0 only if you know that you will not be using 'event triggers'.)
   virtual ~BasicTaskScheduler();
 
+  void executeCommand(std::function<void()>&& cmd) override;
 protected:
   BasicTaskScheduler(unsigned maxSchedulerGranularity);
       // called only by "createNew()"
@@ -77,6 +82,11 @@ protected:
   fd_set fExceptionSet;
 
 private:
+  int command_pipe[2]; // just to send a signal
+  std::queue<std::function<void()> > command_queue;
+  std::mutex command_mutex;
+  static void BasicTaskScheduler::CommandRequestHandler(void* instance, int /*mask*/);
+  void commandRequestHandler(void);
 #if defined(__WIN32__) || defined(_WIN32)
   // Hack to work around a bug in Windows' "select()" implementation:
   int fDummySocketNum;

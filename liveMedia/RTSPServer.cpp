@@ -294,8 +294,8 @@ void RTSPServer::stopTCPStreamingOnSocket(int socketNum) {
 ////////// RTSPServer::RTSPClientConnection implementation //////////
 
 RTSPServer::RTSPClientConnection
-::RTSPClientConnection(RTSPServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr)
-  : GenericMediaServer::ClientConnection(ourServer, clientSocket, clientAddr),
+::RTSPClientConnection(UsageEnvironment& threaded_env, RTSPServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr)
+  : GenericMediaServer::ClientConnection(threaded_env, ourServer, clientSocket, clientAddr),
     fOurRTSPServer(ourServer), fClientInputSocket(fOurSocket), fClientOutputSocket(fOurSocket),
     fAddressFamily(clientAddr.ss_family),
     fIsActive(True), fRecursionCount(0), fOurSessionCookie(NULL) {
@@ -353,7 +353,7 @@ void RTSPServer::RTSPClientConnection
   // for "application/sdp", because that's what we're sending back #####
     
   // Begin by looking up the "ServerMediaSession" object for the specified "urlTotalSuffix":
-  fOurServer.lookupServerMediaSession(urlTotalSuffix, DESCRIBELookupCompletionFunction, this);
+  lookupServerMediaSession(envir(), urlTotalSuffix, DESCRIBELookupCompletionFunction);
 }
 
 void RTSPServer::RTSPClientConnection
@@ -408,7 +408,7 @@ void RTSPServer::RTSPClientConnection
     // Decrement its reference count, now that we're done using it:
     session->decrementReferenceCount();
     if (session->referenceCount() == 0 && session->deleteWhenUnreferenced()) {
-      fOurServer.removeServerMediaSession(session);
+      removeServerMediaSession(session);
     }
   }
 
@@ -812,7 +812,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
 	  strcat(urlTotalSuffix, urlSuffix);
 	  if (authenticationOK("SETUP", urlTotalSuffix, (char const*)fRequestBuffer)) {
 	    clientSession
-	      = (RTSPServer::RTSPClientSession*)fOurRTSPServer.createNewClientSessionWithId();
+	      = (RTSPServer::RTSPClientSession*)fOurRTSPServer.createNewClientSessionWithId(envir());
 	  } else {
 	    areAuthenticated = False;
 	  }
@@ -1168,8 +1168,8 @@ void RTSPServer::RTSPClientConnection
 ////////// RTSPServer::RTSPClientSession implementation //////////
 
 RTSPServer::RTSPClientSession
-::RTSPClientSession(RTSPServer& ourServer, u_int32_t sessionId)
-  : GenericMediaServer::ClientSession(ourServer, sessionId),
+::RTSPClientSession(UsageEnvironment &env, RTSPServer& ourServer, u_int32_t sessionId)
+  : GenericMediaServer::ClientSession(env, ourServer, sessionId),
     fOurRTSPServer(ourServer), fIsMulticast(False), fStreamAfterSETUP(False),
     fTCPStreamIdCount(0), fNumStreamStates(0), fStreamStates(NULL) {
 }
@@ -1302,7 +1302,7 @@ void RTSPServer::RTSPClientSession
 
   // Begin by checking whether the specified stream name exists:
   char const* streamName = urlPreSuffix; // in the normal case
-  fOurServer.lookupServerMediaSession(streamName, SETUPLookupCompletionFunction1, this,
+  fOurServer.lookupServerMediaSession(envir(), streamName, SETUPLookupCompletionFunction1, this,
 				      fOurServerMediaSession == NULL);
 }
 
@@ -1334,7 +1334,7 @@ void RTSPServer::RTSPClientSession
   fTrackId = NULL;
       
   // Check again:
-  fOurServer.lookupServerMediaSession(streamName, SETUPLookupCompletionFunction2, this,
+  fOurServer.lookupServerMediaSession(envir(), streamName, SETUPLookupCompletionFunction2, this,
 				      fOurServerMediaSession == NULL);
   delete[] concatenatedStreamName;
 }
@@ -1943,10 +1943,10 @@ void RTSPServer::RTSPClientSession
 
 GenericMediaServer::ClientConnection*
 RTSPServer::createNewClientConnection(int clientSocket, struct sockaddr_storage const& clientAddr) {
-  return new RTSPClientConnection(*this, clientSocket, clientAddr);
+  return new RTSPClientConnection(getBestThreadedUsageEnvironment(), *this, clientSocket, clientAddr);
 }
 
 GenericMediaServer::ClientSession*
-RTSPServer::createNewClientSession(u_int32_t sessionId) {
-  return new RTSPClientSession(*this, sessionId);
+RTSPServer::createNewClientSession(UsageEnvironment &env, u_int32_t sessionId) {
+  return new RTSPClientSession(env, *this, sessionId);
 }

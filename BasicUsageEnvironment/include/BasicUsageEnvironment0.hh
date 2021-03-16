@@ -92,6 +92,7 @@ public:
   virtual void deleteEventTrigger(EventTriggerId eventTriggerId);
   virtual void triggerEvent(EventTriggerId eventTriggerId, void* clientData = NULL);
 
+  unsigned int getLoad(void) const;
 protected:
   BasicTaskScheduler0();
 

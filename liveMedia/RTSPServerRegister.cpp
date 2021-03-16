@@ -193,14 +193,14 @@ unsigned RTSPServer::deregisterStream(ServerMediaSession* serverMediaSession,
   return requestId;
 }
 
-Boolean RTSPServer::weImplementREGISTER(char const* /*cmd*//*"REGISTER" or "DEREGISTER"*/,
+Boolean RTSPServer::weImplementREGISTER(UsageEnvironment &env, char const* /*cmd*//*"REGISTER" or "DEREGISTER"*/,
 					char const* /*proxyURLSuffix*/, char*& responseStr) {
   // By default, servers do not implement our custom "REGISTER"/"DEREGISTER" commands:
   responseStr = NULL;
   return False;
 }
 
-void RTSPServer::implementCmd_REGISTER(char const* /*cmd*//*"REGISTER" or "DEREGISTER"*/,
+void RTSPServer::implementCmd_REGISTER(UsageEnvironment &env, char const* /*cmd*//*"REGISTER" or "DEREGISTER"*/,
 				       char const* /*url*/, char const* /*urlSuffix*/, int /*socketToRemoteServer*/,
 				       Boolean /*deliverViaTCP*/, char const* /*proxyURLSuffix*/) {
   // By default, this function is a 'noop'
@@ -227,7 +227,7 @@ void RTSPServer
 					   char const* url, char const* urlSuffix, char const* fullRequestStr,
 					   Boolean reuseConnection, Boolean deliverViaTCP, char const* proxyURLSuffix) {
   char* responseStr;
-  if (fOurRTSPServer.weImplementREGISTER(cmd, proxyURLSuffix, responseStr)) {
+  if (fOurRTSPServer.weImplementREGISTER(envir(), cmd, proxyURLSuffix, responseStr)) {
     // The "REGISTER"/"DEREGISTER" command - if we implement it - may require access control:
     if (!authenticationOK(cmd, urlSuffix, fullRequestStr)) return;
     
@@ -311,7 +311,7 @@ void RTSPServer::RTSPClientConnection::continueHandlingREGISTER1(ParamsForREGIST
     delete this;
   }
   
-  ourServer->implementCmd_REGISTER(params->fCmd,
+  ourServer->implementCmd_REGISTER(envir(), params->fCmd,
 				   params->fURL, params->fURLSuffix, socketNumToBackEndServer,
 				   params->fDeliverViaTCP, params->fProxyURLSuffix);
   delete params;
@@ -365,7 +365,7 @@ char const* RTSPServerWithREGISTERProxying::allowedCommandNames() {
 }
 
 Boolean RTSPServerWithREGISTERProxying
-::weImplementREGISTER(char const* cmd/*"REGISTER" or "DEREGISTER"*/,
+::weImplementREGISTER(UsageEnvironment& env, char const* cmd/*"REGISTER" or "DEREGISTER"*/,
 		      char const* proxyURLSuffix, char*& responseStr) {
   // First, check whether we have already proxied a stream as "proxyURLSuffix":
   if (proxyURLSuffix != NULL) {
@@ -383,7 +383,7 @@ Boolean RTSPServerWithREGISTERProxying
 }
 
 void RTSPServerWithREGISTERProxying
-::implementCmd_REGISTER(char const* cmd/*"REGISTER" or "DEREGISTER"*/,
+::implementCmd_REGISTER(UsageEnvironment& env, char const* cmd/*"REGISTER" or "DEREGISTER"*/,
 			char const* url, char const* /*urlSuffix*/, int socketToRemoteServer,
 			Boolean deliverViaTCP, char const* proxyURLSuffix) {
   // Continue setting up proxying for the specified URL.
@@ -410,7 +410,7 @@ void RTSPServerWithREGISTERProxying
         // We don't support streaming from the back-end via RTSP/RTP/RTCP-over-HTTP; only via RTP/RTCP-over-TCP or RTP/RTCP-over-UDP
 
     ServerMediaSession* sms
-      = ProxyServerMediaSession::createNew(envir(), this, url, proxyStreamName,
+      = ProxyServerMediaSession::createNew(env, this, url, proxyStreamName,
 					   fBackEndUsername, fBackEndPassword,
 					   tunnelOverHTTPPortNum, fVerbosityLevelForProxying, socketToRemoteServer);
     addServerMediaSession(sms);
@@ -422,7 +422,7 @@ void RTSPServerWithREGISTERProxying
     delete[] proxyStreamURL;
   } else { // "DEREGISTER"
     //    deleteServerMediaSession(lookupServerMediaSession(proxyStreamName));
-    lookupServerMediaSession(proxyStreamName, &GenericMediaServer::deleteServerMediaSession);
+    lookupServerMediaSession(env, proxyStreamName, &GenericMediaServer::deleteServerMediaSession);
   }
 }
 

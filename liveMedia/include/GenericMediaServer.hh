@@ -36,6 +36,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #define RESPONSE_BUFFER_SIZE 20000
 #endif
 
+#include <mutex>
+
 // Typedef for a handler function that gets called when "lookupServerMediaSession()"
 // (defined below) completes:
 typedef void lookupServerMediaSessionCompletionFunc(void* clientData,
@@ -45,12 +47,12 @@ class GenericMediaServer: public Medium {
 public:
   void addServerMediaSession(ServerMediaSession* serverMediaSession);
 
-  virtual void lookupServerMediaSession(char const* streamName,
+  virtual void lookupServerMediaSession(UsageEnvironment &env, char const* streamName,
 					lookupServerMediaSessionCompletionFunc* completionFunc,
 					void* completionClientData,
 					Boolean isFirstLookupInSession = True);
       // Note: This is a virtual function, so can be reimplemented by subclasses.
-  void lookupServerMediaSession(char const* streamName,
+  void lookupServerMediaSession(UsageEnvironment& env, char const* streamName,
 				void (GenericMediaServer::*memberFunc)(ServerMediaSession*));
       // Special case of "lookupServerMediaSession()" where the 'completion function' is a
       // member function of "GenericMediaServer" (and the 'completion client data' is "this".)
@@ -100,10 +102,12 @@ public: // should be protected, but some old compilers complain otherwise
   // The state of a TCP connection used by a client:
   class ClientConnection {
   protected:
-    ClientConnection(GenericMediaServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr);
+    ClientConnection(UsageEnvironment& threaded_env, GenericMediaServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr);
+  public:
     virtual ~ClientConnection();
+  protected:
 
-    UsageEnvironment& envir() { return fOurServer.envir(); }
+    UsageEnvironment& envir() { return threaded_env; }
     void closeSockets();
 
     static void incomingRequestHandler(void*, int /*mask*/);
@@ -112,10 +116,19 @@ public: // should be protected, but some old compilers complain otherwise
     void resetRequestBuffer();
 
   protected:
-    friend class GenericMediaServer;
-    friend class ClientSession;
-    friend class RTSPServer; // needed to make some broken Windows compilers work; remove this in the future when we end support for Windows
+    UsageEnvironment &threaded_env;
+    void lookupServerMediaSession(UsageEnvironment& env, char const* streamName,
+                                  lookupServerMediaSessionCompletionFunc* completionFunc,
+                                  Boolean isFirstLookupInSession = True) {
+      fOurServer.lookupServerMediaSession(env, streamName, completionFunc, this, isFirstLookupInSession);
+    }
+    void removeServerMediaSession(ServerMediaSession* serverMediaSession) {
+      fOurServer.removeServerMediaSession(serverMediaSession);
+    }
+  private:
+      // tread safety: do not allow wild access to fOurServer
     GenericMediaServer& fOurServer;
+  protected:
     int fOurSocket;
     struct sockaddr_storage fClientAddr;
     unsigned char fRequestBuffer[REQUEST_BUFFER_SIZE];
@@ -126,10 +139,10 @@ public: // should be protected, but some old compilers complain otherwise
   // The state of an individual client session (using one or more sequential TCP connections) handled by a server:
   class ClientSession {
   protected:
-    ClientSession(GenericMediaServer& ourServer, u_int32_t sessionId);
+    ClientSession(UsageEnvironment& threaded_env, GenericMediaServer& ourServer, u_int32_t sessionId);
     virtual ~ClientSession();
 
-    UsageEnvironment& envir() { return fOurServer.envir(); }
+    UsageEnvironment &envir() {return threaded_env;}
     void noteLiveness();
     static void noteClientLiveness(ClientSession* clientSession);
     static void livenessTimeoutTask(ClientSession* clientSession);
@@ -137,6 +150,7 @@ public: // should be protected, but some old compilers complain otherwise
   protected:
     friend class GenericMediaServer;
     friend class ClientConnection;
+    UsageEnvironment &threaded_env;
     GenericMediaServer& fOurServer;
     u_int32_t fOurSessionId;
     ServerMediaSession* fOurServerMediaSession;
@@ -145,9 +159,9 @@ public: // should be protected, but some old compilers complain otherwise
 
 protected:
   virtual ClientConnection* createNewClientConnection(int clientSocket, struct sockaddr_storage const& clientAddr) = 0;
-  virtual ClientSession* createNewClientSession(u_int32_t sessionId) = 0;
+  virtual ClientSession* createNewClientSession(UsageEnvironment& env, u_int32_t sessionId) = 0;
 
-  ClientSession* createNewClientSessionWithId();
+  ClientSession* createNewClientSessionWithId(UsageEnvironment& env);
       // Generates a new (unused) random session id, and calls the "createNewClientSession()"
       // virtual function with this session id as parameter.
 
@@ -155,6 +169,7 @@ protected:
   ClientSession* lookupClientSession(u_int32_t sessionId);
   ClientSession* lookupClientSession(char const* sessionIdStr);
 
+private:
   // An iterator over our "ServerMediaSession" objects:
   class ServerMediaSessionIterator {
   public:
@@ -165,22 +180,36 @@ protected:
     HashTable::Iterator* fOurIterator;
   };
 
-  // The basic, synchronous "ServerMediaSession" lookup operation; only for subclasses:
+protected:
+    // The basic, synchronous "ServerMediaSession" lookup operation; only for subclasses:
   ServerMediaSession* getServerMediaSession(char const* streamName);
   
 protected:
-  friend class ClientConnection;
-  friend class ClientSession;	
-  friend class ServerMediaSessionIterator;
-  int fServerSocketIPv4, fServerSocketIPv6;
-  Port fServerPort;
-  unsigned fReclamationSeconds;
+  const int fServerSocketIPv4;
+  const int fServerSocketIPv6;
+  const Port fServerPort;
+  const unsigned fReclamationSeconds;
+
+  UsageEnvironment& getBestThreadedUsageEnvironment(void);
 
 private:
+  void addClientConnection(ClientConnection *c) {
+    std::lock_guard<std::recursive_mutex> guard(internal_mutex);
+    fClientConnections->Add((char const*)c, c);
+  }
+  void removeClientConnection(ClientConnection *c) {
+    std::lock_guard<std::recursive_mutex> guard(internal_mutex);
+    fClientConnections->Remove((char const*)c);
+  }
+  
+  mutable std::recursive_mutex internal_mutex; // protectes all Hashtables
   HashTable* fServerMediaSessions; // maps 'stream name' strings to "ServerMediaSession" objects
   HashTable* fClientConnections; // the "ClientConnection" objects that we're using
   HashTable* fClientSessions; // maps 'session id' strings to "ClientSession" objects
   u_int32_t fPreviousClientSessionId;
+
+  class Worker;
+  Worker *const workers;
 };
 
 // A data structure used for optional user/password authentication:
@@ -200,13 +229,15 @@ public:
   virtual char const* lookupPassword(char const* username);
       // returns NULL if the user name was not present
 
-  char const* realm() { return fRealm; }
-  Boolean passwordsAreMD5() { return fPasswordsAreMD5; }
+  char const* realm() const { return fRealm; }
+  Boolean passwordsAreMD5() const { return fPasswordsAreMD5; }
 
+private:
+  mutable std::mutex fTable_mutex; // protects fTable
+  HashTable* const fTable;
 protected:
-  HashTable* fTable;
-  char* fRealm;
-  Boolean fPasswordsAreMD5;
+  const char *const fRealm;
+  const Boolean fPasswordsAreMD5;
 };
 
 #endif

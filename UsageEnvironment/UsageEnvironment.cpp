@@ -19,6 +19,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include "UsageEnvironment.hh"
 
+#include <iostream>
+
 Boolean UsageEnvironment::reclaim() {
   // We delete ourselves only if we have no remainining state:
   if (liveMediaPriv == NULL && groupsockPriv == NULL) {
@@ -43,10 +45,19 @@ void UsageEnvironment::internalError() {
 }
 
 
-TaskScheduler::TaskScheduler() {
+TaskScheduler::TaskScheduler()
+              :my_thread_id(std::this_thread::get_id()) {
+//  std::cout << "TaskScheduler::TaskScheduler(" << my_thread_id << ")" << std::endl << std::flush;
 }
 
 TaskScheduler::~TaskScheduler() {
+}
+
+void TaskScheduler::assertSameThread(void) const {
+  if (my_thread_id != std::this_thread::get_id()) {
+    std:: cout << "TaskScheduler(" << my_thread_id << ")::assertSameThread: calling from wrong thread: " << std::this_thread::get_id() << std::endl << std::flush;
+    abort();
+  }
 }
 
 void TaskScheduler::rescheduleDelayedTask(TaskToken& task,

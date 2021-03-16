@@ -118,11 +118,11 @@ protected:
   virtual ~RTSPServer();
 
   virtual char const* allowedCommandNames(); // used to implement "RTSPClientConnection::handleCmd_OPTIONS()"
-  virtual Boolean weImplementREGISTER(char const* cmd/*"REGISTER" or "DEREGISTER"*/,
+  virtual Boolean weImplementREGISTER(UsageEnvironment& env, char const* cmd/*"REGISTER" or "DEREGISTER"*/,
 				      char const* proxyURLSuffix, char*& responseStr);
       // used to implement "RTSPClientConnection::handleCmd_REGISTER()"
       // Note: "responseStr" is dynamically allocated (or NULL), and should be delete[]d after the call
-  virtual void implementCmd_REGISTER(char const* cmd/*"REGISTER" or "DEREGISTER"*/,
+  virtual void implementCmd_REGISTER(UsageEnvironment& env, char const* cmd/*"REGISTER" or "DEREGISTER"*/,
 				     char const* url, char const* urlSuffix, int socketToRemoteServer,
 				     Boolean deliverViaTCP, char const* proxyURLSuffix);
       // used to implement "RTSPClientConnection::handleCmd_REGISTER()"
@@ -166,7 +166,7 @@ public: // should be protected, but some old compilers complain otherwise
     virtual void handleRequestBytes(int newBytesRead);
 
   protected:
-    RTSPClientConnection(RTSPServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr);
+    RTSPClientConnection(UsageEnvironment& threaded_env, RTSPServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr);
     virtual ~RTSPClientConnection();
 
     friend class RTSPServer;
@@ -234,7 +234,7 @@ public: // should be protected, but some old compilers complain otherwise
   // The state of an individual client session (using one or more sequential TCP connections) handled by a RTSP server:
   class RTSPClientSession: public GenericMediaServer::ClientSession {
   protected:
-    RTSPClientSession(RTSPServer& ourServer, u_int32_t sessionId);
+    RTSPClientSession(UsageEnvironment& env, RTSPServer& ourServer, u_int32_t sessionId);
     virtual ~RTSPClientSession();
 
     friend class RTSPServer;
@@ -296,7 +296,7 @@ protected: // redefined virtual functions
 protected:
   // If you subclass "RTSPClientSession", then you must also redefine this virtual function in order
   // to create new objects of your subclass:
-  virtual ClientSession* createNewClientSession(u_int32_t sessionId);
+  virtual ClientSession* createNewClientSession(UsageEnvironment& env, u_int32_t sessionId);
 
 private:
   static void incomingConnectionHandlerHTTPIPv4(void*, int /*mask*/);
@@ -350,9 +350,9 @@ protected:
 
 protected: // redefined virtual functions
   virtual char const* allowedCommandNames();
-  virtual Boolean weImplementREGISTER(char const* cmd/*"REGISTER" or "DEREGISTER"*/,
+  virtual Boolean weImplementREGISTER(UsageEnvironment &env, char const* cmd/*"REGISTER" or "DEREGISTER"*/,
 				      char const* proxyURLSuffix, char*& responseStr);
-  virtual void implementCmd_REGISTER(char const* cmd/*"REGISTER" or "DEREGISTER"*/,
+  virtual void implementCmd_REGISTER(UsageEnvironment& env, char const* cmd/*"REGISTER" or "DEREGISTER"*/,
 				     char const* url, char const* urlSuffix, int socketToRemoteServer,
 				     Boolean deliverViaTCP, char const* proxyURLSuffix);
   virtual UserAuthenticationDatabase* getAuthenticationDatabaseForCommand(char const* cmdName);

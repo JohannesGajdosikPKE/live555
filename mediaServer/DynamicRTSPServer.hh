@@ -38,7 +38,7 @@ protected:
   virtual ~DynamicRTSPServer();
 
 protected: // redefined virtual functions
-  virtual void lookupServerMediaSession(char const* streamName,
+  virtual void lookupServerMediaSession(UsageEnvironment& env, char const* streamName,
 					lookupServerMediaSessionCompletionFunc* completionFunc,
 					void* completionClientData,
 					Boolean isFirstLookupInSession);

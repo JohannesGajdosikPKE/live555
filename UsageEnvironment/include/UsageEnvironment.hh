@@ -46,6 +46,9 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #define _O_BINARY O_BINARY
 #endif
 
+#include <functional>
+#include <thread>
+
 class TaskScheduler; // forward
 
 // An abstract base class, subclassed for each use of the library
@@ -106,6 +109,7 @@ typedef u_int32_t EventTriggerId;
 class TaskScheduler {
 public:
   virtual ~TaskScheduler();
+  virtual void executeCommand(std::function<void()>&& cmd) = 0;
 
   virtual TaskToken scheduleDelayedTask(int64_t microseconds, TaskFunc* proc,
 					void* clientData) = 0;
@@ -165,6 +169,8 @@ public:
 
   virtual void internalError(); // used to 'handle' a 'should not occur'-type error condition within the library.
 
+  const std::thread::id my_thread_id;
+  void assertSameThread(void) const;
 protected:
   TaskScheduler(); // abstract base class
 };

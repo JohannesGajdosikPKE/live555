@@ -20,16 +20,21 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include "BasicUsageEnvironment.hh"
 #include "HandlerSet.hh"
+#include <GroupsockHelper.hh>
 #include <stdio.h>
 #if defined(_QNX4)
 #include <sys/select.h>
 #include <unix.h>
 #endif
 
+#if defined(__WIN32__) || defined(_WIN32)
+extern "C" int initializeWinsockIfNecessary();
+#endif
+
 ////////// BasicTaskScheduler //////////
 
 BasicTaskScheduler* BasicTaskScheduler::createNew(unsigned maxSchedulerGranularity) {
-	return new BasicTaskScheduler(maxSchedulerGranularity);
+  return new BasicTaskScheduler(maxSchedulerGranularity);
 }
 
 BasicTaskScheduler::BasicTaskScheduler(unsigned maxSchedulerGranularity)
@@ -38,16 +43,101 @@ BasicTaskScheduler::BasicTaskScheduler(unsigned maxSchedulerGranularity)
   , fDummySocketNum(-1)
 #endif
 {
+#if defined(__WIN32__) || defined(_WIN32)
+  if (!initializeWinsockIfNecessary()) abort();
+  int listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (listener == INVALID_SOCKET) abort();
+  int reuse = 1;
+  if (setsockopt(listener, SOL_SOCKET, SO_REUSEADDR,
+                 (char*)&reuse,sizeof(reuse))) abort();
+  struct sockaddr_in a;
+  memset(&a, 0, sizeof(struct sockaddr_in));
+  a.sin_family = AF_INET;
+  a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  a.sin_port = 0;
+  if (bind(listener, (sockaddr*)&a, sizeof(a))) abort();
+    // bind has chosen a free port, get it:
+  int namelen = sizeof(a);
+  if (getsockname(listener, (sockaddr*)&a, &namelen)) abort();
+  if (listen(listener, 1)) abort();
+  command_pipe[0] = socket(AF_INET, SOCK_STREAM, 0);
+  if (command_pipe[0] == INVALID_SOCKET) abort();
+  if (connect(command_pipe[0], (sockaddr*)&a, sizeof(a))) abort();
+  command_pipe[1] = accept(listener, 0, 0);
+  if (command_pipe[1] == INVALID_SOCKET) abort();
+  if (closesocket(listener)) abort();
+#else
+  if (pipe2(command_pipe, O_CLOEXEC)) abort();
+#endif
+  if (!makeSocketNonBlocking(command_pipe[0])) abort();
+
   FD_ZERO(&fReadSet);
   FD_ZERO(&fWriteSet);
   FD_ZERO(&fExceptionSet);
 
   if (maxSchedulerGranularity > 0) schedulerTickTask(); // ensures that we handle events frequently
+  setBackgroundHandling(command_pipe[0], SOCKET_READABLE | SOCKET_EXCEPTION, CommandRequestHandler, this);
+}
+void BasicTaskScheduler::executeCommand(std::function<void()> &&cmd) {
+  {
+    std::lock_guard<std::mutex> guard(command_mutex);
+    command_queue.push(std::move(cmd));
+  }
+  char data = 0;
+  for (;;) {
+#if defined(__WIN32__) || defined(_WIN32)
+    const int rc = send(command_pipe[1], &data, 1, 0);
+#else
+    const int rc = write(command_pipe[1], &data, 1);
+#endif
+    if (rc > 0) break;
+    if (rc != 0) {
+      printf("send failed: %d\n", WSAGetLastError());
+      abort();
+    }
+  }
+}
+
+void BasicTaskScheduler::CommandRequestHandler(void* instance, int /*mask*/) {
+  ((BasicTaskScheduler*)instance)->commandRequestHandler();
+}
+
+void BasicTaskScheduler::commandRequestHandler(void) {
+  assertSameThread();
+  for (;;) {
+    char data;
+#if defined(__WIN32__) || defined(_WIN32)
+    const int rc = recv(command_pipe[0], &data, 1, 0);
+#else
+    const int rc = read(command_pipe[0], &data, 1);
+#endif
+    if (rc == 0) break;
+    if (rc < 0) {
+#if defined(__WIN32__) || defined(_WIN32)
+      if (WSAGetLastError() == WSAEWOULDBLOCK) break;
+#endif
+      printf("recv failed: %d\n", WSAGetLastError());
+      abort();
+    }
+    std::function<void()> f;
+    {
+      std::lock_guard<std::mutex> guard(command_mutex);
+      if (command_queue.empty()) continue;
+      f.swap(command_queue.front());
+      command_queue.pop();
+    }
+    f();
+  }
 }
 
 BasicTaskScheduler::~BasicTaskScheduler() {
 #if defined(__WIN32__) || defined(_WIN32)
   if (fDummySocketNum >= 0) closeSocket(fDummySocketNum);
+  closesocket(command_pipe[0]);
+  closesocket(command_pipe[1]);
+#else
+  close(command_pipe[0]);
+  close(command_pipe[1]);
 #endif
 }
 
@@ -56,6 +146,7 @@ void BasicTaskScheduler::schedulerTickTask(void* clientData) {
 }
 
 void BasicTaskScheduler::schedulerTickTask() {
+  assertSameThread();
   scheduleDelayedTask(fMaxSchedulerGranularity, schedulerTickTask, this);
 }
 
@@ -64,6 +155,7 @@ void BasicTaskScheduler::schedulerTickTask() {
 #endif
 
 void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
+  assertSameThread();
   fd_set readSet = fReadSet; // make a copy for this select() call
   fd_set writeSet = fWriteSet; // ditto
   fd_set exceptionSet = fExceptionSet; // ditto
@@ -214,6 +306,7 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
 
 void BasicTaskScheduler
   ::setBackgroundHandling(int socketNum, int conditionSet, BackgroundHandlerProc* handlerProc, void* clientData) {
+  assertSameThread();
   if (socketNum < 0) return;
 #if !defined(__WIN32__) && !defined(_WIN32) && defined(FD_SETSIZE)
   if (socketNum >= (int)(FD_SETSIZE)) return;
@@ -238,6 +331,7 @@ void BasicTaskScheduler
 }
 
 void BasicTaskScheduler::moveSocketHandling(int oldSocketNum, int newSocketNum) {
+  assertSameThread();
   if (oldSocketNum < 0 || newSocketNum < 0) return; // sanity check
 #if !defined(__WIN32__) && !defined(_WIN32) && defined(FD_SETSIZE)
   if (oldSocketNum >= (int)(FD_SETSIZE) || newSocketNum >= (int)(FD_SETSIZE)) return; // sanity check
