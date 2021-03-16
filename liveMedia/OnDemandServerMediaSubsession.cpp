@@ -221,7 +221,7 @@ void OnDemandServerMediaSubsession::startStream(unsigned clientSessionId,
     RTPSink* rtpSink = streamState->rtpSink(); // alias
     if (rtpSink != NULL) {
       rtpSeqNum = rtpSink->currentSeqNo();
-      rtpTimestamp = rtpSink->presetNextTimestamp();
+      rtpTimestamp = rtpSink->getLastRtpTime();
     }
   }
 }
@@ -512,6 +512,7 @@ void StreamState
   if (fRTCPInstance == NULL && fRTPSink != NULL) {
     // Create (and start) a 'RTCP instance' for this RTP sink:
     fRTCPInstance = fMaster.createRTCP(fRTCPgs, fTotalBW, (unsigned char*)fMaster.fCNAME, fRTPSink);
+    fRTPSink->setRTCPInstance(fRTCPInstance);
         // Note: This starts RTCP running automatically
     fRTCPInstance->setAppHandler(fMaster.fAppHandlerTask, fMaster.fAppHandlerClientData);
   }
@@ -544,9 +545,9 @@ void StreamState
   }
 
   if (fRTCPInstance != NULL) {
-    // Hack: Send an initial RTCP "SR" packet, before the initial RTP packet, so that receivers will (likely) be able to
+    // Send an initial RTCP "SR" packet, before the initial RTP packet, so that receivers will be able to
     // get RTCP-synchronized presentation times immediately:
-    fRTCPInstance->sendReport();
+    if (fRTPSink && fRTPSink->framesReceived()) fRTCPInstance->sendReport();
   }
 
   if (!fAreCurrentlyPlaying && fMediaSource != NULL) {

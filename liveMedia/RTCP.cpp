@@ -982,11 +982,6 @@ Boolean RTCPInstance::addReport(Boolean alwaysAdd) {
   if (fSink != NULL) {
     if (!alwaysAdd) {
       if (!fSink->enableRTCPReports()) return False;
-
-      // Hack: Don't send a SR during those (brief) times when the timestamp of the
-      // next outgoing RTP packet has been preset, to ensure that that timestamp gets
-      // used for that outgoing packet. (David Bertrand, 2006.07.18)
-      if (fSink->nextTimestampHasBeenPreset()) return False;
     }
 
     addSR();
@@ -1012,13 +1007,22 @@ void RTCPInstance::addSR() {
 
   // Insert the NTP and RTP timestamps for the 'wallclock time':
   struct timeval timeNow;
-  gettimeofday(&timeNow, NULL);
+
+//  gettimeofday(&timeNow, NULL);
+//  const long long int time_diff = timeNow.tv_sec*1000000LL + timeNow.tv_usec - fSink->getLastFrameTime();
+//  const u_int32_t timestampIncrement = (fSink->rtpTimestampFrequency()*(1e-6)*time_diff + 0.5); // note: rounding
+
+  timeNow.tv_sec = fSink->getLastFrameTime() / 1000000LL;
+  timeNow.tv_usec = fSink->getLastFrameTime() - (timeNow.tv_sec*1000000LL);
+
   fOutBuf->enqueueWord(timeNow.tv_sec + 0x83AA7E80);
       // NTP timestamp most-significant word (1970 epoch -> 1900 epoch)
   double fractionalPart = (timeNow.tv_usec/15625.0)*0x04000000; // 2^32/10^6
   fOutBuf->enqueueWord((unsigned)(fractionalPart+0.5));
       // NTP timestamp least-significant word
-  unsigned rtpTimestamp = fSink->convertToRTPTimestamp(timeNow);
+  unsigned rtpTimestamp = fSink->getLastRtpTime()
+//    + timestampIncrement
+  ;
   fOutBuf->enqueueWord(rtpTimestamp); // RTP ts
 
   // Insert the packet and byte counts:

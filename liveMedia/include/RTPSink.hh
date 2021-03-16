@@ -29,6 +29,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #endif
 
 class RTPTransmissionStatsDB; // forward
+class RTCPInstance;
 
 class RTPSink: public MediaSink {
 public:
@@ -38,6 +39,8 @@ public:
   // used by RTSP servers:
   Groupsock const& groupsockBeingUsed() const { return *(fRTPInterface.gs()); }
   Groupsock& groupsockBeingUsed() { return *(fRTPInterface.gs()); }
+
+  void setRTCPInstance(RTCPInstance *i) {rtcp_instance = i;}
 
   unsigned char rtpPayloadType() const { return fRTPPayloadType; }
   unsigned rtpTimestampFrequency() const { return fTimestampFrequency; }
@@ -54,15 +57,13 @@ public:
       // optional SDP line (e.g. a=fmtp:...)
 
   u_int16_t currentSeqNo() const { return fSeqNo; }
-  u_int32_t presetNextTimestamp();
-      // ensures that the next timestamp to be used will correspond to
-      // the current 'wall clock' time.
+  u_int32_t getLastRtpTime(void) const {return fTimestampBase;}
 
   RTPTransmissionStatsDB& transmissionStatsDB() const {
     return *fTransmissionStatsDB;
   }
 
-  Boolean nextTimestampHasBeenPreset() const { return fNextTimestampHasBeenPreset; }
+  Boolean framesReceived() const { return frames_received; }
   Boolean& enableRTCPReports() { return fEnableRTCPReports; }
 
   void getTotalBitrate(unsigned& outNumBytes, double& outElapsedTime);
@@ -103,6 +104,7 @@ protected:
   friend class RTCPInstance;
   friend class RTPTransmissionStats;
   u_int32_t convertToRTPTimestamp(struct timeval tv);
+  long long int getLastFrameTime(void) const {return last_frame_time;}
   unsigned packetCount() const {return fPacketCount;}
   unsigned octetCount() const {return fOctetCount;}
 
@@ -120,8 +122,10 @@ private:
 
 private:
   u_int32_t fSSRC, fTimestampBase;
+  long long int last_frame_time;
+  RTCPInstance *rtcp_instance;
   unsigned fTimestampFrequency;
-  Boolean fNextTimestampHasBeenPreset;
+  Boolean frames_received;
   Boolean fEnableRTCPReports; // whether RTCP "SR" reports should be sent for this sink (default: True)
   char const* fRTPPayloadFormatName;
   unsigned fNumChannels;

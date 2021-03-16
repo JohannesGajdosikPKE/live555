@@ -34,6 +34,7 @@ PassiveServerMediaSubsession
 ::PassiveServerMediaSubsession(RTPSink& rtpSink, RTCPInstance* rtcpInstance)
   : ServerMediaSubsession(rtpSink.envir()),
     fSDPLines(NULL), fRTPSink(rtpSink), fRTCPInstance(rtcpInstance) {
+  fRTPSink.setRTCPInstance(fRTCPInstance);
   fClientRTCPSourceRecords = HashTable::create(ONE_WORD_HASH_KEYS);
 }
 
@@ -174,7 +175,7 @@ void PassiveServerMediaSubsession::startStream(unsigned clientSessionId,
 					       ServerRequestAlternativeByteHandler* /*serverRequestAlternativeByteHandler*/,
 					       void* /*serverRequestAlternativeByteHandlerClientData*/) {
   rtpSeqNum = fRTPSink.currentSeqNo();
-  rtpTimestamp = fRTPSink.presetNextTimestamp();
+  rtpTimestamp = fRTPSink.getLastRtpTime();
 
   // Try to use a big send buffer for RTP -  at least 0.1 second of
   // specified bandwidth and at least 50 KB

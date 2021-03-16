@@ -20,6 +20,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include "RTPSink.hh"
 #include "GroupsockHelper.hh"
+#include "RTCP.hh"
 
 ////////// RTPSink //////////
 
@@ -51,7 +52,8 @@ RTPSink::RTPSink(UsageEnvironment& env,
   : MediaSink(env), fRTPInterface(this, rtpGS),
     fRTPPayloadType(rtpPayloadType),
     fPacketCount(0), fOctetCount(0), fTotalOctetCount(0),
-    fTimestampFrequency(rtpTimestampFrequency), fNextTimestampHasBeenPreset(False), fEnableRTCPReports(True),
+    rtcp_instance(0),
+    fTimestampFrequency(rtpTimestampFrequency), frames_received(False), fEnableRTCPReports(True),
     fNumChannels(numChannels), fEstimatedBitrate(0) {
   fRTPPayloadFormatName
     = strDup(rtpPayloadFormatName == NULL ? "???" : rtpPayloadFormatName);
@@ -75,40 +77,26 @@ RTPSink::~RTPSink() {
 }
 
 u_int32_t RTPSink::convertToRTPTimestamp(struct timeval tv) {
-  // Begin by converting from "struct timeval" units to RTP timestamp units:
-  u_int32_t timestampIncrement = (fTimestampFrequency*tv.tv_sec);
-  timestampIncrement += (u_int32_t)(fTimestampFrequency*(tv.tv_usec/1000000.0) + 0.5); // note: rounding
-
-  // Then add this to our 'timestamp base':
-  if (fNextTimestampHasBeenPreset) {
-    // Make the returned timestamp the same as the current "fTimestampBase",
-    // so that timestamps begin with the value that was previously preset:
-    fTimestampBase -= timestampIncrement;
-    fNextTimestampHasBeenPreset = False;
+  /// gaj: this is only called by MultiFramedRTPSink.cpp with the frame time
+  /// and not anymore by RTPSink with the wallclock time
+  if (!frames_received) { // first time
+    frames_received = True;
+    last_frame_time = tv.tv_sec*1000000LL + tv.tv_usec;
+      // send rtcp SR before any rtp packets
+    if (rtcp_instance && fEnableRTCPReports) rtcp_instance->sendReport();
+  } else {
+    const long long int t = tv.tv_sec*1000000LL + tv.tv_usec;
+    const long long int time_diff = t - last_frame_time;
+    const u_int32_t timestampIncrement = (fTimestampFrequency*(1e-6)*time_diff + 0.5); // note: rounding
+    fTimestampBase += timestampIncrement;
+    last_frame_time = t;
   }
-
-  u_int32_t const rtpTimestamp = fTimestampBase + timestampIncrement;
 #ifdef DEBUG_TIMESTAMPS
   fprintf(stderr, "fTimestampBase: 0x%08x, tv: %lu.%06ld\n\t=> RTP timestamp: 0x%08x\n",
 	  fTimestampBase, tv.tv_sec, tv.tv_usec, rtpTimestamp);
   fflush(stderr);
 #endif
-
-  return rtpTimestamp;
-}
-
-u_int32_t RTPSink::presetNextTimestamp() {
-  struct timeval timeNow;
-  gettimeofday(&timeNow, NULL);
-
-  u_int32_t tsNow = convertToRTPTimestamp(timeNow);
-  if (!groupsockBeingUsed().hasMultipleDestinations()) {
-    // Don't adjust the timestamp stream if we already have another destination ongoing
-    fTimestampBase = tsNow;
-    fNextTimestampHasBeenPreset = True;
-  }
-
-  return tsNow;
+  return fTimestampBase;
 }
 
 void RTPSink::getTotalBitrate(unsigned& outNumBytes, double& outElapsedTime) {
