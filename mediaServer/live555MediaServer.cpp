@@ -19,6 +19,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include <BasicUsageEnvironment.hh>
 #include "DynamicRTSPServer.hh"
+#include "H264or5VideoStreamFramer.hh"
 #include "version.hh"
 
 int main(int argc, char** argv) {
@@ -37,9 +38,34 @@ int main(int argc, char** argv) {
 
   // Create the RTSP server.  Try first with the default port number (554),
   // and then with the alternative port number (8554):
-  RTSPServer* rtspServer;
-  portNumBits rtspServerPortNum = 554;
-  rtspServer = DynamicRTSPServer::createNew(*env, rtspServerPortNum, authDB);
+
+  if (argc < 2) {
+    *env << "Usage:   " << argv[0] << " <rtsp-port> [default_h264_fps]\n"
+            "Example: "<< argv[0] << " 554 29.97\n";
+    return 1;
+  }
+
+  int rtspServerPortNum = 0;
+  if (1 != sscanf(argv[1],"%d",&rtspServerPortNum) ||
+      rtspServerPortNum < 100 || rtspServerPortNum > 65535) {
+    *env << "rtsp-port in the range [100..65535]" << " expected\n";
+    return 2;
+  }
+  if (argc > 2) {
+    if (argc > 3) {
+      *env << "more than 2 commandline args\n";
+      return 3;
+    }
+    double x = 0.0;
+    if (1 != sscanf(argv[2],"%lf",&x) ||
+        x <= 0.0 || x >= 100.0) {
+      *env << "default_h264_fps must be in the range (0..100)\n";
+      return 4;
+    }
+    H264or5VideoStreamFramer::fDefaultFrameRate = x;
+  }
+
+  RTSPServer *rtspServer = DynamicRTSPServer::createNew(*env, rtspServerPortNum, authDB);
   if (rtspServer == NULL) {
     rtspServerPortNum = 8554;
     rtspServer = DynamicRTSPServer::createNew(*env, rtspServerPortNum, authDB);
