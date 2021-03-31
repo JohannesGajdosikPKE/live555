@@ -171,6 +171,7 @@ public:
 
   const std::thread::id my_thread_id;
   void assertSameThread(void) const;
+  bool assert_threads = false;
 protected:
   TaskScheduler(); // abstract base class
 };

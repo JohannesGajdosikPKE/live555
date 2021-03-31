@@ -1,10 +1,18 @@
-add_executable (mediaServer
+set (TARGET mediaServer)
+
+add_executable (${TARGET}
   DynamicRTSPServer.cpp
   live555MediaServer.cpp
 )
 
-# Link the executable to the Hello library. Since the Hello library has
-# public include directories we will use those link directories when building
-# helloDemo
-target_link_libraries (mediaServer LINK_PUBLIC BasicUsageEnvironment UsageEnvironment groupsock liveMedia ws2_32)
+target_compile_options (${TARGET} PUBLIC -DLIVE555_FORCE_BOOLEAN_TYPE=char)
+
+if (WIN32)
+  target_compile_options (${TARGET} PUBLIC $<$<NOT:$<CONFIG:Debug>>:-MT>)
+  target_compile_options (${TARGET} PUBLIC $<$<CONFIG:Debug>:-MTd>)
+else ()
+  target_compile_options (${TARGET} PUBLIC -std=c++-11)
+endif ()
+
+target_link_libraries (${TARGET} LINK_PUBLIC BasicUsageEnvironment UsageEnvironment groupsock liveMedia ws2_32)
 

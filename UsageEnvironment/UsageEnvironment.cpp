@@ -41,6 +41,7 @@ UsageEnvironment::~UsageEnvironment() {
 // By default, we handle 'should not occur'-type library errors by calling abort().  Subclasses can redefine this, if desired.
 // (If your runtime library doesn't define the "abort()" function, then define your own (e.g., that does nothing).)
 void UsageEnvironment::internalError() {
+  fprintf(stderr,"UsageEnvironment::internalError: calling abort();\"");
   abort();
 }
 
@@ -54,8 +55,9 @@ TaskScheduler::~TaskScheduler() {
 }
 
 void TaskScheduler::assertSameThread(void) const {
-  if (my_thread_id != std::this_thread::get_id()) {
-    std:: cout << "TaskScheduler(" << my_thread_id << ")::assertSameThread: calling from wrong thread: " << std::this_thread::get_id() << std::endl << std::flush;
+  if (assert_threads && my_thread_id != std::this_thread::get_id()) {
+    const std::thread::id curr_thread_id = std::this_thread::get_id();
+    std:: cout << "TaskScheduler(" << my_thread_id << ")::assertSameThread: calling from wrong thread: " << curr_thread_id << std::endl << std::flush;
     abort();
   }
 }
@@ -69,5 +71,6 @@ void TaskScheduler::rescheduleDelayedTask(TaskToken& task,
 
 // By default, we handle 'should not occur'-type library errors by calling abort().  Subclasses can redefine this, if desired.
 void TaskScheduler::internalError() {
+  fprintf(stderr,"TaskScheduler::internalError: calling abort();\"");
   abort();
 }

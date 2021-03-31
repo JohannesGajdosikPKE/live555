@@ -343,10 +343,11 @@ private:
   char* fUserAgentHeaderStr;
   unsigned fUserAgentHeaderStrLen;
   int fInputSocketNum, fOutputSocketNum;
-  char* fBaseURL;
+protected:    char* fBaseURL;
+private:
   unsigned char fTCPStreamIdCount; // used for (optional) RTP/TCP
-  char* fLastSessionId;
-  unsigned fSessionTimeoutParameter; // optionally set in response "Session:" headers
+protected:  char* fLastSessionId;
+private:  unsigned fSessionTimeoutParameter; // optionally set in response "Session:" headers
   char* fResponseBuffer;
   unsigned fResponseBytesAlreadySeen, fResponseBufferBytesLeft;
   RequestQueue fRequestsAwaitingConnection, fRequestsAwaitingHTTPTunneling, fRequestsAwaitingResponse;

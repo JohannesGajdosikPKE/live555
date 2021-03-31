@@ -44,6 +44,18 @@ void GenericMediaServer::addServerMediaSession(ServerMediaSession* serverMediaSe
   fServerMediaSessions->Add(sessionName, (void*)serverMediaSession);
 }
 
+void GenericMediaServer::addServerMediaSessionWithoutRemoving(ServerMediaSession* serverMediaSession) {
+  if (serverMediaSession == NULL) return;
+  
+  char const* sessionName = serverMediaSession->streamName();
+  if (sessionName == NULL) sessionName = "";
+  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
+///gaj: belongs to another UsageEnvironment, do not delete:  removeServerMediaSession(sessionName);
+      // in case an existing "ServerMediaSession" with this name already exists
+  
+  fServerMediaSessions->Add(sessionName, (void*)serverMediaSession);
+}
+
 void GenericMediaServer
 ::lookupServerMediaSession(UsageEnvironment& env, char const* streamName,
 			   lookupServerMediaSessionCompletionFunc* completionFunc,
@@ -132,6 +144,7 @@ public:
     : worker_thread([this](void) {
 //        std::cout << "Worker::mainThread(" << std::this_thread::get_id() << "): start" << std::endl << std::flush;
         scheduler = BasicTaskScheduler::createNew();
+        scheduler->assert_threads = true;
 //        std::cout << "Worker::mainThread(" << std::this_thread::get_id() << "): scheduler created" << std::endl << std::flush;
         env = new DeletableUsageEnvironment(*scheduler);
         {

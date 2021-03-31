@@ -640,9 +640,10 @@ void RTSPServer::RTSPClientConnection::handleAlternativeRequestByte1(u_int8_t re
 }
 
 void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
+//  fprintf(stderr,"RTSPServer::RTSPClientConnection(%p)::handleRequestBytes(%d) start\n", this, newBytesRead);
   int numBytesRemaining = 0;
   ++fRecursionCount;
-  
+
   do {
     RTSPServer::RTSPClientSession* clientSession = NULL;
 
@@ -944,6 +945,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
     // while handling a command (e.g., while handling a "DESCRIBE", to get a SDP description).
     // In such a case we don't want to actually delete ourself until we leave the outermost call.
   }
+//  fprintf(stderr,"RTSPServer::RTSPClientConnection(%p)::handleRequestBytes(%d) end\n", this, newBytesRead);
 }
 
 #define SKIP_WHITESPACE while (*fields != '\0' && (*fields == ' ' || *fields == '\t')) ++fields

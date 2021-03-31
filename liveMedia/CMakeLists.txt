@@ -1,4 +1,6 @@
-add_library (liveMedia
+set (TARGET liveMedia)
+
+add_library (${TARGET}
   rtcp_from_spec.c
   AC3AudioFileServerMediaSubsession.cpp
   AC3AudioRTPSink.cpp
@@ -182,9 +184,19 @@ add_library (liveMedia
   uLawAudioFilter.cpp
 )
 
-target_compile_options(liveMedia PUBLIC -DNO_OPENSSL)
+target_compile_options (${TARGET} PUBLIC -DLIVE555_FORCE_BOOLEAN_TYPE=char)
 
-target_include_directories (liveMedia PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_include_directories (liveMedia PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../groupsock/include)
-target_include_directories (liveMedia PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../UsageEnvironment/include)
-target_include_directories (liveMedia PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../BasicUsageEnvironment/include)
+target_compile_options(${TARGET} PUBLIC -DNO_OPENSSL)
+
+target_include_directories (${TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories (${TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../groupsock/include)
+target_include_directories (${TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../UsageEnvironment/include)
+target_include_directories (${TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../BasicUsageEnvironment/include)
+
+if (WIN32)
+  target_compile_options (${TARGET} PUBLIC $<$<NOT:$<CONFIG:Debug>>:-MT>)
+  target_compile_options (${TARGET} PUBLIC $<$<CONFIG:Debug>:-MTd>)
+else ()
+  target_compile_options (${TARGET} PUBLIC -std=c++-11)
+endif ()
+
