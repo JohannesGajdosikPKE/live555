@@ -147,10 +147,6 @@ void BasicTaskScheduler0::triggerEvent(EventTriggerId eventTriggerId, void* clie
   fTriggersAwaitingHandling |= eventTriggerId;
 }
 
-unsigned int BasicTaskScheduler0::getLoad(void) const {
-  return fHandlers->getNrOfHandlers();
-}
-
 
 ////////// HandlerSet (etc.) implementation //////////
 
@@ -174,7 +170,7 @@ HandlerDescriptor::~HandlerDescriptor() {
 }
 
 HandlerSet::HandlerSet()
-  : fHandlers(&fHandlers), nr_of_handlers(0) {
+  : fHandlers(&fHandlers) {
   fHandlers.socketNum = -1; // shouldn't ever get looked at, but in case...
 }
 
@@ -192,7 +188,6 @@ void HandlerSet
   if (handler == NULL) { // No existing handler, so create a new descr:
     handler = new HandlerDescriptor(fHandlers.fNextHandler);
     handler->socketNum = socketNum;
-    nr_of_handlers++;
   }
 
   handler->conditionSet = conditionSet;
@@ -202,10 +197,7 @@ void HandlerSet
 
 void HandlerSet::clearHandler(int socketNum) {
   HandlerDescriptor* handler = lookupHandler(socketNum);
-  if (handler) {
-    delete handler;
-    nr_of_handlers--;
-  }
+  if (handler) delete handler;
 }
 
 void HandlerSet::moveHandler(int oldSocketNum, int newSocketNum) {

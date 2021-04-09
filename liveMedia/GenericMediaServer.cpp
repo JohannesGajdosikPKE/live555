@@ -164,7 +164,7 @@ public:
   }
   void stop(void) {watchVariable = 1;}
   UsageEnvironment& getEnv(void) const {return *env;}
-  unsigned int getLoad(void) const {return scheduler->getLoad();}
+  int getLoad(void) const {return scheduler->addNrOfUsers(0);}
 private:
   BasicTaskScheduler *scheduler = nullptr;
   struct DeletableUsageEnvironment : public BasicUsageEnvironment {
@@ -177,7 +177,12 @@ private:
   std::condition_variable cv;
 };
 
-#define NR_OF_WORKER_THREADS 32
+static inline unsigned int GetNrOfCores(void) {
+  unsigned int rval = std::thread::hardware_concurrency();
+  if (rval == 0) rval = 32; // C++ does not know the nr of cores
+  else if (rval > 1024) rval = 1024; // sanity check
+  return rval;
+}
 
 GenericMediaServer
 ::GenericMediaServer(UsageEnvironment& env, int ourSocketIPv4, int ourSocketIPv6, Port ourPort,
@@ -189,8 +194,10 @@ GenericMediaServer
     fClientConnections(HashTable::create(ONE_WORD_HASH_KEYS)),
     fClientSessions(HashTable::create(STRING_HASH_KEYS)),
     fPreviousClientSessionId(0),
-    workers(new Worker[NR_OF_WORKER_THREADS])
+    nr_of_workers(GetNrOfCores()),
+    workers(new Worker[nr_of_workers])
 {
+//fprintf(stderr,"GenericMediaServer::GenericMediaServer: %u workers\n", nr_of_workers);
   ignoreSigPipeOnSocket(fServerSocketIPv4); // so that clients on the same host that are killed don't also kill us
   ignoreSigPipeOnSocket(fServerSocketIPv6); // ditto
   
@@ -209,15 +216,16 @@ GenericMediaServer::~GenericMediaServer() {
 }
 
 UsageEnvironment &GenericMediaServer::getBestThreadedUsageEnvironment(void) {
-  unsigned int best_load = 0;
-  Worker *best_worker = nullptr;
-  for (int i = 0; i < NR_OF_WORKER_THREADS; i++) {
-    const unsigned int load = workers[i].getLoad();
-    if (best_worker == nullptr || load < best_load) {
+  Worker *best_worker = workers;
+  int best_load = best_worker->getLoad();
+  for (int i = 1; i < nr_of_workers; i++) {
+    const int load = workers[i].getLoad();
+    if (load < best_load) {
       best_load = load;
       best_worker = workers + i;
     }
   }
+//fprintf(stderr,"getBestThreadedUsageEnvironment: %d with load %d\n", best_worker-workers, best_load);
   return best_worker->getEnv();
 }
 
@@ -228,7 +236,7 @@ void GenericMediaServer::cleanup() {
   // affect (break) the destruction of the "ClientSession" and "ClientConnection" objects, which
   // themselves will have been subclassed.)
 
-  for (int i = 0; i < NR_OF_WORKER_THREADS; i++) workers[i].stop();
+  for (int i = 0; i < nr_of_workers; i++) workers[i].stop();
 
   std::lock_guard<std::recursive_mutex> guard(internal_mutex);
 
@@ -337,6 +345,10 @@ void GenericMediaServer::incomingConnectionHandlerOnSocket(int serverSocket) {
 GenericMediaServer::ClientConnection
 ::ClientConnection(UsageEnvironment &threaded_env, GenericMediaServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr)
   : threaded_env(threaded_env), fOurServer(ourServer), fOurSocket(clientSocket), fClientAddr(clientAddr) {
+    envir().taskScheduler().addNrOfUsers(1);
+}
+
+void GenericMediaServer::ClientConnection::afterConstruction(void) {
   // Add ourself to our 'client connections' table:
   fOurServer.addClientConnection(this);
   
@@ -349,6 +361,8 @@ GenericMediaServer::ClientConnection
 }
 
 GenericMediaServer::ClientConnection::~ClientConnection() {
+  envir().taskScheduler().assertSameThread();
+  envir().taskScheduler().addNrOfUsers(-1);
   // Remove ourself from the server's 'client connections' hash table before we go:
   fOurServer.removeClientConnection(this);
   
@@ -369,6 +383,7 @@ void GenericMediaServer::ClientConnection::incomingRequestHandler(void* instance
 }
 
 void GenericMediaServer::ClientConnection::incomingRequestHandler() {
+  envir().taskScheduler().assertSameThread();
   struct sockaddr_storage dummy; // 'from' address, meaningless in this case
   
   int bytesRead = readSocket(envir(), fOurSocket, &fRequestBuffer[fRequestBytesAlreadySeen], fRequestBufferBytesLeft, dummy);

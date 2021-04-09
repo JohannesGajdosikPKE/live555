@@ -47,7 +47,8 @@ void UsageEnvironment::internalError() {
 
 
 TaskScheduler::TaskScheduler()
-              :my_thread_id(std::this_thread::get_id()) {
+              :my_thread_id(std::this_thread::get_id()),
+               assert_threads(false),nr_of_users(0) {
 //  std::cout << "TaskScheduler::TaskScheduler(" << my_thread_id << ")" << std::endl << std::flush;
 }
 

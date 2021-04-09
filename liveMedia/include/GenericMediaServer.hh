@@ -104,6 +104,7 @@ public: // should be protected, but some old compilers complain otherwise
   class ClientConnection {
   protected:
     ClientConnection(UsageEnvironment& threaded_env, GenericMediaServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr);
+    void afterConstruction(void);
   public:
     virtual ~ClientConnection();
   protected:
@@ -170,8 +171,8 @@ protected:
   ClientSession* lookupClientSession(u_int32_t sessionId);
   ClientSession* lookupClientSession(char const* sessionIdStr);
 
-private:
   // An iterator over our "ServerMediaSession" objects:
+  // while using you must lock the internal_mutex
   class ServerMediaSessionIterator {
   public:
     ServerMediaSessionIterator(GenericMediaServer& server);
@@ -203,12 +204,15 @@ private:
     fClientConnections->Remove((char const*)c);
   }
   
+protected:
   mutable std::recursive_mutex internal_mutex; // protectes all Hashtables
+private:
   HashTable* fServerMediaSessions; // maps 'stream name' strings to "ServerMediaSession" objects
   HashTable* fClientConnections; // the "ClientConnection" objects that we're using
   HashTable* fClientSessions; // maps 'session id' strings to "ClientSession" objects
   u_int32_t fPreviousClientSessionId;
 
+  const unsigned int nr_of_workers;
   class Worker;
   Worker *const workers;
 };

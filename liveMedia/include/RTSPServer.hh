@@ -146,6 +146,7 @@ public: // should be protected, but some old compilers complain otherwise
   class RTSPClientSession; // forward
   class RTSPClientConnection: public GenericMediaServer::ClientConnection {
   public:
+    static RTSPClientConnection *create(UsageEnvironment &threaded_env, RTSPServer &ourServer, int clientSocket, struct sockaddr_storage const& clientAddr);
     // A data structure that's used to implement the "REGISTER" command:
     class ParamsForREGISTER {
     public:
@@ -169,7 +170,6 @@ public: // should be protected, but some old compilers complain otherwise
     RTSPClientConnection(UsageEnvironment& threaded_env, RTSPServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr);
     virtual ~RTSPClientConnection();
 
-    friend class RTSPServer;
     friend class RTSPClientSession;
 
     // Make the handler functions for each command virtual, to allow subclasses to reimplement them, if necessary:

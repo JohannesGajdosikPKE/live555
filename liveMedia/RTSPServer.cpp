@@ -104,6 +104,7 @@ char* RTSPServer::rtspURLPrefix(int clientSocket, Boolean useIPv6) const {
 }
 
 UserAuthenticationDatabase* RTSPServer::setAuthenticationDatabase(UserAuthenticationDatabase* newDB) {
+  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
   UserAuthenticationDatabase* oldDB = fAuthDB;
   fAuthDB = newDB;
   
@@ -111,6 +112,7 @@ UserAuthenticationDatabase* RTSPServer::setAuthenticationDatabase(UserAuthentica
 }
 
 Boolean RTSPServer::setUpTunnelingOverHTTP(Port httpPort) {
+  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
   fHTTPServerSocketIPv4 = setUpOurSocket(envir(), httpPort, AF_INET);
   fHTTPServerSocketIPv6 = setUpOurSocket(envir(), httpPort, AF_INET6);
   if (fHTTPServerSocketIPv4 >= 0 || fHTTPServerSocketIPv6 >= 0) {
@@ -135,6 +137,7 @@ char const* RTSPServer::allowedCommandNames() {
 
 UserAuthenticationDatabase* RTSPServer::getAuthenticationDatabaseForCommand(char const* /*cmdName*/) {
   // default implementation
+  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
   return fAuthDB;
 }
 
@@ -179,6 +182,7 @@ public:
 };
 
 RTSPServer::~RTSPServer() {
+  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
   // Turn off background HTTP read handling (if any):
   envir().taskScheduler().turnOffBackgroundReadHandling(fHTTPServerSocketIPv4);
   ::closeSocket(fHTTPServerSocketIPv4);
@@ -224,6 +228,7 @@ void RTSPServer::incomingConnectionHandlerHTTPIPv6() {
 
 void RTSPServer
 ::noteTCPStreamingOnSocket(int socketNum, RTSPClientSession* clientSession, unsigned trackNum) {
+  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
   streamingOverTCPRecord* sotcpCur
     = (streamingOverTCPRecord*)fTCPStreamingDatabase->Lookup((char const*)socketNum);
   streamingOverTCPRecord* sotcpNew
@@ -233,6 +238,7 @@ void RTSPServer
 
 void RTSPServer
 ::unnoteTCPStreamingOnSocket(int socketNum, RTSPClientSession* clientSession, unsigned trackNum) {
+  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
   if (socketNum < 0) return;
   streamingOverTCPRecord* sotcpHead
     = (streamingOverTCPRecord*)fTCPStreamingDatabase->Lookup((char const*)socketNum);
@@ -270,6 +276,7 @@ void RTSPServer
 }
 
 void RTSPServer::stopTCPStreamingOnSocket(int socketNum) {
+  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
   // Close any stream that is streaming over "socketNum" (using RTP/RTCP-over-TCP streaming):
   streamingOverTCPRecord* sotcp
     = (streamingOverTCPRecord*)fTCPStreamingDatabase->Lookup((char const*)socketNum);
@@ -293,6 +300,13 @@ void RTSPServer::stopTCPStreamingOnSocket(int socketNum) {
 
 ////////// RTSPServer::RTSPClientConnection implementation //////////
 
+RTSPServer::RTSPClientConnection*
+RTSPServer::RTSPClientConnection::create(UsageEnvironment& threaded_env, RTSPServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr) {
+  RTSPClientConnection* rval = new RTSPClientConnection(threaded_env, ourServer, clientSocket, clientAddr);
+  rval->afterConstruction();
+  return rval;
+}
+
 RTSPServer::RTSPClientConnection
 ::RTSPClientConnection(UsageEnvironment& threaded_env, RTSPServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr)
   : GenericMediaServer::ClientConnection(threaded_env, ourServer, clientSocket, clientAddr),
@@ -303,6 +317,7 @@ RTSPServer::RTSPClientConnection
 }
 
 RTSPServer::RTSPClientConnection::~RTSPClientConnection() {
+  envir().taskScheduler().assertSameThread();
   if (fOurSessionCookie != NULL) {
     // We were being used for RTSP-over-HTTP tunneling. Also remove ourselves from the 'session cookie' hash table before we go:
     fOurRTSPServer.fClientConnectionsForHTTPTunneling->Remove(fOurSessionCookie);
@@ -315,6 +330,7 @@ RTSPServer::RTSPClientConnection::~RTSPClientConnection() {
 // Handler routines for specific RTSP commands:
 
 void RTSPServer::RTSPClientConnection::handleCmd_OPTIONS() {
+  envir().taskScheduler().assertSameThread();
   snprintf((char*)fResponseBuffer, sizeof fResponseBuffer,
 	   "RTSP/1.0 200 OK\r\nCSeq: %s\r\n%sPublic: %s\r\n\r\n",
 	   fCurrentCSeq, dateHeader(), fOurRTSPServer.allowedCommandNames());
@@ -322,6 +338,7 @@ void RTSPServer::RTSPClientConnection::handleCmd_OPTIONS() {
 
 void RTSPServer::RTSPClientConnection
 ::handleCmd_GET_PARAMETER(char const* /*fullRequestStr*/) {
+  envir().taskScheduler().assertSameThread();
   // By default, we implement "GET_PARAMETER" (on the entire server) just as a 'no op', and send back a dummy response.
   // (If you want to handle this type of "GET_PARAMETER" differently, you can do so by defining a subclass of "RTSPServer"
   // and "RTSPServer::RTSPClientConnection", and then reimplement this virtual function in your subclass.)
@@ -330,6 +347,7 @@ void RTSPServer::RTSPClientConnection
 
 void RTSPServer::RTSPClientConnection
 ::handleCmd_SET_PARAMETER(char const* /*fullRequestStr*/) {
+  envir().taskScheduler().assertSameThread();
   // By default, we implement "SET_PARAMETER" (on the entire server) just as a 'no op', and send back an empty response.
   // (If you want to handle this type of "SET_PARAMETER" differently, you can do so by defining a subclass of "RTSPServer"
   // and "RTSPServer::RTSPClientConnection", and then reimplement this virtual function in your subclass.)
@@ -338,6 +356,7 @@ void RTSPServer::RTSPClientConnection
 
 void RTSPServer::RTSPClientConnection
 ::handleCmd_DESCRIBE(char const* urlPreSuffix, char const* urlSuffix, char const* fullRequestStr) {
+  envir().taskScheduler().assertSameThread();
   char urlTotalSuffix[2*RTSP_PARAM_STRING_MAX];
       // enough space for urlPreSuffix/urlSuffix'\0'
   urlTotalSuffix[0] = '\0';
@@ -605,6 +624,7 @@ void RTSPServer::RTSPClientConnection::resetRequestBuffer() {
 }
 
 void RTSPServer::RTSPClientConnection::closeSocketsRTSP() {
+  envir().taskScheduler().assertSameThread();
   // First, tell our server to stop any streaming that it might be doing over our output socket:
   fOurRTSPServer.stopTCPStreamingOnSocket(fClientOutputSocket);
 
@@ -624,6 +644,7 @@ void RTSPServer::RTSPClientConnection::handleAlternativeRequestByte(void* instan
 }
 
 void RTSPServer::RTSPClientConnection::handleAlternativeRequestByte1(u_int8_t requestByte) {
+  envir().taskScheduler().assertSameThread();
   if (requestByte == 0xFF) {
     // Hack: The new handler of the input TCP socket encountered an error reading it.  Indicate this:
     handleRequestBytes(-1);
@@ -640,7 +661,8 @@ void RTSPServer::RTSPClientConnection::handleAlternativeRequestByte1(u_int8_t re
 }
 
 void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
-//  fprintf(stderr,"RTSPServer::RTSPClientConnection(%p)::handleRequestBytes(%d) start\n", this, newBytesRead);
+  envir().taskScheduler().assertSameThread();
+//  fprintf(stderr,"RTSPServer::RTSPClientConnection(%p)::handleRequestBytes(%d) start, recursion: %d\n", this, newBytesRead, fRecursionCount);
   int numBytesRemaining = 0;
   ++fRecursionCount;
 
@@ -1089,6 +1111,7 @@ Boolean RTSPServer::RTSPClientConnection
 
 void RTSPServer::RTSPClientConnection
 ::setRTSPResponse(char const* responseStr) {
+  envir().taskScheduler().assertSameThread();
   snprintf((char*)fResponseBuffer, sizeof fResponseBuffer,
 	   "RTSP/1.0 %s\r\n"
 	   "CSeq: %s\r\n"
@@ -1100,6 +1123,7 @@ void RTSPServer::RTSPClientConnection
 
 void RTSPServer::RTSPClientConnection
 ::setRTSPResponse(char const* responseStr, u_int32_t sessionId) {
+  envir().taskScheduler().assertSameThread();
   snprintf((char*)fResponseBuffer, sizeof fResponseBuffer,
 	   "RTSP/1.0 %s\r\n"
 	   "CSeq: %s\r\n"
@@ -1113,6 +1137,7 @@ void RTSPServer::RTSPClientConnection
 
 void RTSPServer::RTSPClientConnection
 ::setRTSPResponse(char const* responseStr, char const* contentStr) {
+  envir().taskScheduler().assertSameThread();
   if (contentStr == NULL) contentStr = "";
   unsigned const contentLen = strlen(contentStr);
   
@@ -1131,6 +1156,7 @@ void RTSPServer::RTSPClientConnection
 
 void RTSPServer::RTSPClientConnection
 ::setRTSPResponse(char const* responseStr, u_int32_t sessionId, char const* contentStr) {
+  envir().taskScheduler().assertSameThread();
   if (contentStr == NULL) contentStr = "";
   unsigned const contentLen = strlen(contentStr);
   
@@ -1181,6 +1207,7 @@ RTSPServer::RTSPClientSession::~RTSPClientSession() {
 }
 
 void RTSPServer::RTSPClientSession::deleteStreamByTrack(unsigned trackNum) {
+  envir().taskScheduler().assertSameThread();
   if (trackNum >= fNumStreamStates) return; // sanity check; shouldn't happen
   if (fStreamStates[trackNum].subsession != NULL) {
     fStreamStates[trackNum].subsession->deleteStream(fOurSessionId, fStreamStates[trackNum].streamToken);
@@ -1199,6 +1226,7 @@ void RTSPServer::RTSPClientSession::deleteStreamByTrack(unsigned trackNum) {
 }
 
 void RTSPServer::RTSPClientSession::reclaimStreamStates() {
+  envir().taskScheduler().assertSameThread();
   for (unsigned i = 0; i < fNumStreamStates; ++i) {
     if (fStreamStates[i].subsession != NULL) {
       fOurRTSPServer.unnoteTCPStreamingOnSocket(fStreamStates[i].tcpSocketNum, this, i);
@@ -1293,6 +1321,7 @@ static Boolean parsePlayNowHeader(char const* buf) {
 void RTSPServer::RTSPClientSession
 ::handleCmd_SETUP(RTSPServer::RTSPClientConnection* ourClientConnection,
 		  char const* urlPreSuffix, char const* urlSuffix, char const* fullRequestStr) {
+  envir().taskScheduler().assertSameThread();
   // Normally, "urlPreSuffix" should be the session (stream) name, and "urlSuffix" should be the subsession (track) name.
   // However (being "liberal in what we accept"), we also handle 'aggregate' SETUP requests (i.e., without a track name),
   // in the special case where we have only a single track.  I.e., in this case, we also handle:
@@ -1316,6 +1345,7 @@ void RTSPServer::RTSPClientSession
 
 void RTSPServer::RTSPClientSession
 ::handleCmd_SETUP_afterLookup1(ServerMediaSession* sms) {
+  envir().taskScheduler().assertSameThread();
   if (sms != NULL) {
     // The lookup succeeded; continue working with the returned "ServerMediaSession":
     handleCmd_SETUP_afterLookup2(sms);
@@ -1349,6 +1379,7 @@ void RTSPServer::RTSPClientSession
 
 void RTSPServer::RTSPClientSession
 ::handleCmd_SETUP_afterLookup2(ServerMediaSession* sms) {
+  envir().taskScheduler().assertSameThread();
   do {
     if (sms == NULL) {
       if (fOurServerMediaSession == NULL) {
@@ -1607,6 +1638,7 @@ void RTSPServer::RTSPClientSession
 			  char const* cmdName,
 			  char const* urlPreSuffix, char const* urlSuffix,
 			  char const* fullRequestStr) {
+  envir().taskScheduler().assertSameThread();
   // This will either be:
   // - a non-aggregated operation, if "urlPreSuffix" is the session (stream)
   //   name and "urlSuffix" is the subsession (track) name, or
@@ -1666,6 +1698,7 @@ void RTSPServer::RTSPClientSession
 void RTSPServer::RTSPClientSession
 ::handleCmd_TEARDOWN(RTSPServer::RTSPClientConnection* ourClientConnection,
 		     ServerMediaSubsession* subsession) {
+  envir().taskScheduler().assertSameThread();
   unsigned i;
   for (i = 0; i < fNumStreamStates; ++i) {
     if (subsession == NULL /* means: aggregated operation */
@@ -1695,6 +1728,7 @@ void RTSPServer::RTSPClientSession
 void RTSPServer::RTSPClientSession
 ::handleCmd_PLAY(RTSPServer::RTSPClientConnection* ourClientConnection,
 		 ServerMediaSubsession* subsession, char const* fullRequestStr) {
+  envir().taskScheduler().assertSameThread();
   char* rtspURL
     = fOurRTSPServer.rtspURL(fOurServerMediaSession, ourClientConnection->fClientInputSocket);
   unsigned rtspURLSize = strlen(rtspURL);
@@ -1913,6 +1947,7 @@ void RTSPServer::RTSPClientSession
 void RTSPServer::RTSPClientSession
 ::handleCmd_PAUSE(RTSPServer::RTSPClientConnection* ourClientConnection,
 		  ServerMediaSubsession* subsession) {
+  envir().taskScheduler().assertSameThread();
   for (unsigned i = 0; i < fNumStreamStates; ++i) {
     if (subsession == NULL /* means: aggregated operation */
 	|| subsession == fStreamStates[i].subsession) {
@@ -1928,6 +1963,7 @@ void RTSPServer::RTSPClientSession
 void RTSPServer::RTSPClientSession
 ::handleCmd_GET_PARAMETER(RTSPServer::RTSPClientConnection* ourClientConnection,
 			  ServerMediaSubsession* /*subsession*/, char const* /*fullRequestStr*/) {
+  envir().taskScheduler().assertSameThread();
   // By default, we implement "GET_PARAMETER" just as a 'keep alive', and send back a dummy response.
   // (If you want to handle "GET_PARAMETER" properly, you can do so by defining a subclass of "RTSPServer"
   // and "RTSPServer::RTSPClientSession", and then reimplement this virtual function in your subclass.)
@@ -1937,6 +1973,7 @@ void RTSPServer::RTSPClientSession
 void RTSPServer::RTSPClientSession
 ::handleCmd_SET_PARAMETER(RTSPServer::RTSPClientConnection* ourClientConnection,
 			  ServerMediaSubsession* /*subsession*/, char const* /*fullRequestStr*/) {
+  envir().taskScheduler().assertSameThread();
   // By default, we implement "SET_PARAMETER" just as a 'keep alive', and send back an empty response.
   // (If you want to handle "SET_PARAMETER" properly, you can do so by defining a subclass of "RTSPServer"
   // and "RTSPServer::RTSPClientSession", and then reimplement this virtual function in your subclass.)
@@ -1945,7 +1982,7 @@ void RTSPServer::RTSPClientSession
 
 GenericMediaServer::ClientConnection*
 RTSPServer::createNewClientConnection(int clientSocket, struct sockaddr_storage const& clientAddr) {
-  return new RTSPClientConnection(getBestThreadedUsageEnvironment(), *this, clientSocket, clientAddr);
+  return RTSPClientConnection::create(getBestThreadedUsageEnvironment(), *this, clientSocket, clientAddr);
 }
 
 GenericMediaServer::ClientSession*

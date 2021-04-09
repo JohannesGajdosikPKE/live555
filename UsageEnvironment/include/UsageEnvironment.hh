@@ -48,6 +48,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include <functional>
 #include <thread>
+#include <atomic>
 
 class TaskScheduler; // forward
 
@@ -171,7 +172,10 @@ public:
 
   const std::thread::id my_thread_id;
   void assertSameThread(void) const;
-  bool assert_threads = false;
+  bool assert_threads;
+  int addNrOfUsers(int x) {return (nr_of_users += x);}
+private:
+  std::atomic<int> nr_of_users;
 protected:
   TaskScheduler(); // abstract base class
 };
