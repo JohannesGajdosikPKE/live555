@@ -1461,6 +1461,8 @@ Boolean MediaSubsession::createSourceObjects(int useSpecialRTPoffset) {
 	// We don't know this RTP payload format, but try to receive
 	// it using a 'SimpleRTPSource' with the specified header offset:
 	createSimpleRTPSource = True;
+	// when the user explicitely sets useSpecialRTPoffset=0: "normal" MBit
+	if (useSpecialRTPoffset == 0) doNormalMBitRule = True;
       } else {
 	env().setResultMsg("RTP payload format unknown or not supported");
 	break;
