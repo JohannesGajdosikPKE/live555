@@ -91,14 +91,50 @@ void GenericMediaServer
 			       lsmsMemberFunctionCompletionFunc, memberFunctionRecord);
 }
 
-void GenericMediaServer::removeServerMediaSession(ServerMediaSession* serverMediaSession) {
-  if (serverMediaSession == NULL) return;
-  
-  fServerMediaSessions->Remove(serverMediaSession->streamName());
+namespace {
+// https://stackoverflow.com/questions/4792449/c0x-has-no-semaphores-how-to-synchronize-threads
+class Semaphore {
+    std::mutex m;
+    std::condition_variable cv;
+    unsigned long count_ = 0;
+public:
+    void post(void) {
+        std::lock_guard<std::mutex> lock(m);
+        ++count_;
+        cv.notify_one();
+    }
+    void wait(void) {
+        std::unique_lock<std::mutex> lock(m);
+        while (!count_) // Handle spurious wake-ups.
+            cv.wait(lock);
+        --count_;
+    }
+};
+}
+
+static void removeServerMediaSessionImpl(ServerMediaSession* serverMediaSession) {
   if (serverMediaSession->referenceCount() == 0) {
     Medium::close(serverMediaSession);
   } else {
     serverMediaSession->deleteWhenUnreferenced() = True;
+  }
+}
+
+void GenericMediaServer::removeServerMediaSession(ServerMediaSession* serverMediaSession) {
+  if (serverMediaSession == NULL) return;
+  
+  fServerMediaSessions->Remove(serverMediaSession->streamName());
+
+  if (serverMediaSession->envir().taskScheduler().isSameThread()) {
+    removeServerMediaSessionImpl(serverMediaSession);
+  } else {
+    Semaphore sem;
+    serverMediaSession->envir().taskScheduler().executeCommand(
+      [serverMediaSession,s=&sem]() {
+        removeServerMediaSessionImpl(serverMediaSession);
+        s->post();
+      });
+    sem.wait();
   }
 }
 
@@ -159,8 +195,13 @@ public:
     std::unique_lock<std::mutex> lck(mtx);
     while (watchVariable) cv.wait(lck);
   }
-  ~Worker(void) {
-    worker_thread.join();
+  void joinThread(void) {
+    try {
+      worker_thread.join();
+    } catch (std::system_error &e) {
+      fprintf(stderr,"Worker::joinThread: %s\n",e.what());
+      abort();
+    }
   }
   void stop(void) {watchVariable = 1;}
   UsageEnvironment& getEnv(void) const {return *env;}
@@ -225,41 +266,55 @@ UsageEnvironment &GenericMediaServer::getBestThreadedUsageEnvironment(void) {
       best_worker = workers + i;
     }
   }
-//fprintf(stderr,"getBestThreadedUsageEnvironment: %d with load %d\n", best_worker-workers, best_load);
+//  best_worker->getEnv() << "GenericMediaServer::getBestThreadedUsageEnvironment: "
+//                        << (int)(best_worker-workers) << ", " << best_load << "\n";
   return best_worker->getEnv();
 }
 
 void GenericMediaServer::cleanup() {
+  if (!fClientSessions) return; // cleanup called twice
   // This member function must be called in the destructor of any subclass of
   // "GenericMediaServer".  (We don't call this in the destructor of "GenericMediaServer" itself,
   // because by that time, the subclass destructor will already have been called, and this may
   // affect (break) the destruction of the "ClientSession" and "ClientConnection" objects, which
   // themselves will have been subclassed.)
 
-  for (int i = 0; i < nr_of_workers; i++) workers[i].stop();
-
-  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
+  std::unique_lock<std::recursive_mutex> lock(internal_mutex);
 
   // Close all client session objects:
   GenericMediaServer::ClientSession* clientSession;
   while ((clientSession = (GenericMediaServer::ClientSession*)fClientSessions->getFirst()) != NULL) {
-    delete clientSession;
+    clientSession->envir().taskScheduler().executeCommand([clientSession](){delete clientSession;});
+    char sessionIdStr[8 + 1];
+    sprintf(sessionIdStr, "%08X", clientSession->fOurSessionId);
+    fClientSessions->Remove(sessionIdStr);
   }
-  delete fClientSessions;
   
   // Close all client connection objects:
   GenericMediaServer::ClientConnection* connection;
   while ((connection = (GenericMediaServer::ClientConnection*)fClientConnections->getFirst()) != NULL) {
-    delete connection;
+    connection->envir().taskScheduler().executeCommand([connection]() {delete connection;});
+    removeClientConnection(connection);
   }
-  delete fClientConnections;
   
   // Delete all server media sessions
   ServerMediaSession* serverMediaSession;
   while ((serverMediaSession = (ServerMediaSession*)fServerMediaSessions->getFirst()) != NULL) {
-    removeServerMediaSession(serverMediaSession); // will delete it, because it no longer has any 'client session' objects using it
+    lock.unlock();
+    try {
+      removeServerMediaSession(serverMediaSession); // will delete it, because it no longer has any 'client session' objects using it
+    } catch (...) {
+      // exceptions are not allowed
+      abort();
+    }
+    lock.lock();
   }
-  delete fServerMediaSessions;
+
+  for (int i = 0; i < nr_of_workers; i++) workers[i].stop();
+  for (int i = 0; i < nr_of_workers; i++) workers[i].joinThread();
+  delete fClientSessions; fClientSessions = nullptr;
+  delete fClientConnections; fClientConnections = nullptr;
+  delete fServerMediaSessions; fServerMediaSessions = nullptr;
 }
 
 #define LISTEN_BACKLOG_SIZE 20

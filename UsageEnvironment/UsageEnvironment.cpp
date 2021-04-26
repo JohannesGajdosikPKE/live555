@@ -56,7 +56,7 @@ TaskScheduler::~TaskScheduler() {
 }
 
 void TaskScheduler::assertSameThread(void) const {
-  if (assert_threads && my_thread_id != std::this_thread::get_id()) {
+  if (assert_threads && !isSameThread()) {
     const std::thread::id curr_thread_id = std::this_thread::get_id();
     std:: cout << "TaskScheduler(" << my_thread_id << ")::assertSameThread: calling from wrong thread: " << curr_thread_id << std::endl << std::flush;
     abort();

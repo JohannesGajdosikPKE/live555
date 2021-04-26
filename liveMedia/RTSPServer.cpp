@@ -182,6 +182,7 @@ public:
 };
 
 RTSPServer::~RTSPServer() {
+  {
   std::lock_guard<std::recursive_mutex> guard(internal_mutex);
   // Turn off background HTTP read handling (if any):
   envir().taskScheduler().turnOffBackgroundReadHandling(fHTTPServerSocketIPv4);
@@ -198,13 +199,16 @@ RTSPServer::~RTSPServer() {
     delete r;
   }
   delete fPendingRegisterOrDeregisterRequests;
-  
+  }
+  {
   // Empty out and close "fTCPStreamingDatabase":
+  std::lock_guard<std::recursive_mutex> guard(fTCPStreamingDatabase_mutex);
   streamingOverTCPRecord* sotcp;
   while ((sotcp = (streamingOverTCPRecord*)fTCPStreamingDatabase->getFirst()) != NULL) {
     delete sotcp;
   }
   delete fTCPStreamingDatabase;
+  }
 }
 
 Boolean RTSPServer::isRTSPServer() const {
@@ -228,7 +232,7 @@ void RTSPServer::incomingConnectionHandlerHTTPIPv6() {
 
 void RTSPServer
 ::noteTCPStreamingOnSocket(int socketNum, RTSPClientSession* clientSession, unsigned trackNum) {
-  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
+  std::lock_guard<std::recursive_mutex> guard(fTCPStreamingDatabase_mutex);
   streamingOverTCPRecord* sotcpCur
     = (streamingOverTCPRecord*)fTCPStreamingDatabase->Lookup((char const*)socketNum);
   streamingOverTCPRecord* sotcpNew
@@ -238,7 +242,7 @@ void RTSPServer
 
 void RTSPServer
 ::unnoteTCPStreamingOnSocket(int socketNum, RTSPClientSession* clientSession, unsigned trackNum) {
-  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
+  std::lock_guard<std::recursive_mutex> guard(fTCPStreamingDatabase_mutex);
   if (socketNum < 0) return;
   streamingOverTCPRecord* sotcpHead
     = (streamingOverTCPRecord*)fTCPStreamingDatabase->Lookup((char const*)socketNum);
@@ -276,7 +280,7 @@ void RTSPServer
 }
 
 void RTSPServer::stopTCPStreamingOnSocket(int socketNum) {
-  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
+  std::lock_guard<std::recursive_mutex> guard(fTCPStreamingDatabase_mutex);
   // Close any stream that is streaming over "socketNum" (using RTP/RTCP-over-TCP streaming):
   streamingOverTCPRecord* sotcp
     = (streamingOverTCPRecord*)fTCPStreamingDatabase->Lookup((char const*)socketNum);

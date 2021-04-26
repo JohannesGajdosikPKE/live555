@@ -393,6 +393,8 @@ Boolean RTPInterface::sendDataOverTCP(int socketNum, u_int8_t const* data, unsig
       makeSocketBlocking(socketNum, RTPINTERFACE_BLOCKING_WRITE_TIMEOUT_MS);
       sendResult = send(socketNum, (char const*)(&data[numBytesSentSoFar]), numBytesRemainingToSend, 0/*flags*/);
       err = (sendResult < 0) ? envir().getErrno() : 0;
+      makeSocketNonBlocking(socketNum);
+
       if ((unsigned)sendResult != numBytesRemainingToSend) {
 	// The blocking "send()" failed, or timed out.  In either case, we assume that the
 	// TCP connection has failed (or is 'hanging' indefinitely), and we stop using it
@@ -402,17 +404,17 @@ Boolean RTPInterface::sendDataOverTCP(int socketNum, u_int8_t const* data, unsig
 #ifdef DEBUG_SEND
 	fprintf(stderr, "sendDataOverTCP: blocking send() failed (delivering %d bytes out of %d); closing socket %d\n", sendResult, numBytesRemainingToSend, socketNum); fflush(stderr);
 #endif
-envir() << "RTPInterface::sendDataOverTCP(" << socketNum << "," << dataSize << "," << (forceSendToSucceed?"T":"F") << "): "
-           "blocking send(" << numBytesRemainingToSend << ") returned " << sendResult <<  ", errno=" << err << "\n";
+        envir() << "RTPInterface::sendDataOverTCP(" << socketNum << "," << dataSize << "," << (forceSendToSucceed?"T":"F") << "): "
+                   "blocking send(" << numBytesRemainingToSend << ") returned " << sendResult <<  ", errno=" << err
+                << ", removing socket\n";
 	removeStreamSocket(socketNum, 0xFF);
 	return False;
       }
-      makeSocketNonBlocking(socketNum);
-
       return True;
     } else {
-envir() << "RTPInterface::sendDataOverTCP(" << socketNum << "," << dataSize << "," << (forceSendToSucceed?"T":"F") << "): "
-           "send(" << dataSize << ") returned " << sendResult <<  ", errno=" << err << "\n";
+      envir() << "RTPInterface::sendDataOverTCP(" << socketNum << "," << dataSize << "," << (forceSendToSucceed?"T":"F") << "): "
+                 "send(" << dataSize << ") returned " << sendResult <<  ", errno=" << err
+              << ", removing socket\n";
       // Because the "send()" call failed, assume that the socket is now unusable, so stop
       // using it (for both RTP and RTCP):
       removeStreamSocket(socketNum, 0xFF);

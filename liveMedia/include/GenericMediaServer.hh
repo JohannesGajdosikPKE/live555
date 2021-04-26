@@ -107,9 +107,8 @@ public: // should be protected, but some old compilers complain otherwise
     void afterConstruction(void);
   public:
     virtual ~ClientConnection();
-  protected:
-
     UsageEnvironment& envir() { return threaded_env; }
+  protected:
     void closeSockets();
 
     static void incomingRequestHandler(void*, int /*mask*/);

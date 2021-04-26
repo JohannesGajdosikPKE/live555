@@ -171,6 +171,7 @@ public:
   virtual void internalError(); // used to 'handle' a 'should not occur'-type error condition within the library.
 
   const std::thread::id my_thread_id;
+  bool isSameThread(void) const {return (my_thread_id == std::this_thread::get_id());}
   void assertSameThread(void) const;
   bool assert_threads;
   int addNrOfUsers(int x) {return (nr_of_users += x);}

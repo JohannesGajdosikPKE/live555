@@ -318,6 +318,7 @@ private:
   HashTable* fClientConnectionsForHTTPTunneling; // maps client-supplied 'session cookie' strings to "RTSPClientConnection"s
     // (used only for optional RTSP-over-HTTP tunneling)
   HashTable* fTCPStreamingDatabase;
+  mutable std::recursive_mutex fTCPStreamingDatabase_mutex; // protectes fTCPStreamingDatabase only
     // maps TCP socket numbers to ids of sessions that are streaming over it (RTP/RTCP-over-TCP)
   HashTable* fPendingRegisterOrDeregisterRequests;
   unsigned fRegisterOrDeregisterRequestCounter;
