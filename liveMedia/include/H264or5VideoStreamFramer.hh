@@ -25,6 +25,10 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "MPEGVideoStreamFramer.hh"
 #endif
 
+#ifndef LIVE555_EXPORT
+#define LIVE555_EXPORT
+#endif
+
 class H264or5VideoStreamFramer: public MPEGVideoStreamFramer {
 public:
   void getVPSandSPSandPPS(u_int8_t*& vps, unsigned& vpsSize,
@@ -49,7 +53,7 @@ public:
   }
 
     // gaj:
-  static double fDefaultFrameRate;
+  static LIVE555_EXPORT double fDefaultFrameRate;
 protected:
   H264or5VideoStreamFramer(int hNumber, // 264 or 265
 			   UsageEnvironment& env, FramedSource* inputSource,

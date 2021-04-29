@@ -25,6 +25,10 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "FramedSource.hh"
 #endif
 
+#ifndef LIVE555_EXPORT
+#define LIVE555_EXPORT
+#endif
+
 class MediaSink: public Medium {
 public:
   static Boolean lookupByName(UsageEnvironment& env, char const* sinkName,
@@ -75,7 +79,7 @@ public:
       // if "maxBufferSize" is >0, use it - instead of "maxSize" to compute the buffer size
   ~OutPacketBuffer();
 
-  static unsigned maxSize;
+  static LIVE555_EXPORT unsigned maxSize;
   static void increaseMaxSizeTo(unsigned newMaxSize) { if (newMaxSize > OutPacketBuffer::maxSize) OutPacketBuffer::maxSize = newMaxSize; }
 
   unsigned char* curPtr() const {return &fBuf[fPacketStart + fCurOffset];}
