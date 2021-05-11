@@ -203,7 +203,9 @@ public:
       abort();
     }
   }
-  void stop(void) {watchVariable = 1;}
+  void stop(void) {
+    scheduler->executeCommand([w=&watchVariable](){*w=1;});
+  }
   UsageEnvironment& getEnv(void) const {return *env;}
   int getLoad(void) const {return scheduler->addNrOfUsers(0);}
 private:
