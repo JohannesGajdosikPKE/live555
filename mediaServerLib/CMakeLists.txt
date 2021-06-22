@@ -1,5 +1,21 @@
 cmake_minimum_required(VERSION 3.0)
 
+set(OPENSSL_INCLUDE_PATH "/usr/include" CACHE PATH "path where openssl/ssl.h lives")
+if (EXISTS "${OPENSSL_INCLUDE_PATH}/openssl/ssl.h")
+  message("openssl include files found at ${OPENSSL_INCLUDE_PATH}")
+else()
+  message(FATAL_ERROR "openssl include files not found at ${OPENSSL_INCLUDE_PATH}."
+          " Use cmake -D OPENSSL_INCLUDE_PATH=<path_where_openssl/ssl.h_lives" )
+endif()
+
+set(OPENSSL_LIBRARY_PATH "/usr/include" CACHE PATH "path where MT/libssl_static.lib lives")
+if (EXISTS "${OPENSSL_LIBRARY_PATH}/MT/libssl_static.lib")
+  message("openssl library files found at ${OPENSSL_LIBRARY_PATH}")
+else()
+  message(FATAL_ERROR "openssl library files not found at ${OPENSSL_LIBRARY_PATH}."
+          " Use cmake -D OPENSSL_LIBRARY_PATH=<path_where_MT/libssl_static.lib_lives" )
+endif()
+
 project(MediaServerPluginProject DESCRIPTION "MediaServer Plugin")
 
 set(PLUGIN MediaServerPlugin)
@@ -204,19 +220,25 @@ add_library(${PLUGIN} SHARED
   ../liveMedia/rtcp_from_spec.c
   ../liveMedia/uLawAudioFilter.cpp
   MediaServerPluginRTSPServer.cpp
+  SSLSocketBase.cpp
+  SSLSocketServerPipe.cpp
+  SocketCommunication.cpp
 )
 
 
+target_include_directories(${PLUGIN} PUBLIC .)
 target_include_directories(${PLUGIN} PRIVATE ../groupsock/include)
 target_include_directories(${PLUGIN} PRIVATE ../UsageEnvironment/include)
 target_include_directories(${PLUGIN} PRIVATE ../BasicUsageEnvironment/include)
 target_include_directories(${PLUGIN} PRIVATE ../liveMedia/include)
-target_include_directories(${PLUGIN} PUBLIC .)
+target_include_directories(${PLUGIN} PRIVATE ${OPENSSL_INCLUDE_PATH})
 
 set(CMAKE_CXX_STANDARD 11)
 
 target_compile_options(${PLUGIN} PRIVATE -DLIVE555_FORCE_BOOLEAN_TYPE=char)
 target_compile_options(${PLUGIN} PRIVATE -DNO_OPENSSL)
+target_compile_options(${PLUGIN} PRIVATE -D__STDC_LIMIT_MACROS)
+target_compile_options(${PLUGIN} PRIVATE -DNOMINMAX)
 
 add_executable(${TESTPROG} MediaServerPluginTestMain.cpp)
 target_link_libraries(${TESTPROG} ${PLUGIN})
@@ -227,6 +249,8 @@ if (WIN32)
   target_compile_options(${PLUGIN} PUBLIC $<$<NOT:$<CONFIG:Debug>>:-MT>)
   target_compile_options(${PLUGIN} PUBLIC $<$<CONFIG:Debug>:-MTd>)
   target_link_libraries(${PLUGIN} ws2_32)
+  target_link_libraries(${PLUGIN} ${OPENSSL_LIBRARY_PATH}/$<$<NOT:$<CONFIG:Debug>>:MT>$<$<CONFIG:Debug>:MTd>/libssl_static.lib)
+  target_link_libraries(${PLUGIN} ${OPENSSL_LIBRARY_PATH}/$<$<NOT:$<CONFIG:Debug>>:MT>$<$<CONFIG:Debug>:MTd>/libcrypto_static.lib)
   target_compile_options(${TESTPROG} PUBLIC $<$<NOT:$<CONFIG:Debug>>:-MT>)
   target_compile_options(${TESTPROG} PUBLIC $<$<CONFIG:Debug>:-MTd>)
 endif ()

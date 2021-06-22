@@ -102,9 +102,22 @@ enum RTCLoggingSeverity {
   LS_NONE,
 };
 
-struct RTSPParameters
-{
-  uint16_t port;
+class RTSPParameters {
+public:
+  RTSPParameters(void) {}
+  RTSPParameters(uint16_t port,uint16_t httpPort,uint16_t httpsPort,uint32_t bind_to_interface,
+                 const std::string &https_cert_file,const std::string &https_key_path)
+    : port(port),httpPort(httpPort),httpsPort(httpsPort),bind_to_interface(bind_to_interface),
+      https_cert_file(https_cert_file),https_key_path(https_key_path) {}
+  const std::string &getHttpCertFile(void) const {return https_cert_file;}
+  const std::string &getHttpKeyPath(void) const {return https_key_path;}
+  uint16_t port = 0;
+  uint16_t httpPort = 0;
+  uint16_t httpsPort = 0;
+  uint32_t bind_to_interface = 0;
+private:
+  std::string https_cert_file;
+  std::string https_key_path;
 };
 
 

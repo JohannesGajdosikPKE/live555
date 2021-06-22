@@ -82,6 +82,25 @@ public:
 
   unsigned numClientSessions() const { return fClientSessions->numEntries(); }
 
+  // https://stackoverflow.com/questions/4792449/c0x-has-no-semaphores-how-to-synchronize-threads
+  class Semaphore {
+      std::mutex m;
+      std::condition_variable cv;
+      unsigned long count_ = 0;
+  public:
+      void post(void) {
+          std::lock_guard<std::mutex> lock(m);
+          ++count_;
+          cv.notify_one();
+      }
+      void wait(void) {
+          std::unique_lock<std::mutex> lock(m);
+          while (!count_) // Handle spurious wake-ups.
+              cv.wait(lock);
+          --count_;
+      }
+  };
+
 protected:
   GenericMediaServer(UsageEnvironment& env, int ourSocketIPv4, int ourSocketIPv6, Port ourPort,
 		     unsigned reclamationSeconds);

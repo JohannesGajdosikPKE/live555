@@ -24,6 +24,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "IRTC.h"
 #include <liveMedia.hh>
 #include <Base64.hh>
+#include <GroupsockHelper.hh>
 
 #include <string.h>
 
@@ -176,7 +177,7 @@ private:
     for (auto &it : r) it.second(f);
   }
   mutable std::recursive_mutex registration_mutex;
-  struct RegistrationEntry {
+  class RegistrationEntry {
     RegistrationEntry(void) {}
     RegistrationEntry(FrameFunction &&func,const std::shared_ptr<Registration> &reg)
       : func(std::move(func)),reg(reg) {}
@@ -209,11 +210,41 @@ private:
 
 
 
+static
+int CreateAcceptSocket(UsageEnvironment& env, Port ourPort, unsigned int bind_to_interface) {
+  int accept_fd = ::socket(AF_INET,SOCK_STREAM,0);
+  if (accept_fd < 0) {
+    env.setResultErrMsg("socket() failed: ");
+    return -1;
+  }
+  const int yes = -1; // all bits set to 1
+  if (0 != ::setsockopt(accept_fd,SOL_SOCKET,SO_EXCLUSIVEADDRUSE,(const char*)(&yes),sizeof(yes))) {
+    env.setResultErrMsg("setsockopt(SO_EXCLUSIVEADDRUSE) failed: ");
+    ::closeSocket(accept_fd);
+    return -1;
+  }
+  struct sockaddr_in sock_addr;
+  sock_addr.sin_family = AF_INET;
+  sock_addr.sin_addr.s_addr = htonl(bind_to_interface);
+  sock_addr.sin_port = ourPort.num(); // already network order
+  if (0 != bind(accept_fd,(struct sockaddr*)(&sock_addr),sizeof(sock_addr))) {
+    env.setResultErrMsg("bind() failed: ");
+    ::closeSocket(accept_fd);
+    return -1;
+  }
+  if (0 != ::listen(accept_fd,20)) {
+    env.setResultErrMsg("listen() failed: ");
+    ::closeSocket(accept_fd);
+    return -1;
+  }
+  return accept_fd;
+}
+
 
 
 MediaServerPluginRTSPServer*
 MediaServerPluginRTSPServer::createNew(UsageEnvironment &env, const RTSPParameters &params, IRTCStreamFactory* streamManager) {
-  int ourSocketIPv4 = setUpOurSocket(env, Port(params.port), AF_INET);
+  int ourSocketIPv4 = CreateAcceptSocket(env, Port(params.port), params.bind_to_interface);
   int ourSocketIPv6 = setUpOurSocket(env, Port(params.port), AF_INET6);
   if (ourSocketIPv4 < 0 && ourSocketIPv6 < 0) return NULL;
 
@@ -221,18 +252,116 @@ MediaServerPluginRTSPServer::createNew(UsageEnvironment &env, const RTSPParamete
 }
 
 MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(UsageEnvironment &env, int ourSocketIPv4, int ourSocketIPv6,
-                                     const RTSPParameters &params, IRTCStreamFactory *streamManager)
-  : RTSPServer(env, ourSocketIPv4, ourSocketIPv6, Port(params.port), NULL, 65),
-    params(params), streamManager(streamManager) {
+                                                         const RTSPParameters &params, IRTCStreamFactory *streamManager)
+                            :RTSPServer(env, ourSocketIPv4, ourSocketIPv6, Port(params.port), NULL, 65),
+                             params(params), streamManager(streamManager) {
+  if (params.httpPort) {
+    m_HTTPServerSocket = CreateAcceptSocket(env, params.httpPort, params.bind_to_interface);
+envir() << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer: CreateAcceptSocket(" << params.httpPort << ") returned "
+        << m_HTTPServerSocket << "\n";
+    if (m_HTTPServerSocket >= 0) {
+      env.taskScheduler().turnOnBackgroundReadHandling(m_HTTPServerSocket,
+        incomingConnectionHandlerHTTP, this);
+    }
+  }
+  if (params.httpsPort) {
+    m_HTTPsServerSocket = CreateAcceptSocket(env, params.httpsPort, params.bind_to_interface);
+envir() << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer: CreateAcceptSocket(" << params.httpsPort << ") returned "
+        << m_HTTPsServerSocket << "\n";
+    if (m_HTTPsServerSocket >= 0) {
+      env.taskScheduler().turnOnBackgroundReadHandling(m_HTTPsServerSocket,
+        incomingConnectionHandlerHTTPoverSSL, this);
+    }
+  }
 }
 
 MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer() {
-  GenericMediaServer::cleanup();
+  if (m_HTTPsServerSocket >= 0) {
+    envir().taskScheduler().turnOffBackgroundReadHandling(m_HTTPsServerSocket);
+    ::closeSocket(m_HTTPsServerSocket);
+  }
+  if (m_HTTPServerSocket >= 0) {
+    envir().taskScheduler().turnOffBackgroundReadHandling(m_HTTPServerSocket);
+    ::closeSocket(m_HTTPServerSocket);
+  }
+  RTSPServer::cleanup();
       // This member function must be called in the destructor of any subclass of
       // "GenericMediaServer".  (We don't call this in the destructor of "GenericMediaServer" itself,
       // because by that time, the subclass destructor will already have been called, and this may
       // affect (break) the destruction of the "ClientSession" and "ClientConnection" objects, which
       // themselves will have been subclassed.)
+}
+
+void MediaServerPluginRTSPServer::incomingConnectionHandlerHTTPoverSSL(void* instance, int /*mask*/) {
+  MediaServerPluginRTSPServer* server = (MediaServerPluginRTSPServer*)instance;
+  server->incomingConnectionHandlerHTTPoverSSL();
+}
+
+void MediaServerPluginRTSPServer::incomingConnectionHandlerHTTPoverSSL()
+{
+  struct sockaddr_storage clientAddr;
+  SOCKLEN_T clientAddrLen = sizeof clientAddr;
+  int clientSocket = accept(m_HTTPsServerSocket, (struct sockaddr*)&clientAddr, &clientAddrLen);
+  envir() << "MediaServerPluginRTSPServer::incomingConnectionHandlerHTTPoverSSL: accept(" << m_HTTPsServerSocket << ") returned " << clientSocket << "\n";
+  if (clientSocket < 0) {
+    int err = envir().getErrno();
+    if (err != EWOULDBLOCK) {
+      envir().setResultErrMsg("accept() failed: ");
+    }
+    return;
+  }
+  ignoreSigPipeOnSocket(clientSocket); // so that clients on the same host that are killed don't also kill us
+
+#ifdef DEBUG
+  envir() << "accept()ed connection from " << AddressString(clientAddr).val() << "\n";
+#endif
+
+  // Create a new object for handling this connection:
+  createNewClientConnectionSSL(clientSocket, clientAddr, params.getHttpCertFile().c_str(),params.getHttpKeyPath().c_str());
+}
+
+void MediaServerPluginRTSPServer::incomingConnectionHandlerHTTP(void* instance, int /*mask*/) {
+  MediaServerPluginRTSPServer* server = (MediaServerPluginRTSPServer*)instance;
+  server->incomingConnectionHandlerHTTP();
+}
+
+void MediaServerPluginRTSPServer::incomingConnectionHandlerHTTP() {
+  envir() << "MediaServerPluginRTSPServer::incomingConnectionHandlerHTTP: calling incomingConnectionHandlerOnSocket(" << m_HTTPServerSocket << ")\n";
+  incomingConnectionHandlerOnSocket(m_HTTPServerSocket);
+}
+
+
+GenericMediaServer::ClientConnection*
+MediaServerPluginRTSPServer::createNewClientConnectionSSL(int clientSocket, struct sockaddr_storage clientAddr, const char* certpath, const char* keypath)
+{
+  return RTSPClientConnectionSSL::create(getBestThreadedUsageEnvironment(), *this, clientSocket, clientAddr, certpath, keypath);
+}
+
+MediaServerPluginRTSPServer::RTSPClientConnectionSSL*
+MediaServerPluginRTSPServer::RTSPClientConnectionSSL::create(UsageEnvironment& env, MediaServerPluginRTSPServer& ourServer, int clientSocket, struct sockaddr_storage clientAddr,
+                                                             const char* certpath, const char* keypath) {
+  RTSPClientConnectionSSL *rval = new RTSPClientConnectionSSL(env, ourServer, clientSocket, clientAddr, certpath, keypath);
+  GenericMediaServer::Semaphore sem;
+  env.taskScheduler().executeCommand([rval,clientSocket,p=ourServer.params.httpPort,certpath,keypath,&sem]() {
+    rval->afterConstruction();
+    rval->AcceptClientAndConnectPipe(clientSocket, p, certpath, keypath);
+    sem.post();
+  });
+  sem.wait();
+env << "MediaServerPluginRTSPServer::RTSPClientConnectionSSL::create(" << &ourServer << "," << clientSocket << ") returns " << rval << "\n";
+  return rval;
+}
+
+MediaServerPluginRTSPServer::RTSPClientConnectionSSL::RTSPClientConnectionSSL(
+      UsageEnvironment &env, RTSPServer& ourServer, int clientSocket, struct sockaddr_storage clientAddr,
+      const char* certpath, const char* keypath)
+  : RTSPClientConnection(env, ourServer, clientSocket, clientAddr),
+    SSLSocketServerPipe(env) {
+  envir() << "MediaServerPluginRTSPServer::RTSPClientConnectionSSL::RTSPClientConnectionSSL(" << clientSocket << ")\n";
+}
+
+MediaServerPluginRTSPServer::RTSPClientConnectionSSL::~RTSPClientConnectionSSL(void) {
+  envir() << "MediaServerPluginRTSPServer::RTSPClientConnectionSSL(" << fOurSocket << ")::~RTSPClientConnectionSSL\n";
 }
 
 
@@ -310,8 +439,10 @@ public:
       stream_name(stream_name),
       e(e),
       info(info) {
+    envir() << "MyServerMediaSubsession::MyServerMediaSubsession(" << stream_name << ")\n";
   }
   ~MyServerMediaSubsession(void) {
+    envir() << "MyServerMediaSubsession(" << stream_name.c_str() << ")::~MyServerMediaSubsession\n";
   }
 protected:
   MyFrameSource *createFrameSource(unsigned clientSessionId) {
@@ -416,25 +547,30 @@ void MediaServerPluginRTSPServer
                            lookupServerMediaSessionCompletionFunc *completionFunc,
                            void *completionClientData,
                            Boolean isFirstLookupInSession) {
-  if (completionFunc) {
-      // this function seems to be called for each subsession.
-      // when we already have a ServerMediaSession for the first subsession,
-      // return this stream othe the second subsession will not work
-    ServerMediaSession* sms = getServerMediaSession(streamName);
-    if (sms && &(sms->envir()) == (&env)) {
-      (*completionFunc)(completionClientData,sms);
-      return;
-    }
-      // called from the thread of the new rtsp connection (env-thread): lock recursive mutex
-    std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
-    auto it(stream_map.find(streamName));
-    if (it == stream_map.end()) {
-      LookupCompletionFuncData *context = new LookupCompletionFuncData(this,env,streamName,completionFunc,completionClientData);
-      streamManager->GetStream(streamName, context, &MediaServerPluginRTSPServer::GetStreamCb);
-    } else {
-      ServerMediaSession *sms = createServerMediaSession(env,streamName,it->second);
-      (*completionFunc)(completionClientData,sms);
-    }
+  if (!completionFunc) abort();
+    // this function seems to be called for each subsession.
+    // when we already have a ServerMediaSession for the first subsession,
+    // return this stream, the stream of the second subsession will not work
+  ServerMediaSession* sms = getServerMediaSession(streamName);
+  if (sms && &(sms->envir()) == (&env)) {
+    env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName
+        << "): returning existing ServerMediaSession " << sms << " with same env\n";
+    (*completionFunc)(completionClientData,sms);
+    return;
+  }
+    // called from the thread of the new rtsp connection (env-thread): lock recursive mutex
+  std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
+  auto it(stream_map.find(streamName));
+  if (it == stream_map.end()) {
+    env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName
+        << "): no such stream in stream_map, streamManager->GetStream will call the cb later\n";
+    LookupCompletionFuncData *context = new LookupCompletionFuncData(this,env,streamName,completionFunc,completionClientData);
+    streamManager->GetStream(streamName, context, &MediaServerPluginRTSPServer::GetStreamCb);
+  } else {
+    ServerMediaSession *sms = createServerMediaSession(env,streamName,it->second);
+    env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName
+        << "): found stream in stream_map, returning new ServerMediaSession " << sms << " with existing stream\n";
+    (*completionFunc)(completionClientData,sms);
   }
 }
 
@@ -445,8 +581,8 @@ void MediaServerPluginRTSPServer::GetStreamCb(void *cb_context,const TStreamPtr 
 }
 
 void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer::LookupCompletionFuncData *l,
-                                    const TStreamPtr &stream) {
-    // called from some thread in the executable (or from my own therad, direct callback): lock recursive_mutex
+                                              const TStreamPtr &stream) {
+    // called from some thread in the executable (or from my own thread, direct callback): lock recursive_mutex
   ServerMediaSession *sms = nullptr;
   if (stream) {
     std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
@@ -458,6 +594,8 @@ void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer:
     stream_map[l->streamName] = e;
     sms = createServerMediaSession(l->env, l->streamName.c_str(), e);
   }
+  l->env << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str()
+         << "): returning new ServerMediaSession " << sms << " with new stream\n";
   (*(l->completionFunc))(l->completionClientData, sms);
 }
 
@@ -521,7 +659,7 @@ public:
     while (watchVariable) cv.wait(lck);
   }
   ~RTCMediaLib(void) {
-    env->taskScheduler().executeCommand([w=&watchVariable](){*w=1;});
+    watchVariable = 1;
     worker_thread.join();
   }
 private:

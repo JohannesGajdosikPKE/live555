@@ -69,7 +69,10 @@ public:
 //does not really help
 //"a=fmtp:96 packetization-mode=1;profile-level-id=42C01E;sprop-parameter-sets=Z0LAHoyNQKD5APCIRqAAAAA=,aM48gAAAAA==\n"
 );
-    subsession_infos[1] = new AvasysMetadataSubsessionInfo();
+    subsession_infos[1] =
+//      this actually works, but TranscodeExport will not be able to recive it via https
+//      new AvasysMetadataSubsessionInfo();
+      nullptr;
     subsession_infos[2] = nullptr;
   }
   ~MyTestIRTCStream(void) override {
@@ -204,7 +207,10 @@ static const char *const exe_api_version = RTCMEDIALIB_API_VERSION;
 
 int main(int argc,char *argv[]) {
   MyIRTCStreamFactory factory;
-  RTSPParameters params = {2554};
+  RTSPParameters params(554,8080,8081,0,
+                        "C:\\Users\\01jga728\\zertifikat-pub.pem",
+                        "C:\\Users\\01jga728\\zertifikat-key.pem"
+);
   const char *const lib_api_version
     = initializeRTCMediaLib(exe_api_version,&factory,params);
   std::cout << "my api version: " << exe_api_version

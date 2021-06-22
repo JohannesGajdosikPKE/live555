@@ -23,6 +23,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include "RTSPServer.hh"
 #include "IRTC.h"
+#include "SSLSocketServerPipe.h"
 
 #include <map>
 #include <memory>
@@ -53,6 +54,24 @@ protected:
   ServerMediaSession *createServerMediaSession(UsageEnvironment &env,
                                                const char *stream_name,
                                                const std::shared_ptr<StreamMapEntry> &e);
+
+  static void incomingConnectionHandlerHTTPoverSSL(void* instance, int /*mask*/);
+  void incomingConnectionHandlerHTTPoverSSL(void);
+  static void incomingConnectionHandlerHTTP(void* instance, int /*mask*/);
+  void incomingConnectionHandlerHTTP(void);
+
+  class RTSPClientConnectionSSL : public RTSPServer::RTSPClientConnection, public SSLSocketServerPipe
+  {
+    RTSPClientConnectionSSL(UsageEnvironment &env, RTSPServer& ourServer, int clientSocket, struct sockaddr_storage clientAddr, const char* certpath, const char* keypath);
+  public:
+    static RTSPClientConnectionSSL *create(UsageEnvironment& env, MediaServerPluginRTSPServer& ourServer, int clientSocket, struct sockaddr_storage clientAddr, const char* certpath, const char* keypath);
+    virtual ~RTSPClientConnectionSSL();
+  };
+
+  ClientConnection *createNewClientConnectionSSL(int clientSocket, struct sockaddr_storage clientAddr,
+                                                 const char* certpath, const char* keypath);
+
+  int m_HTTPServerSocket,m_HTTPsServerSocket;
   const RTSPParameters params;
   IRTCStreamFactory *const streamManager;
   std::map<std::string,std::shared_ptr<StreamMapEntry> > stream_map;

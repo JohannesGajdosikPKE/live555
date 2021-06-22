@@ -91,27 +91,6 @@ void GenericMediaServer
 			       lsmsMemberFunctionCompletionFunc, memberFunctionRecord);
 }
 
-namespace {
-// https://stackoverflow.com/questions/4792449/c0x-has-no-semaphores-how-to-synchronize-threads
-class Semaphore {
-    std::mutex m;
-    std::condition_variable cv;
-    unsigned long count_ = 0;
-public:
-    void post(void) {
-        std::lock_guard<std::mutex> lock(m);
-        ++count_;
-        cv.notify_one();
-    }
-    void wait(void) {
-        std::unique_lock<std::mutex> lock(m);
-        while (!count_) // Handle spurious wake-ups.
-            cv.wait(lock);
-        --count_;
-    }
-};
-}
-
 static void removeServerMediaSessionImpl(ServerMediaSession* serverMediaSession) {
   if (serverMediaSession->referenceCount() == 0) {
     Medium::close(serverMediaSession);
@@ -188,6 +167,7 @@ public:
           watchVariable = 0;
           cv.notify_one();
         }
+        (*env) << "Worker::mainThread: start\n";
         env->taskScheduler().doEventLoop(&watchVariable);
         delete env; env = nullptr;
         delete scheduler; scheduler = nullptr;
@@ -212,6 +192,7 @@ private:
   BasicTaskScheduler *scheduler = nullptr;
   struct DeletableUsageEnvironment : public BasicUsageEnvironment {
     DeletableUsageEnvironment(TaskScheduler& s) : BasicUsageEnvironment(s) {}
+    const char *getLogFileName(void) const override {return "Worker";}
   } *env = nullptr;
   char volatile watchVariable = 1;
   std::thread worker_thread;
@@ -376,6 +357,7 @@ void GenericMediaServer::incomingConnectionHandlerOnSocket(int serverSocket) {
   struct sockaddr_storage clientAddr;
   SOCKLEN_T clientAddrLen = sizeof clientAddr;
   int clientSocket = accept(serverSocket, (struct sockaddr*)&clientAddr, &clientAddrLen);
+envir() << "GenericMediaServer::incomingConnectionHandlerOnSocket: accept(" << serverSocket << ") returned " << clientSocket << "\n";
   if (clientSocket < 0) {
     int err = envir().getErrno();
     if (err != EWOULDBLOCK) {
@@ -402,6 +384,7 @@ void GenericMediaServer::incomingConnectionHandlerOnSocket(int serverSocket) {
 GenericMediaServer::ClientConnection
 ::ClientConnection(UsageEnvironment &threaded_env, GenericMediaServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr)
   : threaded_env(threaded_env), fOurServer(ourServer), fOurSocket(clientSocket), fClientAddr(clientAddr) {
+    envir() << "GenericMediaServer::ClientConnection(" << this << ")::ClientConnection(" << clientSocket << ")\n";
     envir().taskScheduler().addNrOfUsers(1);
 }
 
@@ -411,13 +394,22 @@ void GenericMediaServer::ClientConnection::afterConstruction(void) {
   
   // Arrange to handle incoming requests:
   resetRequestBuffer();
-  envir().taskScheduler().executeCommand(
-    [this]() {
-      envir().taskScheduler().setBackgroundHandling(fOurSocket, SOCKET_READABLE|SOCKET_EXCEPTION, incomingRequestHandler, this);
-    });
+  envir() << "GenericMediaServer::ClientConnection(" << this << ")::afterConstruction: setBackgroundHandling(" << fOurSocket << ")\n";
+  if (envir().taskScheduler().isSameThread()) {
+    envir().taskScheduler().setBackgroundHandling(fOurSocket, SOCKET_READABLE|SOCKET_EXCEPTION, incomingRequestHandler, this);
+  } else {
+    Semaphore sem;
+    envir().taskScheduler().executeCommand(
+      [this,&sem]() {
+        envir().taskScheduler().setBackgroundHandling(fOurSocket, SOCKET_READABLE|SOCKET_EXCEPTION, incomingRequestHandler, this);
+        sem.post();
+      });
+    sem.wait();
+  }
 }
 
 GenericMediaServer::ClientConnection::~ClientConnection() {
+  envir() << "GenericMediaServer::ClientConnection(" << this << ")::~ClientConnection\n";
   envir().taskScheduler().assertSameThread();
   envir().taskScheduler().addNrOfUsers(-1);
   // Remove ourself from the server's 'client connections' hash table before we go:
@@ -427,6 +419,7 @@ GenericMediaServer::ClientConnection::~ClientConnection() {
 }
 
 void GenericMediaServer::ClientConnection::closeSockets() {
+  envir() << "GenericMediaServer::ClientConnection(" << this << ")::closeSockets: disableBackgroundHandling(" << fOurSocket << ")\n";
   // Turn off background handling on our socket:
   envir().taskScheduler().disableBackgroundHandling(fOurSocket);
   if (fOurSocket>= 0) ::closeSocket(fOurSocket);
@@ -444,6 +437,8 @@ void GenericMediaServer::ClientConnection::incomingRequestHandler() {
   struct sockaddr_storage dummy; // 'from' address, meaningless in this case
   
   int bytesRead = readSocket(envir(), fOurSocket, &fRequestBuffer[fRequestBytesAlreadySeen], fRequestBufferBytesLeft, dummy);
+  envir() << "GenericMediaServer::ClientConnection(" << this << ")::incomingRequestHandler: "
+             "readSocket(" << fOurSocket << ") returned " << bytesRead << "\n";
   handleRequestBytes(bytesRead);
 }
 

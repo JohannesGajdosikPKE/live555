@@ -24,6 +24,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "Base64.hh"
 #include <GroupsockHelper.hh>
 
+#include <iostream>
+
 ////////// RTSPServer implementation //////////
 
 RTSPServer*
@@ -117,6 +119,7 @@ Boolean RTSPServer::setUpTunnelingOverHTTP(Port httpPort) {
   fHTTPServerSocketIPv6 = setUpOurSocket(envir(), httpPort, AF_INET6);
   if (fHTTPServerSocketIPv4 >= 0 || fHTTPServerSocketIPv6 >= 0) {
     fHTTPServerPort = httpPort;
+    std::cout << "RTSPServer(" << this << ")::setUpTunnelingOverHTTP: " << ntohs(fHTTPServerPort.num()) << std::endl;
     envir().taskScheduler().turnOnBackgroundReadHandling(fHTTPServerSocketIPv4,
 							 incomingConnectionHandlerHTTPIPv4, this);
     envir().taskScheduler().turnOnBackgroundReadHandling(fHTTPServerSocketIPv6,
@@ -128,7 +131,9 @@ Boolean RTSPServer::setUpTunnelingOverHTTP(Port httpPort) {
 }
 
 portNumBits RTSPServer::httpServerPortNum() const {
-  return ntohs(fHTTPServerPort.num());
+  const portNumBits rval = ntohs(fHTTPServerPort.num());
+  std::cout << "RTSPServer(" << this << ")::httpServerPortNum() returns " << rval << std::endl;
+  return rval;
 }
 
 char const* RTSPServer::allowedCommandNames() {
@@ -608,9 +613,11 @@ Boolean RTSPServer::RTSPClientConnection
 #ifdef DEBUG
   fprintf(stderr, "Handled HTTP \"POST\" request (client input socket: %d)\n", fClientInputSocket);
 #endif
-  
+  envir() << "RTSPServer::RTSPClientConnection("  << this << ")::handleHTTPCmd_TunnelingPOST: "
+             "transfering socket " << fClientInputSocket << " and handling to " << prevClientConnection << "\n";
   // Change the previous "RTSPClientSession" object's input socket to ours.  It will be used for subsequent requests:
-  prevClientConnection->changeClientInputSocket(fClientInputSocket, extraData, extraDataSize);
+  prevClientConnection->changeClientInputSocket(fClientInputSocket, envir(), extraData, extraDataSize);
+    // revoke ownership of the socket:
   fClientInputSocket = fClientOutputSocket = -1; // so the socket doesn't get closed when we get deleted
   return True;
 }
@@ -666,6 +673,7 @@ void RTSPServer::RTSPClientConnection::handleAlternativeRequestByte1(u_int8_t re
 
 void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
   envir().taskScheduler().assertSameThread();
+  envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << ") begin\n";
 //  fprintf(stderr,"RTSPServer::RTSPClientConnection(%p)::handleRequestBytes(%d) start, recursion: %d\n", this, newBytesRead, fRecursionCount);
   int numBytesRemaining = 0;
   ++fRecursionCount;
@@ -679,6 +687,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
 #ifdef DEBUG
       fprintf(stderr, "RTSPClientConnection[%p]::handleRequestBytes() read %d new bytes (of %d); terminating connection!\n", this, newBytesRead, fRequestBufferBytesLeft);
 #endif
+      envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << "): terminating connection\n";
       fIsActive = False;
       break;
     }
@@ -690,6 +699,9 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
     fprintf(stderr, "RTSPClientConnection[%p]::handleRequestBytes() %s %d new bytes:%s\n",
 	    this, numBytesRemaining > 0 ? "processing" : "read", newBytesRead, ptr);
 #endif
+  ptr[newBytesRead] = '\0';
+  envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << "): "
+          << (numBytesRemaining > 0 ? "processing " : "read ") << (const char*)ptr << "\n";
     
     if (fClientOutputSocket != fClientInputSocket && numBytesRemaining == 0) {
       // We're doing RTSP-over-HTTP tunneling, and input commands are assumed to have been Base64-encoded.
@@ -717,6 +729,8 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
 	for (unsigned k = 0; k < decodedSize; ++k) fprintf(stderr, "%c", decodedBytes[k]);
 	fprintf(stderr, "\n");
 #endif
+    envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::handleRequestBytes: "
+               "Base64-decoded " << numBytesToDecode << " input bytes into " << decodedSize << " new bytes\n";
 	
 	// Copy the new decoded bytes in place of the old ones (we can do this because there are fewer decoded bytes than original):
 	unsigned char* to = ptr-fBase64RemainderCount;
@@ -965,6 +979,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
   } while (numBytesRemaining > 0);
   
   --fRecursionCount;
+  envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::handleRequestBytes end: fIsActive: " << (int)fIsActive << "\n";
   if (!fIsActive) {
     if (fRecursionCount > 0) closeSockets(); else delete this;
     // Note: The "fRecursionCount" test is for a pathological situation where we reenter the event loop and get called recursively
@@ -1180,19 +1195,52 @@ void RTSPServer::RTSPClientConnection
 }
 
 void RTSPServer::RTSPClientConnection
-::changeClientInputSocket(int newSocketNum, unsigned char const* extraData, unsigned extraDataSize) {
-  envir().taskScheduler().disableBackgroundHandling(fClientInputSocket);
-  fClientInputSocket = newSocketNum;
-  envir().taskScheduler().setBackgroundHandling(fClientInputSocket, SOCKET_READABLE|SOCKET_EXCEPTION,
-						incomingRequestHandler, this);
-  
-  // Also write any extra data to our buffer, and handle it:
-  if (extraDataSize > 0 && extraDataSize <= fRequestBufferBytesLeft/*sanity check; should always be true*/) {
-    unsigned char* ptr = &fRequestBuffer[fRequestBytesAlreadySeen];
-    for (unsigned i = 0; i < extraDataSize; ++i) {
-      ptr[i] = extraData[i];
+::changeClientInputSocket(const int newSocketNum, UsageEnvironment &other_env, unsigned char const* extraData, unsigned extraDataSize) {
+  if (&envir() == &other_env) {
+    other_env << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
+                 "disabling handling for " << fClientInputSocket << " in this same thread\n";
+    other_env.taskScheduler().disableBackgroundHandling(fClientInputSocket);
+
+    other_env << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
+                 "enabling handling for " << newSocketNum << " in the this same thread\n";
+    fClientInputSocket = newSocketNum;
+    other_env.taskScheduler().setBackgroundHandling(fClientInputSocket, SOCKET_READABLE|SOCKET_EXCEPTION,
+                                                    incomingRequestHandler, this);
+    // Also write any extra data to our buffer, and handle it:
+    if (extraDataSize > 0 && extraDataSize <= fRequestBufferBytesLeft/*sanity check; should always be true*/) {
+      unsigned char* ptr = &fRequestBuffer[fRequestBytesAlreadySeen];
+      for (unsigned i = 0; i < extraDataSize; ++i) {
+        ptr[i] = extraData[i];
+      }
+      handleRequestBytes(extraDataSize);
     }
-    handleRequestBytes(extraDataSize);
+  } else {
+    other_env << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
+                 "disabling handling for " << newSocketNum << " in the this same thread\n";
+    other_env.taskScheduler().disableBackgroundHandling(newSocketNum);
+    Semaphore sem;
+    envir().taskScheduler().executeCommand(
+      [this, &sem, newSocketNum, extraData, extraDataSize]() {
+        envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
+                   "disabling handling for " << fClientInputSocket << " in this other thread\n";
+        envir().taskScheduler().disableBackgroundHandling(fClientInputSocket);
+
+        envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
+                   "enabling handling for " << newSocketNum << " in the this other thread\n";
+        fClientInputSocket = newSocketNum;
+        envir().taskScheduler().setBackgroundHandling(fClientInputSocket, SOCKET_READABLE|SOCKET_EXCEPTION,
+                                                      incomingRequestHandler, this);
+        // Also write any extra data to our buffer, and handle it:
+        if (extraDataSize > 0 && extraDataSize <= fRequestBufferBytesLeft/*sanity check; should always be true*/) {
+          unsigned char* ptr = &fRequestBuffer[fRequestBytesAlreadySeen];
+          for (unsigned i = 0; i < extraDataSize; ++i) {
+            ptr[i] = extraData[i];
+          }
+          handleRequestBytes(extraDataSize);
+        }
+        sem.post();
+      });
+    sem.wait();
   }
 }
 

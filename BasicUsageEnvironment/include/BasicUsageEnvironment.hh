@@ -45,6 +45,13 @@ protected:
   BasicUsageEnvironment(TaskScheduler& taskScheduler);
       // called only by "createNew()" (or subclass constructors)
   virtual ~BasicUsageEnvironment();
+private:
+#ifdef _DEBUG
+  bool log_start_of_line;
+  FILE *log_file;
+#endif
+  FILE *getLogFile(void);
+  virtual const char *getLogFileName(void) const {return "";}
 };
 
 
