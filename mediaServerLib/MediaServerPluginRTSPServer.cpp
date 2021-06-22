@@ -616,10 +616,46 @@ ServerMediaSession *MediaServerPluginRTSPServer::createServerMediaSession(UsageE
 }
 
 
+class LoggingUsageEnvironment : public BasicUsageEnvironment {
+public:
+  LoggingUsageEnvironment(TaskScheduler &scheduler,TLogCallbackPtr log_callback,void *log_context)
+    : BasicUsageEnvironment(scheduler),log_callback(log_callback),log_context(log_context) {}
+private:
+  const TLogCallbackPtr log_callback;
+  void *const log_context;
+  UsageEnvironment& operator<<(char const* str) override {
+    (*log_callback)(log_context,std::string(str?str:"(NULL)"));
+    return *this;
+  }
+  UsageEnvironment& operator<<(int i) override {
+    std::ostringstream o;
+    o << i;
+    (*log_callback)(log_context,o.str());
+    return *this;
+  }
+  UsageEnvironment& operator<<(unsigned u) override {
+    std::ostringstream o;
+    o << u;
+    (*log_callback)(log_context,o.str());
+    return *this;
+  }
+  UsageEnvironment& operator<<(double d) override {
+    std::ostringstream o;
+    o << d;
+    (*log_callback)(log_context,o.str());
+    return *this;
+  }
+  UsageEnvironment& operator<<(void* p) override {
+    std::ostringstream o;
+    o << p;
+    (*log_callback)(log_context,o.str());
+    return *this;
+  }
+};
 
-
-
-
+UsageEnvironment *MediaServerPluginRTSPServer::createNewUsageEnvironment(TaskScheduler &scheduler) {
+  return new LoggingUsageEnvironment(scheduler,params.log_callback,params.log_context);
+}
 
 
 
@@ -645,14 +681,15 @@ public:
       worker_thread([this](void) {
         scheduler = BasicTaskScheduler::createNew();
         scheduler->assert_threads = true;
-        env = new DeletableUsageEnvironment(*scheduler);
+        env = new LoggingUsageEnvironment(*scheduler,RTCMediaLib::params.log_callback,RTCMediaLib::params.log_context);
         {
           std::unique_lock<std::mutex> lck(mtx);
           watchVariable = 0;
           cv.notify_one();
         }
         work();
-        delete env; env = nullptr;
+        if (!env->reclaim()) abort();
+        env = nullptr;
         delete scheduler; scheduler = nullptr;
       }) {
     std::unique_lock<std::mutex> lck(mtx);
@@ -673,9 +710,7 @@ private:
   IRTCStreamFactory *const streamManager;
   RTSPParameters params;
   BasicTaskScheduler *scheduler = nullptr;
-  struct DeletableUsageEnvironment : public BasicUsageEnvironment {
-    DeletableUsageEnvironment(TaskScheduler& s) : BasicUsageEnvironment(s) {}
-  } *env = nullptr;
+  UsageEnvironment *env = nullptr;
   char volatile watchVariable = 1;
   std::thread worker_thread;
     // mutex and contition variable only to be able to wait for thread to start:

@@ -155,13 +155,13 @@ void GenericMediaServer::deleteServerMediaSession(char const* streamName) {
 
 class GenericMediaServer::Worker {
 public:
-  Worker(void)
-    : worker_thread([this](void) {
+  Worker(GenericMediaServer &server)
+    : worker_thread([this,&server](void) {
 //        std::cout << "Worker::mainThread(" << std::this_thread::get_id() << "): start" << std::endl << std::flush;
         scheduler = BasicTaskScheduler::createNew();
         scheduler->assert_threads = true;
 //        std::cout << "Worker::mainThread(" << std::this_thread::get_id() << "): scheduler created" << std::endl << std::flush;
-        env = new DeletableUsageEnvironment(*scheduler);
+        env = server.createNewUsageEnvironment(*scheduler);
         {
           std::unique_lock<std::mutex> lck(mtx);
           watchVariable = 0;
@@ -169,7 +169,8 @@ public:
         }
         (*env) << "Worker::mainThread: start\n";
         env->taskScheduler().doEventLoop(&watchVariable);
-        delete env; env = nullptr;
+        if (!env->reclaim()) abort();
+        env = nullptr;
         delete scheduler; scheduler = nullptr;
       }) {
     std::unique_lock<std::mutex> lck(mtx);
@@ -190,10 +191,7 @@ public:
   int getLoad(void) const {return scheduler->addNrOfUsers(0);}
 private:
   BasicTaskScheduler *scheduler = nullptr;
-  struct DeletableUsageEnvironment : public BasicUsageEnvironment {
-    DeletableUsageEnvironment(TaskScheduler& s) : BasicUsageEnvironment(s) {}
-    const char *getLogFileName(void) const override {return "Worker";}
-  } *env = nullptr;
+  UsageEnvironment *env = nullptr;
   char volatile watchVariable = 1;
   std::thread worker_thread;
     // mutex and contition variable only to be able to wait for thread to start:
@@ -210,7 +208,7 @@ static inline unsigned int GetNrOfCores(void) {
 
 GenericMediaServer
 ::GenericMediaServer(UsageEnvironment& env, int ourSocketIPv4, int ourSocketIPv6, Port ourPort,
-		     unsigned reclamationSeconds)
+                     unsigned reclamationSeconds)
   : Medium(env),
     fServerSocketIPv4(ourSocketIPv4), fServerSocketIPv6(ourSocketIPv6),
     fServerPort(ourPort), fReclamationSeconds(reclamationSeconds),
@@ -219,7 +217,7 @@ GenericMediaServer
     fClientSessions(HashTable::create(STRING_HASH_KEYS)),
     fPreviousClientSessionId(0),
     nr_of_workers(GetNrOfCores()),
-    workers(new Worker[nr_of_workers])
+    workers(new std::unique_ptr<Worker>[nr_of_workers])
 {
 //fprintf(stderr,"GenericMediaServer::GenericMediaServer: %u workers\n", nr_of_workers);
   ignoreSigPipeOnSocket(fServerSocketIPv4); // so that clients on the same host that are killed don't also kill us
@@ -239,19 +237,25 @@ GenericMediaServer::~GenericMediaServer() {
   ::closeSocket(fServerSocketIPv6);
 }
 
+UsageEnvironment *GenericMediaServer::createNewUsageEnvironment(TaskScheduler &scheduler) {
+  return BasicUsageEnvironment::createNew(scheduler);
+}
+
 UsageEnvironment &GenericMediaServer::getBestThreadedUsageEnvironment(void) {
-  Worker *best_worker = workers;
-  int best_load = best_worker->getLoad();
-  for (int i = 1; i < nr_of_workers; i++) {
-    const int load = workers[i].getLoad();
-    if (load < best_load) {
+  int best_i = nr_of_workers;
+  int best_load = 0x7FFFFFFF;
+  for (int i=nr_of_workers-1;i>=0;i--) {
+    const int load = workers[i] ? workers[i]->getLoad() : 0;
+    if (load < best_load ||
+        (load == best_load && (workers[i] || !workers[best_i]))) {
       best_load = load;
-      best_worker = workers + i;
+      best_i = i;
     }
   }
-//  best_worker->getEnv() << "GenericMediaServer::getBestThreadedUsageEnvironment: "
-//                        << (int)(best_worker-workers) << ", " << best_load << "\n";
-  return best_worker->getEnv();
+  if (!workers[best_i]) workers[best_i] = std::unique_ptr<Worker>(new Worker(*this));
+//  workers[best_i]->getEnv() << "GenericMediaServer::getBestThreadedUsageEnvironment: "
+//                            << best_i << ", " << best_load << "\n";
+  return workers[best_i]->getEnv();
 }
 
 void GenericMediaServer::cleanup() {
@@ -293,8 +297,8 @@ void GenericMediaServer::cleanup() {
     lock.lock();
   }
 
-  for (int i = 0; i < nr_of_workers; i++) workers[i].stop();
-  for (int i = 0; i < nr_of_workers; i++) workers[i].joinThread();
+  for (int i = 0; i < nr_of_workers; i++) workers[i]->stop();
+  for (int i = 0; i < nr_of_workers; i++) workers[i]->joinThread();
   delete fClientSessions; fClientSessions = nullptr;
   delete fClientConnections; fClientConnections = nullptr;
   delete fServerMediaSessions; fServerMediaSessions = nullptr;

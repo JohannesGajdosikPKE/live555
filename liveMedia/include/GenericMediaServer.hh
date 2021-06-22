@@ -37,6 +37,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #endif
 
 #include <mutex>
+#include <memory>
 
 // Typedef for a handler function that gets called when "lookupServerMediaSession()"
 // (defined below) completes:
@@ -103,7 +104,7 @@ public:
 
 protected:
   GenericMediaServer(UsageEnvironment& env, int ourSocketIPv4, int ourSocketIPv6, Port ourPort,
-		     unsigned reclamationSeconds);
+                     unsigned reclamationSeconds);
       // If "reclamationSeconds" > 0, then the "ClientSession" state for each client will get
       // reclaimed if no activity from the client is detected in at least "reclamationSeconds".
   // we're an abstract base class
@@ -213,6 +214,7 @@ protected:
   UsageEnvironment& getBestThreadedUsageEnvironment(void);
 
 private:
+  virtual UsageEnvironment *createNewUsageEnvironment(TaskScheduler &scheduler);
   void addClientConnection(ClientConnection *c) {
     std::lock_guard<std::recursive_mutex> guard(internal_mutex);
     fClientConnections->Add((char const*)c, c);
@@ -232,7 +234,7 @@ private:
 
   const unsigned int nr_of_workers;
   class Worker;
-  Worker *const workers;
+  std::unique_ptr<Worker> *const workers;
 };
 
 // A data structure used for optional user/password authentication:

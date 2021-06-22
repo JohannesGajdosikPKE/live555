@@ -91,7 +91,7 @@ public:
 
 
 
-typedef void(*TLogCallbackPtr)(const std::string& message);
+typedef void(*TLogCallbackPtr)(void *context, const std::string& message);
 
 enum RTCLoggingSeverity {
   LS_SENSITIVE,
@@ -105,9 +105,11 @@ enum RTCLoggingSeverity {
 class RTSPParameters {
 public:
   RTSPParameters(void) {}
-  RTSPParameters(uint16_t port,uint16_t httpPort,uint16_t httpsPort,uint32_t bind_to_interface,
+  RTSPParameters(TLogCallbackPtr log_callback, void *log_context,
+                 uint16_t port,uint16_t httpPort,uint16_t httpsPort,uint32_t bind_to_interface,
                  const std::string &https_cert_file,const std::string &https_key_path)
-    : port(port),httpPort(httpPort),httpsPort(httpsPort),bind_to_interface(bind_to_interface),
+    : log_callback(log_callback),log_context(log_context),
+      port(port),httpPort(httpPort),httpsPort(httpsPort),bind_to_interface(bind_to_interface),
       https_cert_file(https_cert_file),https_key_path(https_key_path) {}
   const std::string &getHttpCertFile(void) const {return https_cert_file;}
   const std::string &getHttpKeyPath(void) const {return https_key_path;}
@@ -115,9 +117,11 @@ public:
   uint16_t httpPort = 0;
   uint16_t httpsPort = 0;
   uint32_t bind_to_interface = 0;
+  const TLogCallbackPtr log_callback = 0;
+  void *const log_context = 0;
 private:
-  std::string https_cert_file;
-  std::string https_key_path;
+  const std::string https_cert_file;
+  const std::string https_key_path;
 };
 
 

@@ -71,6 +71,8 @@ protected:
   ClientConnection *createNewClientConnectionSSL(int clientSocket, struct sockaddr_storage clientAddr,
                                                  const char* certpath, const char* keypath);
 
+  UsageEnvironment *createNewUsageEnvironment(TaskScheduler &scheduler) override;
+
   int m_HTTPServerSocket,m_HTTPsServerSocket;
   const RTSPParameters params;
   IRTCStreamFactory *const streamManager;
