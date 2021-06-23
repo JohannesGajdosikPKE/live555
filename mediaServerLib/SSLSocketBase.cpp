@@ -288,10 +288,10 @@ int SSLSocketPipeBase::handleSSLRead(const unsigned char* buffer, const unsigned
     case SSL_ERROR_WANT_READ:
     case SSL_ERROR_WANT_WRITE:
       /* there's data pending, re-invoke SSL_read() */
-      std::cout << " ssl-> reading data " << SSL_ERROR_to_str(err) << std::endl;
+//      std::cout << " ssl-> reading data " << SSL_ERROR_to_str(err) << std::endl;
       return 0;
     case SSL_ERROR_SYSCALL:
-      std::cout << " ssl-> reading data failed! -> socket disconnected! " << SSL_ERROR_to_str(err) << std::endl;
+//      std::cout << " ssl-> reading data failed! -> socket disconnected! " << SSL_ERROR_to_str(err) << std::endl;
       return -1;
     default:
       /* openssl/ssl.h for SSL_ERROR_SYSCALL says "look at error stack/return
@@ -302,7 +302,7 @@ int SSLSocketPipeBase::handleSSLRead(const unsigned char* buffer, const unsigned
       if ((nread < 0) || sslerror) {
         /* If the return code was negative or there actually is an error in the
         queue */
-        std::cout << " ssl-> reading data failed! " << SSL_ERROR_to_str(err) << std::endl;
+//        std::cout << " ssl-> reading data failed! " << SSL_ERROR_to_str(err) << std::endl;
         return -1;
       }
 
@@ -457,7 +457,7 @@ void SSLSocketPipeBase::copyDataToSocketPipe()
     bytesRead = handleSSLRead(fReadingBuffer, sizeof(fReadingBuffer));
     if (bytesRead < 0)
     {
-      std::cout << " ssl->out: Error reading from ssl input." << std::endl;
+//      std::cout << " ssl->out: Error reading from ssl input." << std::endl;
       DisconnectPipe();
       return;
     }
@@ -468,7 +468,7 @@ void SSLSocketPipeBase::copyDataToSocketPipe()
     int bytesWritten = send(m_pipeSocket, (char*)fReadingBuffer, bytesRead, 0);
     if (bytesWritten < 0)
     {
-      std::cout << " ssl->out: Error writing to pipe output!" << std::endl;
+//      std::cout << " ssl->out: Error writing to pipe output!" << std::endl;
       DisconnectPipe();
       return;
     }

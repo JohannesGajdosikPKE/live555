@@ -82,34 +82,23 @@ class IRTCStreamFactory
 {
 public:
   virtual ~IRTCStreamFactory(void) {}
-  // Callback information about the videoStreamInternalUsage
-  virtual void            OnP2PStatsInfo(const char* statsInfo) {}
+    // The pluging shall call this function frequently,
+    // giving some human readable text about whats going on.
+  virtual void OnStatsInfo(const std::string &statsInfo) = 0;
+    // called for every log line
+  virtual void OnLog(const std::string &message) = 0;
 
   typedef void (GetStreamCb)(void *context,const TStreamPtr &stream);
   virtual void GetStream(const char *url,void *context,GetStreamCb *cb) = 0;
 };
 
 
-
-typedef void(*TLogCallbackPtr)(void *context, const std::string& message);
-
-enum RTCLoggingSeverity {
-  LS_SENSITIVE,
-  LS_VERBOSE,
-  LS_INFO,
-  LS_WARNING,
-  LS_ERROR,
-  LS_NONE,
-};
-
 class RTSPParameters {
 public:
   RTSPParameters(void) {}
-  RTSPParameters(TLogCallbackPtr log_callback, void *log_context,
-                 uint16_t port,uint16_t httpPort,uint16_t httpsPort,uint32_t bind_to_interface,
+  RTSPParameters(uint16_t port,uint16_t httpPort,uint16_t httpsPort,uint32_t bind_to_interface,
                  const std::string &https_cert_file,const std::string &https_key_path)
-    : log_callback(log_callback),log_context(log_context),
-      port(port),httpPort(httpPort),httpsPort(httpsPort),bind_to_interface(bind_to_interface),
+    : port(port),httpPort(httpPort),httpsPort(httpsPort),bind_to_interface(bind_to_interface),
       https_cert_file(https_cert_file),https_key_path(https_key_path) {}
   const std::string &getHttpCertFile(void) const {return https_cert_file;}
   const std::string &getHttpKeyPath(void) const {return https_key_path;}
@@ -117,8 +106,6 @@ public:
   uint16_t httpPort = 0;
   uint16_t httpsPort = 0;
   uint32_t bind_to_interface = 0;
-  const TLogCallbackPtr log_callback = 0;
-  void *const log_context = 0;
 private:
   const std::string https_cert_file;
   const std::string https_key_path;

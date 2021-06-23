@@ -199,19 +199,22 @@ private:
     }
     (*cb)(context,TStreamPtr(rval));
   }
+  void OnStatsInfo(const std::string &statsInfo) override {
+    std::cout << "\nOnStatsInfo:\n" << statsInfo << std::endl;
+  }
+  void OnLog(const std::string &message) {
+    std::cout << message;
+  }
 };
 
 
 
 static const char *const exe_api_version = RTCMEDIALIB_API_VERSION;
 
-void LogFunction(void *context,const std::string &msg) {
-  std::cout << msg;
-}
 
 int main(int argc,char *argv[]) {
   MyIRTCStreamFactory factory;
-  RTSPParameters params(LogFunction,nullptr,554,8080,8081,0,
+  RTSPParameters params(554,8080,8081,0,
                         "C:\\Users\\01jga728\\zertifikat-pub.pem",
                         "C:\\Users\\01jga728\\zertifikat-key.pem"
 );

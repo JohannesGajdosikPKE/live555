@@ -72,12 +72,16 @@ protected:
                                                  const char* certpath, const char* keypath);
 
   UsageEnvironment *createNewUsageEnvironment(TaskScheduler &scheduler) override;
+  static void GenerateInfoString(void *context);
+  void generateInfoString(void);
 
   int m_HTTPServerSocket,m_HTTPsServerSocket;
   const RTSPParameters params;
   IRTCStreamFactory *const streamManager;
   std::map<std::string,std::shared_ptr<StreamMapEntry> > stream_map;
   mutable std::recursive_mutex stream_map_mutex;
+  const std::unique_ptr<const char[]> m_urlPrefix;
+  TaskToken generate_info_string_task;
 };
 
 #endif

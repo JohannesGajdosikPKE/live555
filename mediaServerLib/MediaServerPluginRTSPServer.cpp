@@ -66,6 +66,10 @@ public:
       // defensive programming: in case of programming error segfault as early as possible:
     subsession_info_list = nullptr;
   }
+  unsigned int getNrOfRegistrations(void) const {
+    std::lock_guard<std::recursive_mutex> lock(registration_mutex);
+    return registration_map.size();
+  }
   const SubsessionInfo *const *getSubsessionInfoList(void) const {return subsession_info_list;}
   typedef std::function<void(const Frame&)> FrameFunction;
   class RegistrationEntry;
@@ -254,7 +258,9 @@ MediaServerPluginRTSPServer::createNew(UsageEnvironment &env, const RTSPParamete
 MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(UsageEnvironment &env, int ourSocketIPv4, int ourSocketIPv6,
                                                          const RTSPParameters &params, IRTCStreamFactory *streamManager)
                             :RTSPServer(env, ourSocketIPv4, ourSocketIPv6, Port(params.port), NULL, 65),
-                             params(params), streamManager(streamManager) {
+                             params(params), streamManager(streamManager),
+                             m_urlPrefix(rtspURLPrefix(params.bind_to_interface ? ourSocketIPv4 : -1)) // allocated with strDup, not strdup. free with delete[]
+ {
   if (params.httpPort) {
     m_HTTPServerSocket = CreateAcceptSocket(env, params.httpPort, params.bind_to_interface);
 envir() << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer: CreateAcceptSocket(" << params.httpPort << ") returned "
@@ -273,6 +279,8 @@ envir() << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer: CreateAcce
         incomingConnectionHandlerHTTPoverSSL, this);
     }
   }
+  // Schedule status info task (run periodically every 20 sec)
+  generate_info_string_task = env.taskScheduler().scheduleDelayedTask(1000000, GenerateInfoString, this);
 }
 
 MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer() {
@@ -421,7 +429,7 @@ private:
     deliverFrame();
   }
   std::queue<Frame> my_frame_queue;
-  std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry::Registration>  frame_connection;
+  std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry::Registration> frame_connection;
 };
 
 
@@ -618,45 +626,94 @@ ServerMediaSession *MediaServerPluginRTSPServer::createServerMediaSession(UsageE
 
 class LoggingUsageEnvironment : public BasicUsageEnvironment {
 public:
-  LoggingUsageEnvironment(TaskScheduler &scheduler,TLogCallbackPtr log_callback,void *log_context)
-    : BasicUsageEnvironment(scheduler),log_callback(log_callback),log_context(log_context) {}
+  LoggingUsageEnvironment(TaskScheduler &scheduler,IRTCStreamFactory *streamManager)
+    : BasicUsageEnvironment(scheduler),streamManager(streamManager) {}
 private:
-  const TLogCallbackPtr log_callback;
-  void *const log_context;
+  IRTCStreamFactory *const streamManager;
   UsageEnvironment& operator<<(char const* str) override {
-    (*log_callback)(log_context,std::string(str?str:"(NULL)"));
+    streamManager->OnLog(std::string(str?str:"(NULL)"));
     return *this;
   }
   UsageEnvironment& operator<<(int i) override {
     std::ostringstream o;
     o << i;
-    (*log_callback)(log_context,o.str());
+    streamManager->OnLog(o.str());
     return *this;
   }
   UsageEnvironment& operator<<(unsigned u) override {
     std::ostringstream o;
     o << u;
-    (*log_callback)(log_context,o.str());
+    streamManager->OnLog(o.str());
     return *this;
   }
   UsageEnvironment& operator<<(double d) override {
     std::ostringstream o;
     o << d;
-    (*log_callback)(log_context,o.str());
+    streamManager->OnLog(o.str());
     return *this;
   }
   UsageEnvironment& operator<<(void* p) override {
     std::ostringstream o;
     o << p;
-    (*log_callback)(log_context,o.str());
+    streamManager->OnLog(o.str());
     return *this;
   }
 };
 
 UsageEnvironment *MediaServerPluginRTSPServer::createNewUsageEnvironment(TaskScheduler &scheduler) {
-  return new LoggingUsageEnvironment(scheduler,params.log_callback,params.log_context);
+  return new LoggingUsageEnvironment(scheduler,streamManager);
 }
 
+
+void MediaServerPluginRTSPServer::GenerateInfoString(void *context) {
+  reinterpret_cast<MediaServerPluginRTSPServer*>(context)->generateInfoString();
+}
+
+static inline
+const char *SubsessionInfoToString(const SubsessionInfo &ssi) {
+  switch (ssi.GetFormat()) {
+    case RTCFormatJPEG : return "JPEG";
+    case RTCFormatH264 : return "H264";
+    case RTCFormatYUVI420: return "YUVI420";
+    case RTCFormatUnknown: return ssi.getRtpPayloadFormatName();
+  }
+  return "undefined_format_value";
+}
+
+void MediaServerPluginRTSPServer::generateInfoString(void)
+{
+  unsigned int connections = 0;
+  std::stringstream ss;
+  {
+    std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
+    ss << "---- MediaServer: " << stream_map.size() << " Session(s) active ---- " << "url: " << m_urlPrefix.get() << "[cameraNum]-[streamId]";
+    if (params.httpPort)
+      ss << " | RTSP-over-HTTP tunnel (Port " << params.httpPort << ")";
+    else
+      ss << " | no RTSP-over-HTTP tunnel";
+    if (params.httpsPort)
+      ss << " | RTSP-over-HTTP-over-SSL tunnel (Port " << params.httpsPort << ")";
+    else
+      ss << " | no RTSP-over-HTTP-over-SSL tunnel";
+    ss << "\n";
+    for (auto &it : stream_map) {
+      ss << "Stream: [" << it.first << "], ";
+      int track_id = 0;
+      for (const SubsessionInfo *const* ssit = it.second->getSubsessionInfoList();ssit && (*ssit);ssit++,track_id++) {
+        ss << SubsessionInfoToString(**ssit) << "(" << track_id << "), ";
+      }
+      unsigned int uc = it.second->getNrOfRegistrations();
+      ss << " url: " << m_urlPrefix.get() << it.first << ", " << uc << " connection(s) \n";
+      connections += uc;
+    }
+  }
+  ss << "Media Server Connections: " << connections << "\n";
+  ss << std::endl;
+  streamManager->OnStatsInfo(ss.str().c_str());
+  // reschedule the next status info task
+  const unsigned int generate_info_string_interval = 10; //[sec]
+  envir().taskScheduler().rescheduleDelayedTask(generate_info_string_task, generate_info_string_interval * 1000000ULL, GenerateInfoString, this);
+}
 
 
 
@@ -681,7 +738,7 @@ public:
       worker_thread([this](void) {
         scheduler = BasicTaskScheduler::createNew();
         scheduler->assert_threads = true;
-        env = new LoggingUsageEnvironment(*scheduler,RTCMediaLib::params.log_callback,RTCMediaLib::params.log_context);
+        env = new LoggingUsageEnvironment(*scheduler,RTCMediaLib::streamManager);
         {
           std::unique_lock<std::mutex> lck(mtx);
           watchVariable = 0;
