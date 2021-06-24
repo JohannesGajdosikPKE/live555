@@ -132,7 +132,7 @@ Boolean RTSPServer::setUpTunnelingOverHTTP(Port httpPort) {
 
 portNumBits RTSPServer::httpServerPortNum() const {
   const portNumBits rval = ntohs(fHTTPServerPort.num());
-  std::cout << "RTSPServer(" << this << ")::httpServerPortNum() returns " << rval << std::endl;
+//  std::cout << "RTSPServer(" << this << ")::httpServerPortNum() returns " << rval << std::endl;
   return rval;
 }
 
@@ -700,8 +700,8 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
 	    this, numBytesRemaining > 0 ? "processing" : "read", newBytesRead, ptr);
 #endif
   ptr[newBytesRead] = '\0';
-  envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << "): "
-          << (numBytesRemaining > 0 ? "processing " : "read ") << (const char*)ptr << "\n";
+//  envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << "): "
+//          << (numBytesRemaining > 0 ? "processing " : "read ") << (const char*)ptr << "\n";
     
     if (fClientOutputSocket != fClientInputSocket && numBytesRemaining == 0) {
       // We're doing RTSP-over-HTTP tunneling, and input commands are assumed to have been Base64-encoded.
@@ -729,8 +729,8 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
 	for (unsigned k = 0; k < decodedSize; ++k) fprintf(stderr, "%c", decodedBytes[k]);
 	fprintf(stderr, "\n");
 #endif
-    envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::handleRequestBytes: "
-               "Base64-decoded " << numBytesToDecode << " input bytes into " << decodedSize << " new bytes\n";
+//    envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::handleRequestBytes: "
+//               "Base64-decoded " << numBytesToDecode << " input bytes into " << decodedSize << " new bytes\n";
 	
 	// Copy the new decoded bytes in place of the old ones (we can do this because there are fewer decoded bytes than original):
 	unsigned char* to = ptr-fBase64RemainderCount;
@@ -979,7 +979,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
   } while (numBytesRemaining > 0);
   
   --fRecursionCount;
-  envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::handleRequestBytes end: fIsActive: " << (int)fIsActive << "\n";
+//  envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::handleRequestBytes end: fIsActive: " << (int)fIsActive << "\n";
   if (!fIsActive) {
     if (fRecursionCount > 0) closeSockets(); else delete this;
     // Note: The "fRecursionCount" test is for a pathological situation where we reenter the event loop and get called recursively

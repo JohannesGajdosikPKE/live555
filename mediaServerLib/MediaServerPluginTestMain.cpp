@@ -11,6 +11,17 @@
 #include <thread>
 
 #include <string.h>
+#include <stdio.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <processthreadsapi.h>
+static inline
+unsigned int CurrentThreadId(void) {return GetCurrentThreadId();}
+#else
+static inline
+unsigned int CurrentThreadId(void) {return gettid();}
+#endif
 
 class MySubsessionInfo : public SubsessionInfo {
 public:
@@ -203,7 +214,32 @@ private:
     std::cout << "\nOnStatsInfo:\n" << statsInfo << std::endl;
   }
   void OnLog(const std::string &message) {
-    std::cout << message;
+    static std::mutex m;
+    std::lock_guard<std::mutex> lock(m);
+    static bool log_start_of_line = true;
+    static FILE *f=fopen("out.log","w");
+    if (log_start_of_line) {
+      uint64_t micros
+        = std::chrono::duration_cast<std::chrono::microseconds>
+            (std::chrono::system_clock::now().time_since_epoch()).count();
+      const unsigned int days = micros / (24*60*60*1000000ULL);
+      micros -= days * (24*60*60*1000000ULL);
+      const unsigned int hours = micros /   (60*60*1000000ULL);
+      micros -= hours *   (60*60*1000000ULL);
+      const unsigned int minutes = micros /    (60*1000000ULL);
+      micros -= minutes *    (60*1000000ULL);
+      const unsigned int seconds = micros /        1000000ULL;
+      micros -= seconds *        1000000ULL;
+      fprintf(f,"%u %02u:%02u:%02u.%06u, %u: ",
+              days,hours,minutes,seconds,(unsigned int)micros,
+              CurrentThreadId());
+      log_start_of_line = false;
+    }
+    fwrite(message.data(),1,message.size(),f);
+    if (message.back() == '\n') {
+      fflush(f);
+      log_start_of_line = true;
+    }
   }
 };
 

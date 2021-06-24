@@ -31,6 +31,16 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <iostream>
 #include <iomanip>
 
+static const char *SubsessionInfoToString(const SubsessionInfo &ssi) {
+  switch (ssi.GetFormat()) {
+    case RTCFormatJPEG : return "JPEG";
+    case RTCFormatH264 : return "H264";
+    case RTCFormatYUVI420: return "YUVI420";
+    case RTCFormatUnknown: return ssi.getRtpPayloadFormatName();
+  }
+  return "undefined_format_value";
+}
+
 struct Frame {
   Frame(void) : size(0), time(0) {}
   Frame(const uint8_t *data,int32_t size,int64_t time)
@@ -42,7 +52,8 @@ struct Frame {
   const std::shared_ptr<const uint8_t[]> data;
 };
 
-static void PrintBytes(const uint8_t *data, int size, int64_t time) {
+static inline
+void PrintBytes(const uint8_t *data, int size, int64_t time) {
   std::cout << time << ':' << std::setw(5) << size << std::hex;
   for (int i=0;i<32 && i < size;i++) std::cout << ' ' << std::setw(2) << std::setfill('0') << (uint32_t)(data[i]);
   std::cout << std::dec << std::endl;
@@ -51,88 +62,184 @@ static void PrintBytes(const uint8_t *data, int size, int64_t time) {
 
 class MediaServerPluginRTSPServer::StreamMapEntry : public std::enable_shared_from_this<MediaServerPluginRTSPServer::StreamMapEntry> {
 public:
-  StreamMapEntry(const TStreamPtr &stream,std::function<void(void)> &&on_close)
-      : stream(stream),on_close(std::move(on_close)) {
-      // RegisterOnClose might call OnClose early, so lock the mutex:
-    std::lock_guard<std::recursive_mutex> lock(registration_mutex);
-    subsession_info_list = stream->getSubsessionInfoList();
-    stream->RegisterOnClose(this,&StreamMapEntry::OnClose);
-  }
-  ~StreamMapEntry(void) {
-    std::lock_guard<std::recursive_mutex> lock(registration_mutex);
-    registration_map.clear();
-    stream->DeregisterOnClose(this);
-    stream.reset();
-      // defensive programming: in case of programming error segfault as early as possible:
-    subsession_info_list = nullptr;
-  }
-  unsigned int getNrOfRegistrations(void) const {
-    std::lock_guard<std::recursive_mutex> lock(registration_mutex);
-    return registration_map.size();
-  }
+  StreamMapEntry(UsageEnvironment &env,const TStreamPtr &stream,std::function<void(void)> &&on_close);
+  ~StreamMapEntry(void);
   const SubsessionInfo *const *getSubsessionInfoList(void) const {return subsession_info_list;}
   typedef std::function<void(const Frame&)> FrameFunction;
   class RegistrationEntry;
-  class Registration {
-  public:
-      // in fact I want to make the constructor private with
-      // friend std::shared_ptr<Registration> StreamMapEntry::connect(const SubsessionInfo *info,FrameFunction &&f);
-      // but this does not work out. When anyone finds out how to do this, please fix.
-      // Until then: do not call this constructor, only connect() may call it.
-    Registration(const std::shared_ptr<StreamMapEntry> &map_entry,const SubsessionInfo *info)
-      : map_entry(map_entry),info(info) {}
-  public:
-    ~Registration(void) {disconnect();}
-    void disconnect(void) {
-      std::shared_ptr<StreamMapEntry> e(map_entry.lock());
-      if (e) e->disconnect(info,this); // will reset the map_entry
-    }
-  private:
-    friend class RegistrationEntry;
-    std::weak_ptr<StreamMapEntry> map_entry;
-    const SubsessionInfo *const info;
-  };
-  std::shared_ptr<Registration> connect(const SubsessionInfo *info,FrameFunction &&f) {
-    std::lock_guard<std::recursive_mutex> lock(registration_mutex);
-    auto &r(registration_map[info]);
-    r.registration_mutex = &registration_mutex;
-    const bool first_entry = r.empty();
-    std::shared_ptr<Registration> reg(std::make_shared<Registration>(shared_from_this(),info));
-    r[reg.get()] = std::move(f);
-    if (first_entry) {
-      stream->RegisterOnFrame(&r,info,
-                              (info->GetFormat() == RTCFormatH264)
-                                ? &StreamMapEntry::OnH264FrameCallback
-                                : &StreamMapEntry::OnFrameCallback);
-    }
-    return reg;
-  }
+  class Registration;
+  std::shared_ptr<Registration> connect(const SubsessionInfo *info,FrameFunction &&f);
+  unsigned int printConnections(const std::string &url,std::ostream &o) const;
+  UsageEnvironment &env;
 private:
   std::shared_ptr<IRTCStream> stream;
   const std::function<void(void)> on_close;
   static void OnClose(void *context) {reinterpret_cast<StreamMapEntry*>(context)->onClose();}
-  void onClose(void) {
-      // called from the executables threads:
-    std::lock_guard<std::recursive_mutex> lock(registration_mutex);
-    registration_map.clear();
-    stream.reset();
-    subsession_info_list = nullptr;
-    if (on_close) on_close();
-  }
+  void onClose(void);
   friend class Registration;
-  void disconnect(const SubsessionInfo *info,Registration *reg) {
-    std::lock_guard<std::recursive_mutex> lock(registration_mutex);
-    auto it(registration_map.find(info));
-    if (it == registration_map.end()) abort();
-      // will call the destructor of the RegistrationEntry wich in turn
-      // will invalidate the registration and all the FrameCb with an emty Frame
-    if (it->second.erase(reg) != 1) abort();
-    if (it->second.empty()) {
-      stream->DeregisterOnFrame(&it->second,info);
+  void disconnect(const SubsessionInfo *info,Registration *reg);
+private:
+  static void OnH264NalCallback(void *callerId, const uint8_t *buffer, int bufferSize, const int64_t &frameTime);
+  static void OnH264FrameCallback(void *callerId, const uint8_t *buffer, int bufferSize, const int64_t &frameTime);
+  static void OnFrameCallback(void *callerId, const uint8_t *buffer, int bufferSize, const int64_t &frameTime);
+  mutable std::recursive_mutex registration_mutex;
+  class RegistrationEntry;
+  struct FrameFunctionMap;
+  std::map<const SubsessionInfo*,FrameFunctionMap> registration_map;
+  const SubsessionInfo *const *subsession_info_list;
+};
+
+class MediaServerPluginRTSPServer::StreamMapEntry::Registration {
+public:
+    // in fact I want to make the constructor private with
+    // friend std::shared_ptr<Registration> StreamMapEntry::connect(const SubsessionInfo *info,FrameFunction &&f);
+    // but this does not work out. When anyone finds out how to do this, please fix.
+    // Until then: do not call this constructor, only connect() may call it.
+  Registration(const std::shared_ptr<StreamMapEntry> &map_entry,const SubsessionInfo *info)
+    : env(map_entry->env),map_entry(map_entry),info(info) {
+    env << "MediaServerPluginRTSPServer::StreamMapEntry::Registration(" << this << ")::Registration(" << map_entry.get() << ")\n";
+  }
+public:
+  UsageEnvironment &env;
+  ~Registration(void) {
+    disconnect();
+    env << "MediaServerPluginRTSPServer::StreamMapEntry::Registration(" << this << ")::~Registration\n";
+  }
+  void disconnect(void) {
+    std::shared_ptr<StreamMapEntry> e(map_entry.lock());
+    if (e) {
+      env << "MediaServerPluginRTSPServer::StreamMapEntry::Registration(" << this << ")::disconnect: calling " << e.get() << "->disconnect\n";
+      e->disconnect(info,this); // will reset the map_entry
+    } else {
+      env << "MediaServerPluginRTSPServer::StreamMapEntry::Registration(" << this << ")::disconnect: nothing to disconnect\n";
     }
   }
 private:
-  static void OnH264NalCallback(void *callerId, const uint8_t *buffer, int bufferSize, const int64_t &frameTime) {
+  friend class RegistrationEntry;
+  std::weak_ptr<StreamMapEntry> map_entry;
+  const SubsessionInfo *const info;
+};
+
+class MediaServerPluginRTSPServer::StreamMapEntry::RegistrationEntry {
+public:
+  RegistrationEntry(void) {}
+  RegistrationEntry(FrameFunction &&func,const std::shared_ptr<Registration> &reg)
+    : func(std::move(func)),reg(reg) {}
+  ~RegistrationEntry(void) {
+      // registration_mutex is already locked
+    const std::shared_ptr<Registration> r(reg.lock());
+    if (r) {
+      static const Frame empty_frame;
+      func(empty_frame);
+      r->map_entry.reset();
+    }
+  }
+  void swap(RegistrationEntry &e) {
+    func.swap(e.func);
+    reg.swap(e.reg);
+  }
+  FrameFunction func;
+  std::weak_ptr<Registration> reg;
+};
+
+struct MediaServerPluginRTSPServer::StreamMapEntry::FrameFunctionMap : public std::map<Registration*,RegistrationEntry> {
+  FrameFunctionMap(void) : h264_profile_level_id(0) {}
+  std::recursive_mutex *registration_mutex = nullptr;
+  void setH264ProfileLevelId(unsigned int x) {h264_profile_level_id = x;}
+  void setH264Sps64(const std::shared_ptr<const char[]> &x) {h264_sps64 = x;}
+  void setH264Pps64(const std::shared_ptr<const char[]> &x) {h264_pps64 = x;}
+  unsigned int h264_profile_level_id;
+  std::shared_ptr<const char[]> h264_sps64,h264_pps64;
+};
+
+
+MediaServerPluginRTSPServer::StreamMapEntry::StreamMapEntry(UsageEnvironment &env,const TStreamPtr &stream,
+                                                            std::function<void(void)> &&on_close)
+                                            :env(env),stream(stream),on_close(std::move(on_close)) {
+    // RegisterOnClose might call OnClose early, so lock the mutex:
+  std::lock_guard<std::recursive_mutex> lock(registration_mutex);
+  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << this << ")::StreamMapEntry\n";
+  subsession_info_list = stream->getSubsessionInfoList();
+  stream->RegisterOnClose(this,&StreamMapEntry::OnClose);
+}
+
+MediaServerPluginRTSPServer::StreamMapEntry::~StreamMapEntry(void) {
+  std::lock_guard<std::recursive_mutex> lock(registration_mutex);
+  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << this << ")::~StreamMapEntry\n";
+  registration_map.clear();
+  stream->DeregisterOnClose(this);
+  stream.reset();
+    // defensive programming: in case of programming error segfault as early as possible:
+  subsession_info_list = nullptr;
+}
+
+std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry::Registration>
+MediaServerPluginRTSPServer::StreamMapEntry::connect(const SubsessionInfo *info,FrameFunction &&f) {
+  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << this << ")::connect(" << SubsessionInfoToString(*info) << "): start\n";
+  std::lock_guard<std::recursive_mutex> lock(registration_mutex);
+  auto &r(registration_map[info]);
+  r.registration_mutex = &registration_mutex;
+  const bool first_entry = r.empty();
+  std::shared_ptr<Registration> reg(std::make_shared<Registration>(shared_from_this(),info));
+  r[reg.get()].swap(RegistrationEntry(std::move(f),reg));
+  if (first_entry) {
+    env << "MediaServerPluginRTSPServer::StreamMapEntry(" << this << ")::connect: calling stream->RegisterOnFrame\n";
+    stream->RegisterOnFrame(&r,info,
+                            (info->GetFormat() == RTCFormatH264)
+                              ? &StreamMapEntry::OnH264FrameCallback
+                              : &StreamMapEntry::OnFrameCallback);
+  }
+  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << this << ")::connect returns " << reg.get() << "\n";
+  return reg;
+}
+
+void MediaServerPluginRTSPServer::StreamMapEntry::disconnect(const SubsessionInfo *info,Registration *reg) {
+  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << this << ")::disconnect(" << SubsessionInfoToString(*info) << "): start\n";
+  std::lock_guard<std::recursive_mutex> lock(registration_mutex);
+  auto it(registration_map.find(info));
+  if (it == registration_map.end()) abort();
+    // will call the destructor of the RegistrationEntry wich in turn
+    // will invalidate the registration and call the FrameCb with an emty Frame
+  if (it->second.erase(reg) != 1) abort();
+  if (it->second.empty()) {
+    env << "MediaServerPluginRTSPServer::StreamMapEntry(" << this << ")::disconnect: calling stream->DeregisterOnFrame\n";
+    stream->DeregisterOnFrame(&it->second,info);
+  }
+  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << this << ")::disconnect(" << SubsessionInfoToString(*info) << "): end, "
+         "registrations: " << (int)(registration_map.size()) << "\n";
+}
+
+void MediaServerPluginRTSPServer::StreamMapEntry::onClose(void) {
+  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << this << ")::onClose\n";
+    // called from the executables threads:
+  std::lock_guard<std::recursive_mutex> lock(registration_mutex);
+  registration_map.clear();
+  stream.reset();
+  subsession_info_list = nullptr;
+  if (on_close) on_close();
+}
+
+unsigned int MediaServerPluginRTSPServer::StreamMapEntry::printConnections(const std::string &url,std::ostream &o) const {
+  unsigned int rval = 0;
+  std::lock_guard<std::recursive_mutex> lock(registration_mutex);
+  for (auto &it : registration_map) {
+    const unsigned int c = it.second.size();
+    rval += c;
+  }
+  if (rval > 0) {
+    o << "Stream url: " << url;
+    int track_id = 0;
+    for (auto &it : registration_map) {
+      const unsigned int c = it.second.size();
+      o << ", " << SubsessionInfoToString(*it.first) << "(" << track_id << "): " << c << " connection(s)" ;
+      track_id++;
+    }
+    o << "\n";
+  }
+  return rval;
+}
+
+void MediaServerPluginRTSPServer::StreamMapEntry::OnH264NalCallback(void *callerId, const uint8_t *buffer, int bufferSize, const int64_t &frameTime) {
 /*
       maybe this code will be useful later
     FrameFunctionMap &r(*reinterpret_cast<FrameFunctionMap*>(callerId));
@@ -147,70 +254,41 @@ private:
       r.setH264Pps64(std::shared_ptr<const char[]>(base64Encode((const char*)buffer,bufferSize)));
     }
 */
-    OnFrameCallback(callerId,buffer,bufferSize,frameTime);
-  }
-  static void OnH264FrameCallback(void *callerId, const uint8_t *buffer, int bufferSize, const int64_t &frameTime) {
-    if (bufferSize <= 0) return;
-      // extract all nal units, strip h264 bytestream headers:
-    const uint8_t *p = buffer;
-    const uint8_t *const end = buffer+bufferSize;
-    const uint8_t *const end3 = end - 3;
-    for (;;) {
-      const uint8_t *p0 = p;
-      for (;p0<end3;p0++) {
-        if (p0[0]==0 && p0[1]==0 && p0[2]==1) {
-          goto nal_start_found;
-        }
-      }
-        // no more 001 until the end:
-      OnH264NalCallback(callerId,p,end-p,frameTime);
-      break;
-      nal_start_found:
-      const uint8_t *p_next = p0 + 3;
-      if (p0 > p) {
-        if (p0[-1]==0) p0--;
-        if (p0 > p) OnH264NalCallback(callerId,p,p0-p,frameTime);
-      }
-      p = p_next;
-    }
-  }
-  static void OnFrameCallback(void *callerId, const uint8_t *buffer, int bufferSize, const int64_t &frameTime) {
-    const Frame f(buffer,bufferSize,frameTime);
-    FrameFunctionMap &r(*reinterpret_cast<FrameFunctionMap*>(callerId));
-    std::lock_guard<std::recursive_mutex> lock(*r.registration_mutex);
-    for (auto &it : r) it.second(f);
-  }
-  mutable std::recursive_mutex registration_mutex;
-  class RegistrationEntry {
-    RegistrationEntry(void) {}
-    RegistrationEntry(FrameFunction &&func,const std::shared_ptr<Registration> &reg)
-      : func(std::move(func)),reg(reg) {}
-    ~RegistrationEntry(void) {
-        // registration_mutex is already locked
-      const std::shared_ptr<Registration> r(reg.lock());
-      if (r) {
-        static const Frame empty_frame;
-        func(empty_frame);
-        r->map_entry.reset();
+  OnFrameCallback(callerId,buffer,bufferSize,frameTime);
+}
+
+void MediaServerPluginRTSPServer::StreamMapEntry::OnH264FrameCallback(void *callerId, const uint8_t *buffer, int bufferSize, const int64_t &frameTime) {
+  if (bufferSize <= 0) return;
+    // extract all nal units, strip h264 bytestream headers:
+  const uint8_t *p = buffer;
+  const uint8_t *const end = buffer+bufferSize;
+  const uint8_t *const end3 = end - 3;
+  for (;;) {
+    const uint8_t *p0 = p;
+    for (;p0<end3;p0++) {
+      if (p0[0]==0 && p0[1]==0 && p0[2]==1) {
+        goto nal_start_found;
       }
     }
-    FrameFunction func;
-    std::weak_ptr<Registration> reg;
-  };
-  struct FrameFunctionMap : public std::map<Registration*,FrameFunction> {
-    FrameFunctionMap(void) : h264_profile_level_id(0) {}
-    std::recursive_mutex *registration_mutex = nullptr;
-    void setH264ProfileLevelId(unsigned int x) {h264_profile_level_id = x;}
-    void setH264Sps64(const std::shared_ptr<const char[]> &x) {h264_sps64 = x;}
-    void setH264Pps64(const std::shared_ptr<const char[]> &x) {h264_pps64 = x;}
-    unsigned int h264_profile_level_id;
-    std::shared_ptr<const char[]> h264_sps64,h264_pps64;
-  };
-  std::map<const SubsessionInfo*,FrameFunctionMap> registration_map;
-  const SubsessionInfo *const *subsession_info_list;
-};
+      // no more 001 until the end:
+    OnH264NalCallback(callerId,p,end-p,frameTime);
+    break;
+    nal_start_found:
+    const uint8_t *p_next = p0 + 3;
+    if (p0 > p) {
+      if (p0[-1]==0) p0--;
+      if (p0 > p) OnH264NalCallback(callerId,p,p0-p,frameTime);
+    }
+    p = p_next;
+  }
+}
 
-
+void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void *callerId, const uint8_t *buffer, int bufferSize, const int64_t &frameTime) {
+  const Frame f(buffer,bufferSize,frameTime);
+  FrameFunctionMap &r(*reinterpret_cast<FrameFunctionMap*>(callerId));
+  std::lock_guard<std::recursive_mutex> lock(*r.registration_mutex);
+  for (auto &it : r) it.second.func(f);
+}
 
 
 
@@ -594,7 +672,7 @@ void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer:
   ServerMediaSession *sms = nullptr;
   if (stream) {
     std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
-    std::shared_ptr<StreamMapEntry> e(new StreamMapEntry(
+    std::shared_ptr<StreamMapEntry> e(new StreamMapEntry(envir(),
                                             stream,[this,name=l->streamName]() {
                                               std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
                                               stream_map.erase(name);
@@ -669,17 +747,6 @@ void MediaServerPluginRTSPServer::GenerateInfoString(void *context) {
   reinterpret_cast<MediaServerPluginRTSPServer*>(context)->generateInfoString();
 }
 
-static inline
-const char *SubsessionInfoToString(const SubsessionInfo &ssi) {
-  switch (ssi.GetFormat()) {
-    case RTCFormatJPEG : return "JPEG";
-    case RTCFormatH264 : return "H264";
-    case RTCFormatYUVI420: return "YUVI420";
-    case RTCFormatUnknown: return ssi.getRtpPayloadFormatName();
-  }
-  return "undefined_format_value";
-}
-
 void MediaServerPluginRTSPServer::generateInfoString(void)
 {
   unsigned int connections = 0;
@@ -697,14 +764,7 @@ void MediaServerPluginRTSPServer::generateInfoString(void)
       ss << " | no RTSP-over-HTTP-over-SSL tunnel";
     ss << "\n";
     for (auto &it : stream_map) {
-      ss << "Stream: [" << it.first << "], ";
-      int track_id = 0;
-      for (const SubsessionInfo *const* ssit = it.second->getSubsessionInfoList();ssit && (*ssit);ssit++,track_id++) {
-        ss << SubsessionInfoToString(**ssit) << "(" << track_id << "), ";
-      }
-      unsigned int uc = it.second->getNrOfRegistrations();
-      ss << " url: " << m_urlPrefix.get() << it.first << ", " << uc << " connection(s) \n";
-      connections += uc;
+      connections += it.second->printConnections(m_urlPrefix.get()+it.first,ss);
     }
   }
   ss << "Media Server Connections: " << connections << "\n";

@@ -18,8 +18,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // based on whether or not the specified stream name exists as a file
 // Header file
 
-#ifndef _DYNAMIC_RTSP_SERVER_HH
-#define _DYNAMIC_RTSP_SERVER_HH
+#ifndef _MEDIA_SERVER_PLUGIN_RTSP_SERVER_HH
+#define _MEDIA_SERVER_PLUGIN_RTSP_SERVER_HH
 
 #include "RTSPServer.hh"
 #include "IRTC.h"
