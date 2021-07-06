@@ -70,6 +70,17 @@ private:
   const char *getRtpPayloadFormatName(void) const {return "AVASYS.METADATA";}
 };
 
+static const char *SubsessionInfoToString(const SubsessionInfo &ssi) {
+  switch (ssi.GetFormat()) {
+    case RTCFormatJPEG : return "JPEG";
+    case RTCFormatH264 : return "H264";
+    case RTCFormatYUVI420: return "YUVI420";
+    case RTCFormatUnknown: return ssi.getRtpPayloadFormatName();
+  }
+  return "undefined_format_value";
+}
+
+
 class MyTestIRTCStream : public IRTCStream {
   std::function<void(MyTestIRTCStream*)> on_close;
 public:
@@ -154,18 +165,17 @@ private:
     std::lock_guard<std::mutex> lock(internal_mutex);
     OnFrameCallbackMap &m(subsession_cb_map[info]);
     if (onFrameCallback) {
+      std::cout << "MyTestIRTCStream::RegisterOnFrame(" << SubsessionInfoToString(*info) << "): register" << std::endl;
       if (!m.insert(std::pair<void*,TOnFrameCallbackPtr>(callerId,onFrameCallback)).second) {
         abort(); // double registration for same context
       }
     } else {
+      std::cout << "MyTestIRTCStream::RegisterOnFrame(" << SubsessionInfoToString(*info) << "): unregister" << std::endl;
       if (m.erase(callerId) != 1) {
         abort(); // unregister from unknown context
       }
     }
   }
-
-    // only deregister for frames of the associated Subsession,
-    // guarantee: after DeregisterOnFrame has returned no more callbacks for the associated Subsession will be called
 private:
   MySubsessionInfo *subsession_infos[8];
 };

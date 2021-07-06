@@ -28,6 +28,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include <string.h>
 
+#include <queue>
 #include <iostream>
 #include <iomanip>
 
@@ -61,8 +62,13 @@ void PrintBytes(const uint8_t *data, int size, int64_t time) {
 
 
 class MediaServerPluginRTSPServer::StreamMapEntry : public std::enable_shared_from_this<MediaServerPluginRTSPServer::StreamMapEntry> {
-public:
   StreamMapEntry(UsageEnvironment &env,const TStreamPtr &stream,std::function<void(void)> &&on_close);
+public:
+  static std::shared_ptr<StreamMapEntry> Create(UsageEnvironment &env,const TStreamPtr &stream,std::function<void(void)> &&on_close) {
+    // std::make_shared does not work in VS2019, why?
+//    return std::make_shared<StreamMapEntry>(env,stream,std::move(on_close));
+    return std::shared_ptr<StreamMapEntry>(new StreamMapEntry(env,stream,std::move(on_close)));
+  }
   ~StreamMapEntry(void);
   const SubsessionInfo *const *getSubsessionInfoList(void) const {return subsession_info_list;}
   typedef std::function<void(const Frame&)> FrameFunction;
@@ -75,10 +81,11 @@ private:
   std::shared_ptr<IRTCStream> stream;
   const std::function<void(void)> on_close;
   static void OnClose(void *context) {reinterpret_cast<StreamMapEntry*>(context)->onClose();}
+  TaskToken delayed_close_task = nullptr;
   void onClose(void);
+  void scheduleCloseTask(bool scedule);
   friend class Registration;
   void disconnect(const SubsessionInfo *info,Registration *reg);
-private:
   static void OnH264NalCallback(void *callerId, const uint8_t *buffer, int bufferSize, const int64_t &frameTime);
   static void OnH264FrameCallback(void *callerId, const uint8_t *buffer, int bufferSize, const int64_t &frameTime);
   static void OnFrameCallback(void *callerId, const uint8_t *buffer, int bufferSize, const int64_t &frameTime);
@@ -90,21 +97,25 @@ private:
 };
 
 class MediaServerPluginRTSPServer::StreamMapEntry::Registration {
-public:
-    // in fact I want to make the constructor private with
-    // friend std::shared_ptr<Registration> StreamMapEntry::connect(const SubsessionInfo *info,FrameFunction &&f);
-    // but this does not work out. When anyone finds out how to do this, please fix.
-    // Until then: do not call this constructor, only connect() may call it.
   Registration(const std::shared_ptr<StreamMapEntry> &map_entry,const SubsessionInfo *info)
     : env(map_entry->env),map_entry(map_entry),info(info) {
     env << "MediaServerPluginRTSPServer::StreamMapEntry::Registration(" << this << ")::Registration(" << map_entry.get() << ")\n";
   }
 public:
-  UsageEnvironment &env;
-  ~Registration(void) {
-    disconnect();
-    env << "MediaServerPluginRTSPServer::StreamMapEntry::Registration(" << this << ")::~Registration\n";
+    // only StreamMapEntry::connect calls Create:
+  static std::shared_ptr<Registration> Create(const std::shared_ptr<StreamMapEntry> &map_entry,const SubsessionInfo *info) {
+    return std::shared_ptr<Registration>(new Registration(map_entry,info));
+//    I would like to write
+//    return std::make_shared<Registration>(map_entry,info);
+//    but this produces strange errors with VS2019.
+//    Please fix, if you can.
   }
+  ~Registration(void) {
+    env << "MediaServerPluginRTSPServer::StreamMapEntry::Registration(" << this << ")::~Registration start\n";
+    disconnect();
+    env << "MediaServerPluginRTSPServer::StreamMapEntry::Registration(" << this << ")::~Registration end\n";
+  }
+private:
   void disconnect(void) {
     std::shared_ptr<StreamMapEntry> e(map_entry.lock());
     if (e) {
@@ -114,6 +125,8 @@ public:
       env << "MediaServerPluginRTSPServer::StreamMapEntry::Registration(" << this << ")::disconnect: nothing to disconnect\n";
     }
   }
+public:
+  UsageEnvironment &env;
 private:
   friend class RegistrationEntry;
   std::weak_ptr<StreamMapEntry> map_entry;
@@ -164,6 +177,7 @@ MediaServerPluginRTSPServer::StreamMapEntry::StreamMapEntry(UsageEnvironment &en
 }
 
 MediaServerPluginRTSPServer::StreamMapEntry::~StreamMapEntry(void) {
+  scheduleCloseTask(false);
   std::lock_guard<std::recursive_mutex> lock(registration_mutex);
   env << "MediaServerPluginRTSPServer::StreamMapEntry(" << this << ")::~StreamMapEntry\n";
   registration_map.clear();
@@ -173,14 +187,35 @@ MediaServerPluginRTSPServer::StreamMapEntry::~StreamMapEntry(void) {
   subsession_info_list = nullptr;
 }
 
+void MediaServerPluginRTSPServer::StreamMapEntry::scheduleCloseTask(bool scedule) {
+  if (scedule || delayed_close_task) {
+    if (env.taskScheduler().isSameThread()) {
+      if (scedule) env.taskScheduler().rescheduleDelayedTask(delayed_close_task,15000000,OnClose,this);
+      else env.taskScheduler().unscheduleDelayedTask(delayed_close_task);
+    } else {
+      Semaphore sem;
+      env.taskScheduler().executeCommand(
+        [this,&sem,s=scedule]() {
+          if (s) env.taskScheduler().rescheduleDelayedTask(delayed_close_task,15000000,OnClose,this);
+          else env.taskScheduler().unscheduleDelayedTask(delayed_close_task);
+          sem.post();
+        });
+      sem.wait();
+    }
+  }
+}
+
+
+
 std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry::Registration>
 MediaServerPluginRTSPServer::StreamMapEntry::connect(const SubsessionInfo *info,FrameFunction &&f) {
   env << "MediaServerPluginRTSPServer::StreamMapEntry(" << this << ")::connect(" << SubsessionInfoToString(*info) << "): start\n";
+  scheduleCloseTask(false);
   std::lock_guard<std::recursive_mutex> lock(registration_mutex);
   auto &r(registration_map[info]);
   r.registration_mutex = &registration_mutex;
   const bool first_entry = r.empty();
-  std::shared_ptr<Registration> reg(std::make_shared<Registration>(shared_from_this(),info));
+  std::shared_ptr<Registration> reg(Registration::Create(shared_from_this(),info));
   r[reg.get()].swap(RegistrationEntry(std::move(f),reg));
   if (first_entry) {
     env << "MediaServerPluginRTSPServer::StreamMapEntry(" << this << ")::connect: calling stream->RegisterOnFrame\n";
@@ -195,15 +230,25 @@ MediaServerPluginRTSPServer::StreamMapEntry::connect(const SubsessionInfo *info,
 
 void MediaServerPluginRTSPServer::StreamMapEntry::disconnect(const SubsessionInfo *info,Registration *reg) {
   env << "MediaServerPluginRTSPServer::StreamMapEntry(" << this << ")::disconnect(" << SubsessionInfoToString(*info) << "): start\n";
-  std::lock_guard<std::recursive_mutex> lock(registration_mutex);
+  registration_mutex.lock();
   auto it(registration_map.find(info));
   if (it == registration_map.end()) abort();
     // will call the destructor of the RegistrationEntry wich in turn
     // will invalidate the registration and call the FrameCb with an emty Frame
   if (it->second.erase(reg) != 1) abort();
   if (it->second.empty()) {
+    auto *r(&(it->second));
+//    registration_mutex.unlock();
     env << "MediaServerPluginRTSPServer::StreamMapEntry(" << this << ")::disconnect: calling stream->DeregisterOnFrame\n";
-    stream->DeregisterOnFrame(&it->second,info);
+    stream->DeregisterOnFrame(r,info);
+    registration_map.erase(it);
+    if (registration_map.empty()) {
+      env << "MediaServerPluginRTSPServer::StreamMapEntry(" << this << ")::disconnect: going to deregister the entire stream in 15 seconds if no one needs it\n";
+      scheduleCloseTask(true);
+    }
+    registration_mutex.unlock();
+  } else {
+    registration_mutex.unlock();
   }
   env << "MediaServerPluginRTSPServer::StreamMapEntry(" << this << ")::disconnect(" << SubsessionInfoToString(*info) << "): end, "
          "registrations: " << (int)(registration_map.size()) << "\n";
@@ -463,17 +508,49 @@ public:
     return rval;
   }
 private:
-  MyFrameSource(UsageEnvironment &env) : FramedSource(env) {}
-  ~MyFrameSource(void) override {}
+  MyFrameSource(UsageEnvironment &env) : FramedSource(env) {
+    env << "MyFrameSource(" << this << ")::MyFrameSource\n";
+  }
+  ~MyFrameSource(void) override {
+    envir().taskScheduler().assertSameThread();
+      // release connection before cleanup so that no new framecallbacks will be deliverd
+    frame_connection.reset();
+    std::lock_guard<std::mutex> lock(registered_tasks_mutex);
+    if (!registered_tasks.empty()) {
+      do {
+        auto registered_task = registered_tasks.front();
+        registered_tasks.pop();
+        if (envir().taskScheduler().cancelCommand(registered_task)) {
+          envir() << "MyFrameSource(" << this << ")::~MyFrameSource: cancelled " << (unsigned int)registered_task << "\n";
+        } else {
+          envir() << "MyFrameSource(" << this << ")::~MyFrameSource: cancelling " << (unsigned int)registered_task << " failed\n";
+          abort();
+        }
+      } while (!registered_tasks.empty());
+    } else {
+      envir() << "MyFrameSource(" << this << ")::~MyFrameSource: no task to cancel\n";
+    }
+  }
   void connect(MediaServerPluginRTSPServer::StreamMapEntry &e,
                const SubsessionInfo *info) {
+//    envir() << "MyFrameSource::connect\n";
     frame_connection = e.connect(info,
           [this](const Frame &f) {
-            envir().taskScheduler().executeCommand(
-              [this,f]() {
+              // called from some thread outside the plugin
+            std::lock_guard<std::mutex> lock(registered_tasks_mutex);
+            uint64_t registered_task = envir().taskScheduler().executeCommand(
+              [this,f,registered_task]() {
+//                envir() << "MyFrameSource::connect::l::l: frame in connection thread\n";
+                  // this is the actual frame callback.
+                  // It is called from the connections UsageEnvironment thread
                 my_frame_queue.push(f); // Frame contains shared Ptr to data
                 deliverFrame();
+                std::lock_guard<std::mutex> lock(registered_tasks_mutex);
+                //if (registered_tasks.front() != task_nr) abort();
+                registered_tasks.pop();
               });
+//            envir() << "MyFrameSource::connect::l: frameCb, queueing frame -> task " << (int)registered_task << "\n";
+            registered_tasks.push(registered_task);
           });
   }
   void deliverFrame(void) {
@@ -487,6 +564,7 @@ private:
       return;
     }
     if (frame_size > fMaxSize) {
+      envir() << "MyFrameSource(" << this << ")::deliverFrame: frame_size(" << frame_size << ") > fMaxSize(" << fMaxSize << ")\n";
       fFrameSize = fMaxSize;
       fNumTruncatedBytes = frame_size - fMaxSize;
     } else {
@@ -507,6 +585,8 @@ private:
     deliverFrame();
   }
   std::queue<Frame> my_frame_queue;
+  std::queue<uint64_t> registered_tasks;
+  std::mutex registered_tasks_mutex;
   std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry::Registration> frame_connection;
 };
 
@@ -644,6 +724,9 @@ void MediaServerPluginRTSPServer
     (*completionFunc)(completionClientData,sms);
     return;
   }
+// TODO: obviousely we can end up with many ServerMediaSession objects with the same name.
+// But only (the last) one ist stored in the GenericMediaServer object.
+// This may or may not lead to troubles, I do not know.
     // called from the thread of the new rtsp connection (env-thread): lock recursive mutex
   std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
   auto it(stream_map.find(streamName));
@@ -672,8 +755,10 @@ void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer:
   ServerMediaSession *sms = nullptr;
   if (stream) {
     std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
-    std::shared_ptr<StreamMapEntry> e(new StreamMapEntry(envir(),
+    std::shared_ptr<StreamMapEntry> e(StreamMapEntry::Create(envir(),
                                             stream,[this,name=l->streamName]() {
+                                              closeAllClientSessionsForServerMediaSession(name.c_str());
+                                              removeServerMediaSession(name.c_str());
                                               std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
                                               stream_map.erase(name);
                                             }));
@@ -847,6 +932,7 @@ const char *initializeRTCMediaLib(
               const char *interface_api_version_of_caller,
               IRTCStreamFactory *streamManager,
               const RTSPParameters &params) {
+  OutPacketBuffer::maxSize = 1024*512;
   if (0 == strcmp(interface_api_version_of_caller,rtc_media_lib_api_version)) {
       // unique_ptr so that threads will be stopped when closing the app
     static std::unique_ptr<RTCMediaLib> impl;

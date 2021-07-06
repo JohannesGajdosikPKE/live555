@@ -24,7 +24,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "BasicUsageEnvironment0.hh"
 #endif
 
-#include <queue>
+#include <deque>
 #include <functional>
 #include <mutex>
 
@@ -64,7 +64,8 @@ public:
     // (You should set it to 0 only if you know that you will not be using 'event triggers'.)
   virtual ~BasicTaskScheduler();
 
-  void executeCommand(std::function<void()>&& cmd) override;
+  uint64_t executeCommand(std::function<void()>&& cmd) override;
+  bool cancelCommand(uint64_t token) override;
 protected:
   BasicTaskScheduler(unsigned maxSchedulerGranularity);
       // called only by "createNew()"
@@ -90,7 +91,14 @@ protected:
 
 private:
   int command_pipe[2]; // just to send a signal
-  std::queue<std::function<void()> > command_queue;
+  uint64_t command_sequence = 1;
+  struct Command {
+    Command(void) {}
+    Command(std::function<void()> &&f,uint64_t seq) : f(std::move(f)), seq(seq) {}
+    std::function<void()> f;
+    uint64_t seq;
+  };
+  std::deque<Command> command_queue;
   std::mutex command_mutex;
   static void BasicTaskScheduler::CommandRequestHandler(void* instance, int /*mask*/);
   void commandRequestHandler(void);

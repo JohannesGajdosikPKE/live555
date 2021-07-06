@@ -110,7 +110,8 @@ typedef u_int32_t EventTriggerId;
 class TaskScheduler {
 public:
   virtual ~TaskScheduler();
-  virtual void executeCommand(std::function<void()>&& cmd) = 0;
+  virtual uint64_t executeCommand(std::function<void()>&& cmd) = 0;
+  virtual bool cancelCommand(uint64_t token) = 0;
 
   virtual TaskToken scheduleDelayedTask(int64_t microseconds, TaskFunc* proc,
 					void* clientData) = 0;

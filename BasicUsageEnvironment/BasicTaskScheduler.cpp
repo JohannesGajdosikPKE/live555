@@ -78,10 +78,14 @@ BasicTaskScheduler::BasicTaskScheduler(unsigned maxSchedulerGranularity)
   if (maxSchedulerGranularity > 0) schedulerTickTask(); // ensures that we handle events frequently
   setBackgroundHandling(command_pipe[0], SOCKET_READABLE | SOCKET_EXCEPTION, CommandRequestHandler, this);
 }
-void BasicTaskScheduler::executeCommand(std::function<void()> &&cmd) {
+
+uint64_t BasicTaskScheduler::executeCommand(std::function<void()> &&cmd) {
+  uint64_t rval;
   {
     std::lock_guard<std::mutex> guard(command_mutex);
-    command_queue.push(std::move(cmd));
+    command_queue.push_back(Command(std::move(cmd),command_sequence));
+    rval = command_sequence;
+    if (!++command_sequence) command_sequence = 1;
   }
   char data = 0;
   for (;;) {
@@ -96,6 +100,20 @@ void BasicTaskScheduler::executeCommand(std::function<void()> &&cmd) {
       abort();
     }
   }
+  return rval;
+}
+
+bool BasicTaskScheduler::cancelCommand(uint64_t token) {
+  assertSameThread();
+  auto it(command_queue.end());
+  while (it != command_queue.begin()) {
+    --it;
+    if (it->seq == token) {
+      command_queue.erase(it);
+      return true;
+    }
+  }
+  return false;
 }
 
 void BasicTaskScheduler::CommandRequestHandler(void* instance, int /*mask*/) {
@@ -123,8 +141,8 @@ void BasicTaskScheduler::commandRequestHandler(void) {
     {
       std::lock_guard<std::mutex> guard(command_mutex);
       if (command_queue.empty()) continue;
-      f.swap(command_queue.front());
-      command_queue.pop();
+      f.swap(command_queue.front().f);
+      command_queue.pop_front();
     }
     f();
   }
