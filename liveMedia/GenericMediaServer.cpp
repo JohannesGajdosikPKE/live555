@@ -93,8 +93,10 @@ void GenericMediaServer
 
 static void removeServerMediaSessionImpl(ServerMediaSession* serverMediaSession) {
   if (serverMediaSession->referenceCount() == 0) {
+//    serverMediaSession->envir() << "removeServerMediaSessionImpl(" << serverMediaSession << "): calling Medium::close\n";
     Medium::close(serverMediaSession);
   } else {
+//    serverMediaSession->envir() << "removeServerMediaSessionImpl(" << serverMediaSession << "): setting deleteWhenUnreferenced\n";
     serverMediaSession->deleteWhenUnreferenced() = True;
   }
 }
@@ -109,9 +111,9 @@ void GenericMediaServer::removeServerMediaSession(ServerMediaSession* serverMedi
   } else {
     Semaphore sem;
     serverMediaSession->envir().taskScheduler().executeCommand(
-      [serverMediaSession,s=&sem]() {
+      [serverMediaSession,&sem](uint64_t) {
         removeServerMediaSessionImpl(serverMediaSession);
-        s->post();
+        sem.post();
       });
     sem.wait();
   }
@@ -130,7 +132,11 @@ void GenericMediaServer::closeAllClientSessionsForServerMediaSession(ServerMedia
   char const* key; // dummy
   while ((clientSession = (GenericMediaServer::ClientSession*)(iter->next(key))) != NULL) {
     if (clientSession->fOurServerMediaSession == serverMediaSession) {
-      delete clientSession;
+      if (clientSession->envir().taskScheduler().isSameThread()) {
+        delete clientSession;
+      } else {
+        clientSession->envir().taskScheduler().executeCommand([clientSession](uint64_t) {delete clientSession;});
+      }
     }
   }
   delete iter;
@@ -185,7 +191,7 @@ public:
     }
   }
   void stop(void) {
-    scheduler->executeCommand([w=&watchVariable](){*w=1;});
+    scheduler->executeCommand([w=&watchVariable](uint64_t){*w=1;});
   }
   UsageEnvironment& getEnv(void) const {return *env;}
   int getLoad(void) const {return scheduler->addNrOfUsers(0);}
@@ -271,7 +277,7 @@ void GenericMediaServer::cleanup() {
   // Close all client session objects:
   GenericMediaServer::ClientSession* clientSession;
   while ((clientSession = (GenericMediaServer::ClientSession*)fClientSessions->getFirst()) != NULL) {
-    clientSession->envir().taskScheduler().executeCommand([clientSession](){delete clientSession;});
+    clientSession->envir().taskScheduler().executeCommand([clientSession](uint64_t){delete clientSession;});
     char sessionIdStr[8 + 1];
     sprintf(sessionIdStr, "%08X", clientSession->fOurSessionId);
     fClientSessions->Remove(sessionIdStr);
@@ -280,7 +286,7 @@ void GenericMediaServer::cleanup() {
   // Close all client connection objects:
   GenericMediaServer::ClientConnection* connection;
   while ((connection = (GenericMediaServer::ClientConnection*)fClientConnections->getFirst()) != NULL) {
-    connection->envir().taskScheduler().executeCommand([connection]() {delete connection;});
+    connection->envir().taskScheduler().executeCommand([connection](uint64_t) {delete connection;});
     removeClientConnection(connection);
   }
   
@@ -404,7 +410,7 @@ void GenericMediaServer::ClientConnection::afterConstruction(void) {
   } else {
     Semaphore sem;
     envir().taskScheduler().executeCommand(
-      [this,&sem]() {
+      [this,&sem](uint64_t) {
         envir().taskScheduler().setBackgroundHandling(fOurSocket, SOCKET_READABLE|SOCKET_EXCEPTION, incomingRequestHandler, this);
         sem.post();
       });

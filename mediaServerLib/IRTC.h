@@ -46,7 +46,7 @@ public:
 
     // after the onCloseCallback no more frames for any Subsession of this stream will be received
     // until RegisterOnFrame is called again.
-    // onCloseCallback is more than receiving onFrameCallback for all registered subsessions,
+    // onCloseCallback is more than receiving onFrameCallback(NULL) for all registered subsessions,
     // afterwards you must call getSubsessionInfoList again if you want to continue using the stream.
   virtual void RegisterOnClose(void *context, TOnCloseCallbackPtr onCloseCallback) = 0;
     // guarantee: after DeregisterOnClose onCloseCallback will not be called

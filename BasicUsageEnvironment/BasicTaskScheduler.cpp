@@ -79,13 +79,13 @@ BasicTaskScheduler::BasicTaskScheduler(unsigned maxSchedulerGranularity)
   setBackgroundHandling(command_pipe[0], SOCKET_READABLE | SOCKET_EXCEPTION, CommandRequestHandler, this);
 }
 
-uint64_t BasicTaskScheduler::executeCommand(std::function<void()> &&cmd) {
+uint64_t BasicTaskScheduler::executeCommand(std::function<void(uint64_t task_nr)> &&cmd) {
   uint64_t rval;
   {
-    std::lock_guard<std::mutex> guard(command_mutex);
-    command_queue.push_back(Command(std::move(cmd),command_sequence));
-    rval = command_sequence;
-    if (!++command_sequence) command_sequence = 1;
+    std::lock_guard<std::mutex> guard(command_queue_mutex);
+    rval = command_sequence++;
+    if (command_sequence == 0) command_sequence = 1;
+    command_queue.push_back(Command(std::move(cmd),rval));
   }
   char data = 0;
   for (;;) {
@@ -103,8 +103,17 @@ uint64_t BasicTaskScheduler::executeCommand(std::function<void()> &&cmd) {
   return rval;
 }
 
-bool BasicTaskScheduler::cancelCommand(uint64_t token) {
+bool BasicTaskScheduler::cancelCommand(const uint64_t token) {
+  std::lock_guard<std::mutex> guard(command_queue_mutex);
   assertSameThread();
+  for (auto it(command_queue.begin());it!=command_queue.end();++it) {
+    if (token == it->seq) {
+      command_queue.erase(it);
+      return true;
+    }
+  }
+  return false;
+
   auto it(command_queue.end());
   while (it != command_queue.begin()) {
     --it;
@@ -137,14 +146,19 @@ void BasicTaskScheduler::commandRequestHandler(void) {
       printf("recv failed: %d\n", WSAGetLastError());
       abort();
     }
-    std::function<void()> f;
+    std::function<void(uint64_t task_nr)> f;
+    uint64_t task_nr;
     {
-      std::lock_guard<std::mutex> guard(command_mutex);
+      std::lock_guard<std::mutex> guard(command_queue_mutex);
       if (command_queue.empty()) continue;
+      task_nr = command_queue.front().seq;
       f.swap(command_queue.front().f);
       command_queue.pop_front();
     }
-    f();
+      // maybe another thread now wants to cancel the command before it is executed
+      // the cancelling will fail.
+      // or the same thread might try to cancel the command from its own command callback
+    f(task_nr);
   }
 }
 

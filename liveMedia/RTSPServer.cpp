@@ -1220,7 +1220,7 @@ void RTSPServer::RTSPClientConnection
     other_env.taskScheduler().disableBackgroundHandling(newSocketNum);
     Semaphore sem;
     envir().taskScheduler().executeCommand(
-      [this, &sem, newSocketNum, extraData, extraDataSize]() {
+      [this, &sem, newSocketNum, extraData, extraDataSize](uint64_t) {
         envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
                    "disabling handling for " << fClientInputSocket << " in this other thread\n";
         envir().taskScheduler().disableBackgroundHandling(fClientInputSocket);
