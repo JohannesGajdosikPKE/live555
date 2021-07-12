@@ -112,8 +112,7 @@ public:
     std::unique_ptr<uint8_t[]> buffer = std::make_unique<uint8_t[]>(buffer_size);
     for (MySubsessionInfo *const*s=subsession_infos;*s;s++) {
       const int size = (*s)->generateFrame(now,buffer.get(),buffer_size);
-      OnFrameCallbackMap &m(subsession_cb_map[*s]);
-      for (auto &it : m) it.second(it.first,buffer.get(),size,now);
+      for (auto &it : subsession_cb_map) it.second(it.first,*s,buffer.get(),size,now);
     }
     return 40000;
   }
@@ -125,55 +124,22 @@ private:
   const SubsessionInfo *const *getSubsessionInfoList(void) const override {
     return (const SubsessionInfo *const *)subsession_infos;
   }
-
-    // after the onCloseCallback no more frames for any Subsession of this stream will be received
-    // until RegisterOnFrame is called again.
-    // onCloseCallback is more than receiving onFrameCallback for all registered subsessions,
-    // afterwards you must call getSubsessionInfoList again if you want to continue using the stream.
-  void *on_close_context = nullptr;
-  TOnCloseCallbackPtr on_close_cb = nullptr;
   std::mutex internal_mutex;
-  void RegisterOnClose(void *context, TOnCloseCallbackPtr onCloseCallback) override {
-    std::lock_guard<std::mutex> lock(internal_mutex);
-    if (onCloseCallback) {
-      if (on_close_cb) {
-        abort(); // double registration
-      }
-      on_close_context = context;
-    } else {
-      if (!on_close_cb) {
-        abort();
-      }
-      on_close_cb = nullptr;
-      on_close_context = nullptr;
-      if (on_close) {
-        on_close(this);
-        on_close = std::function<void(MyTestIRTCStream*)>();
-      }
-    }
-  }
 
- 
   typedef std::map<void*,TOnFrameCallbackPtr> OnFrameCallbackMap;
-  typedef std::map<const SubsessionInfo*,OnFrameCallbackMap> SubsessionInfoCallbackMap;
-  SubsessionInfoCallbackMap subsession_cb_map;
+  OnFrameCallbackMap subsession_cb_map;
 
    // register for frames of the given subsession and associate the Subsession with the callerId.
     // After onFrameCallback(size==0) is called, no more frames for this Subsession will be received
     // until RegisterOnFrame is called again
-  void RegisterOnFrame(void *callerId, const SubsessionInfo *info, TOnFrameCallbackPtr onFrameCallback) override {
+  void RegisterOnFrame(void *callerId, TOnFrameCallbackPtr onFrameCallback) override {
     std::lock_guard<std::mutex> lock(internal_mutex);
-    OnFrameCallbackMap &m(subsession_cb_map[info]);
     if (onFrameCallback) {
-      std::cout << "MyTestIRTCStream::RegisterOnFrame(" << SubsessionInfoToString(*info) << "): register" << std::endl;
-      if (!m.insert(std::pair<void*,TOnFrameCallbackPtr>(callerId,onFrameCallback)).second) {
-        abort(); // double registration for same context
-      }
+      std::cout << "MyTestIRTCStream::RegisterOnFrame: register" << std::endl;
+      subsession_cb_map[callerId] = onFrameCallback;
     } else {
-      std::cout << "MyTestIRTCStream::RegisterOnFrame(" << SubsessionInfoToString(*info) << "): unregister" << std::endl;
-      if (m.erase(callerId) != 1) {
-        abort(); // unregister from unknown context
-      }
+      std::cout << "MyTestIRTCStream::RegisterOnFrame: unregister" << std::endl;
+      subsession_cb_map.erase(callerId);
     }
   }
 private:

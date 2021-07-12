@@ -4,10 +4,6 @@
 #include <string>
 #include <memory>
 
-typedef void (*TOnCloseCallbackPtr)(void *context);
-
-typedef void (*TOnFrameCallbackPtr)(void *callerId, const uint8_t *buffer, int bufferSize, const int64_t &frameTime);
-
 enum RTCFormat
 {
   RTCFormatJPEG = 0,
@@ -34,6 +30,9 @@ private:
   SubsessionInfo &operator=(const SubsessionInfo&);
 };
 
+typedef void (*TOnFrameCallbackPtr)(void *callerId, const SubsessionInfo *info,
+                                    const uint8_t *buffer, int bufferSize, int64_t frameTime);
+
 class IRTCStream {
 public:
   virtual ~IRTCStream(void) {}
@@ -44,36 +43,15 @@ public:
     // and shall stay constant until the stream is closed
   virtual const SubsessionInfo *const *getSubsessionInfoList(void) const = 0;
 
-    // after the onCloseCallback no more frames for any Subsession of this stream will be received
+    // register for frames with the callerId. Can be called many times, the new callback will replace the old one.
+    // After the callback is changed, the old callback receives no more frames.
+    // The new value can be NULL.
+    // After onFrameCallback(callerId,NULL) is called, no more frames will be received
     // until RegisterOnFrame is called again.
-    // onCloseCallback is more than receiving onFrameCallback(NULL) for all registered subsessions,
-    // afterwards you must call getSubsessionInfoList again if you want to continue using the stream.
-  virtual void RegisterOnClose(void *context, TOnCloseCallbackPtr onCloseCallback) = 0;
-    // guarantee: after DeregisterOnClose onCloseCallback will not be called
-  void DeregisterOnClose(void *context) {
-    RegisterOnClose(context,nullptr);
-  }
-
-    // register for frames of the given subsession and associate the Subsession with the callerId.
-    // After onFrameCallback(size==0) is called, nno more frames for this Subsession will be received
-    // until RegisterOnFrame is called again
-  virtual void RegisterOnFrame(void *callerId, const SubsessionInfo *info, TOnFrameCallbackPtr onFrameCallback) = 0;
-
-    // deregister for frames of the associated Subsession,
-    // guarantee: after DeregisterOnFrame has returned no more callbacks for the associated Subsession will be called
-  void DeregisterOnFrame(void *callerId, const SubsessionInfo *info) {
-    RegisterOnFrame(callerId,info,nullptr);
-  }
+  virtual void RegisterOnFrame(void *callerId, TOnFrameCallbackPtr onFrameCallback) = 0;
 
 ///  virtual const char* GetLabel() = 0; // what is this? The url from GetStream()?
 
-  // The internal thread may call virtual functions, and
-  // virtual functions cannot be called from constructors/destructors.
-  // Therefore AfterConstruction/BeforeDestruction must be called explicitely
-  // to allow the use of an internal thread.
-  virtual void AfterConstruction(void) {}
-  virtual void BeforeDestruction(void) {}
-  virtual bool IsInitialized(void) const { return true; }
 };
 
 typedef std::shared_ptr<IRTCStream> TStreamPtr;
@@ -122,7 +100,7 @@ private:
 #define RTCMEDIALIB_API
 #endif
 
-#define RTCMEDIALIB_API_VERSION "0.1"
+#define RTCMEDIALIB_API_VERSION "0.2"
     // will return the API version of the Library.
     // when the interface_api_version_of_caller does not match,
     // the library will not call the streamManager.
