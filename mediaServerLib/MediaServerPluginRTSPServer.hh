@@ -37,6 +37,7 @@ public:
   class StreamMapEntry;
 protected:
   MediaServerPluginRTSPServer(UsageEnvironment &env, int ourSocketIPv4, int ourSocketIPv6,
+                              int m_HTTPServerSocket, int m_HTTPsServerSocket, 
                               const RTSPParameters &params, IRTCStreamFactory* streamManager);
   // called only by createNew();
   ~MediaServerPluginRTSPServer() override;

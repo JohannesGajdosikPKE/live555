@@ -384,12 +384,12 @@ static
 int CreateAcceptSocket(UsageEnvironment& env, Port ourPort, unsigned int bind_to_interface) {
   int accept_fd = ::socket(AF_INET,SOCK_STREAM,0);
   if (accept_fd < 0) {
-    env.setResultErrMsg("socket() failed: ");
+    env << "socket() failed: " << env.getErrno() << "\n";
     return -1;
   }
   const int yes = -1; // all bits set to 1
   if (0 != ::setsockopt(accept_fd,SOL_SOCKET,SO_EXCLUSIVEADDRUSE,(const char*)(&yes),sizeof(yes))) {
-    env.setResultErrMsg("setsockopt(SO_EXCLUSIVEADDRUSE) failed: ");
+    env << "setsockopt(SO_EXCLUSIVEADDRUSE) failed: " << env.getErrno() << "\n";
     ::closeSocket(accept_fd);
     return -1;
   }
@@ -398,12 +398,12 @@ int CreateAcceptSocket(UsageEnvironment& env, Port ourPort, unsigned int bind_to
   sock_addr.sin_addr.s_addr = htonl(bind_to_interface);
   sock_addr.sin_port = ourPort.num(); // already network order
   if (0 != bind(accept_fd,(struct sockaddr*)(&sock_addr),sizeof(sock_addr))) {
-    env.setResultErrMsg("bind() failed: ");
+    env << "bind() failed: " << env.getErrno() << "\n";
     ::closeSocket(accept_fd);
     return -1;
   }
   if (0 != ::listen(accept_fd,20)) {
-    env.setResultErrMsg("listen() failed: ");
+    env << "listen() failed: " << env.getErrno() << "\n";
     ::closeSocket(accept_fd);
     return -1;
   }
@@ -414,38 +414,65 @@ int CreateAcceptSocket(UsageEnvironment& env, Port ourPort, unsigned int bind_to
 
 MediaServerPluginRTSPServer*
 MediaServerPluginRTSPServer::createNew(UsageEnvironment &env, const RTSPParameters &params, IRTCStreamFactory* streamManager) {
-  int ourSocketIPv4 = CreateAcceptSocket(env, Port(params.port), params.bind_to_interface);
-  int ourSocketIPv6 = setUpOurSocket(env, Port(params.port), AF_INET6);
-  if (ourSocketIPv4 < 0 && ourSocketIPv6 < 0) return NULL;
-
-  return new MediaServerPluginRTSPServer(env, ourSocketIPv4, ourSocketIPv6, params, streamManager);
+  const int ourSocketIPv4 = CreateAcceptSocket(env, Port(params.port), params.bind_to_interface);
+  if (ourSocketIPv4 < 0) {
+    env << "MediaServerPluginRTSPServer::createNew: opening rtsp port " << params.port << " failed\n";
+    return nullptr;
+  }
+  env << "MediaServerPluginRTSPServer::createNew: CreateAcceptSocket(" << params.port << ") returned "
+      << ourSocketIPv4 << "\n";
+  const int ourSocketIPv6 = setUpOurSocket(env, Port(params.port), AF_INET6);
+  if (ourSocketIPv6 < 0) {
+    env << "MediaServerPluginRTSPServer::createNew: opening IPV6 rtsp port " << params.port << " failed\n";
+  } else {
+    env << "MediaServerPluginRTSPServer::createNew: setUpOurSocket(" << params.port << ",IPV6) returned "
+        << ourSocketIPv6 << "\n";
+  }
+  int m_HTTPServerSocket = -1;
+  int m_HTTPsServerSocket = -1;
+  if (params.httpPort) {
+    m_HTTPServerSocket = CreateAcceptSocket(env, params.httpPort, params.bind_to_interface);
+    if (m_HTTPServerSocket < 0) {
+      env << "MediaServerPluginRTSPServer::createNew: opening http port " << params.httpPort << " failed\n";
+      if (ourSocketIPv6 >= 0) ::closeSocket(ourSocketIPv6);
+      ::closeSocket(ourSocketIPv4);
+      return nullptr;
+    }
+    env << "MediaServerPluginRTSPServer::createNew: CreateAcceptSocket(" << params.httpPort << ") returned "
+        << m_HTTPServerSocket << "\n";
+    if (params.httpsPort) {
+      m_HTTPsServerSocket = CreateAcceptSocket(env, params.httpsPort, params.bind_to_interface);
+      if (m_HTTPsServerSocket < 0) {
+        env << "MediaServerPluginRTSPServer::createNew: opening https port " << params.httpsPort << " failed\n";
+        ::closeSocket(m_HTTPServerSocket);
+        if (ourSocketIPv6 >= 0) ::closeSocket(ourSocketIPv6);
+        ::closeSocket(ourSocketIPv4);
+        return nullptr;
+      }
+      env << "MediaServerPluginRTSPServer::createNew: CreateAcceptSocket(" << params.httpsPort << ") returned "
+          << m_HTTPsServerSocket << "\n";
+    }
+  }
+  return new MediaServerPluginRTSPServer(env, ourSocketIPv4, ourSocketIPv6, m_HTTPServerSocket, m_HTTPsServerSocket, params, streamManager);
 }
 
 MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(UsageEnvironment &env, int ourSocketIPv4, int ourSocketIPv6,
+                                                         int m_HTTPServerSocket, int m_HTTPsServerSocket, 
                                                          const RTSPParameters &params, IRTCStreamFactory *streamManager)
                             :RTSPServer(env, ourSocketIPv4, ourSocketIPv6, Port(params.port), NULL, 65),
+                             m_HTTPServerSocket(m_HTTPServerSocket),m_HTTPsServerSocket(m_HTTPsServerSocket),
                              params(params), streamManager(streamManager),
                              m_urlPrefix(rtspURLPrefix(params.bind_to_interface ? ourSocketIPv4 : -1)) // allocated with strDup, not strdup. free with delete[]
  {
-  if (params.httpPort) {
-    m_HTTPServerSocket = CreateAcceptSocket(env, params.httpPort, params.bind_to_interface);
-envir() << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer: CreateAcceptSocket(" << params.httpPort << ") returned "
-        << m_HTTPServerSocket << "\n";
-    if (m_HTTPServerSocket >= 0) {
-      env.taskScheduler().turnOnBackgroundReadHandling(m_HTTPServerSocket,
-        incomingConnectionHandlerHTTP, this);
-    }
+  if (m_HTTPServerSocket >= 0) {
+    env.taskScheduler().turnOnBackgroundReadHandling(m_HTTPServerSocket,
+      incomingConnectionHandlerHTTP, this);
   }
-  if (params.httpsPort) {
-    m_HTTPsServerSocket = CreateAcceptSocket(env, params.httpsPort, params.bind_to_interface);
-envir() << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer: CreateAcceptSocket(" << params.httpsPort << ") returned "
-        << m_HTTPsServerSocket << "\n";
-    if (m_HTTPsServerSocket >= 0) {
-      env.taskScheduler().turnOnBackgroundReadHandling(m_HTTPsServerSocket,
-        incomingConnectionHandlerHTTPoverSSL, this);
-    }
+  if (m_HTTPsServerSocket >= 0) {
+    env.taskScheduler().turnOnBackgroundReadHandling(m_HTTPsServerSocket,
+      incomingConnectionHandlerHTTPoverSSL, this);
   }
-  // Schedule status info task (run periodically every 20 sec)
+    // Schedule status info task (run periodically)
   generate_info_string_task = env.taskScheduler().scheduleDelayedTask(1000000, GenerateInfoString, this);
 }
 
@@ -946,36 +973,58 @@ void MediaServerPluginRTSPServer::generateInfoString(void)
 
 class RTCMediaLib {
 public:
+  static RTCMediaLib *Create(IRTCStreamFactory *streamManager,const RTSPParameters &params) {
+    RTCMediaLib *rval = new RTCMediaLib(streamManager,params);
+    if (!rval->isRunning()) {
+      delete rval;
+      rval = 0;
+    }
+    return rval;
+  }
+  ~RTCMediaLib(void) {
+    if (env) *env << "RTCMediaLib::~RTCMediaLib::l: end\n";
+    watchVariable = 1;
+    worker_thread.join();
+  }
+private:
   RTCMediaLib(IRTCStreamFactory *streamManager,const RTSPParameters &params)
     : streamManager(streamManager),params(params),
       worker_thread([this](void) {
         scheduler = BasicTaskScheduler::createNew();
         scheduler->assert_threads = true;
         env = new LoggingUsageEnvironment(*scheduler,RTCMediaLib::streamManager);
-        {
+        *env << "RTCMediaLib::RTCMediaLib::l: start\n";
+        MediaServerPluginRTSPServer *server
+          = MediaServerPluginRTSPServer::createNew(*env,RTCMediaLib::params,RTCMediaLib::streamManager);
+        if (server) {
+          *env << "RTCMediaLib::RTCMediaLib::l: running...\n";
+          {
+            std::unique_lock<std::mutex> lck(mtx);
+            watchVariable = 0;
+            cv.notify_one();
+          }
+          scheduler->doEventLoop(&watchVariable);
+          *env << "RTCMediaLib::RTCMediaLib::l: stopping...\n";
+        } else {
+          *env << "RTCMediaLib::RTCMediaLib::l: server creation failed\n";
+        }
+        Medium::close(server);
+        server = nullptr;
+        *env << "RTCMediaLib::RTCMediaLib::l: end\n";
+        if (!env->reclaim()) abort();
+        env = nullptr;
+        delete scheduler; scheduler = nullptr;
+        if (!server) {
+            // when construction has failed: notify only after cleanup is finished
           std::unique_lock<std::mutex> lck(mtx);
           watchVariable = 0;
           cv.notify_one();
         }
-        work();
-        if (!env->reclaim()) abort();
-        env = nullptr;
-        delete scheduler; scheduler = nullptr;
       }) {
     std::unique_lock<std::mutex> lck(mtx);
     while (watchVariable) cv.wait(lck);
   }
-  ~RTCMediaLib(void) {
-    watchVariable = 1;
-    worker_thread.join();
-  }
-private:
-  void work(void) {
-    MediaServerPluginRTSPServer *server = MediaServerPluginRTSPServer::createNew(*env,params,streamManager);
-    scheduler->doEventLoop(&watchVariable);
-    Medium::close(server);
-    server = nullptr;
-  }
+  bool isRunning(void) const {return scheduler;}
 private:
   IRTCStreamFactory *const streamManager;
   RTSPParameters params;
@@ -983,7 +1032,7 @@ private:
   UsageEnvironment *env = nullptr;
   char volatile watchVariable = 1;
   std::thread worker_thread;
-    // mutex and contition variable only to be able to wait for thread to start:
+    // mutex and condition variable only to be able to wait for thread to start:
   std::mutex mtx;
   std::condition_variable cv;
 };
@@ -1007,7 +1056,12 @@ const char *initializeRTCMediaLib(
       // first close previous instance and free all ports
     impl = std::unique_ptr<RTCMediaLib>();
       // afterwards create new instance
-    impl = std::unique_ptr<RTCMediaLib>(new RTCMediaLib(streamManager,params));
+    if (streamManager) {
+      impl = std::unique_ptr<RTCMediaLib>(RTCMediaLib::Create(streamManager,params));
+      if (!impl) {
+        return "server starting failed, probably port problem. Check the log.";
+      }
+    }
   }
   return rtc_media_lib_api_version;
 }
