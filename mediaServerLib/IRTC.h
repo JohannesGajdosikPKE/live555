@@ -75,11 +75,14 @@ class RTSPParameters {
 public:
   RTSPParameters(void) {}
   RTSPParameters(uint16_t port,uint16_t httpPort,uint16_t httpsPort,uint32_t bind_to_interface,
-                 const std::string &https_cert_file,const std::string &https_key_path)
+                 const std::string &https_cert_file,const std::string &https_key_path,
+                 const std::string &user,const std::string &pass)
     : port(port),httpPort(httpPort),httpsPort(httpsPort),bind_to_interface(bind_to_interface),
-      https_cert_file(https_cert_file),https_key_path(https_key_path) {}
+      https_cert_file(https_cert_file),https_key_path(https_key_path),user(user),pass(pass) {}
   const std::string &getHttpCertFile(void) const {return https_cert_file;}
   const std::string &getHttpKeyPath(void) const {return https_key_path;}
+  const std::string &getUser(void) const {return user;}
+  const std::string &getPass(void) const {return pass;}
   uint16_t port = 0;
   uint16_t httpPort = 0;
   uint16_t httpsPort = 0;
@@ -87,6 +90,8 @@ public:
 private:
   const std::string https_cert_file;
   const std::string https_key_path;
+  const std::string user;
+  const std::string pass;
 };
 
 
@@ -100,7 +105,7 @@ private:
 #define RTCMEDIALIB_API
 #endif
 
-#define RTCMEDIALIB_API_VERSION "0.2"
+#define RTCMEDIALIB_API_VERSION "0.3"
     // will return the API version of the Library.
     // when the interface_api_version_of_caller does not match,
     // the library will not call the streamManager.

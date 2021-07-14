@@ -213,10 +213,13 @@ void MediaServerPluginRTSPServer::StreamMapEntry::scheduleCloseTask(bool scedule
       env.taskScheduler().executeCommand(
         [this,&sem,s=scedule](uint64_t) {
           if (s) env.taskScheduler().rescheduleDelayedTask(delayed_close_task,15000000,OnClose,this);
-          else env.taskScheduler().unscheduleDelayedTask(delayed_close_task);
-          sem.post();
+          else {
+            env.taskScheduler().unscheduleDelayedTask(delayed_close_task);
+            sem.post();
+          }
         });
-      sem.wait();
+        // no need to wait if I just scedule:
+      if (!scedule) sem.wait();
     }
   }
 }
@@ -457,13 +460,18 @@ MediaServerPluginRTSPServer::createNew(UsageEnvironment &env, const RTSPParamete
 }
 
 MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(UsageEnvironment &env, int ourSocketIPv4, int ourSocketIPv6,
-                                                         int m_HTTPServerSocket, int m_HTTPsServerSocket, 
+                                                         int m_HTTPServerSocket, int m_HTTPsServerSocket,
                                                          const RTSPParameters &params, IRTCStreamFactory *streamManager)
                             :RTSPServer(env, ourSocketIPv4, ourSocketIPv6, Port(params.port), NULL, 65),
                              m_HTTPServerSocket(m_HTTPServerSocket),m_HTTPsServerSocket(m_HTTPsServerSocket),
                              params(params), streamManager(streamManager),
                              m_urlPrefix(rtspURLPrefix(params.bind_to_interface ? ourSocketIPv4 : -1)) // allocated with strDup, not strdup. free with delete[]
  {
+   if (!params.getUser().empty()) {
+    UserAuthenticationDatabase *auth_db = new UserAuthenticationDatabase;
+    auth_db->addUserRecord(params.getUser().c_str(), params.getPass().c_str());
+    setAuthenticationDatabase(auth_db);
+  }
   if (m_HTTPServerSocket >= 0) {
     env.taskScheduler().turnOnBackgroundReadHandling(m_HTTPServerSocket,
       incomingConnectionHandlerHTTP, this);
@@ -491,6 +499,9 @@ MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer() {
       // because by that time, the subclass destructor will already have been called, and this may
       // affect (break) the destruction of the "ClientSession" and "ClientConnection" objects, which
       // themselves will have been subclassed.)
+
+  UserAuthenticationDatabase *auth_db = setAuthenticationDatabase(nullptr);
+  if (auth_db) delete auth_db;
 }
 
 void MediaServerPluginRTSPServer::incomingConnectionHandlerHTTPoverSSL(void* instance, int /*mask*/) {
@@ -518,7 +529,7 @@ void MediaServerPluginRTSPServer::incomingConnectionHandlerHTTPoverSSL()
 #endif
 
   // Create a new object for handling this connection:
-  createNewClientConnectionSSL(clientSocket, clientAddr, params.getHttpCertFile().c_str(),params.getHttpKeyPath().c_str());
+  createNewClientConnectionSSL(clientSocket, clientAddr, params.getHttpCertFile().c_str(), params.getHttpKeyPath().c_str());
 }
 
 void MediaServerPluginRTSPServer::incomingConnectionHandlerHTTP(void* instance, int /*mask*/) {

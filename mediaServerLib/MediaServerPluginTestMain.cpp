@@ -228,7 +228,8 @@ int main(int argc,char *argv[]) {
   MyIRTCStreamFactory factory;
   RTSPParameters params(554,8080,8081,0,
                         "C:\\Users\\01jga728\\zertifikat-pub.pem",
-                        "C:\\Users\\01jga728\\zertifikat-key.pem"
+                        "C:\\Users\\01jga728\\zertifikat-key.pem",
+                        "",""
 );
   const char *const lib_api_version
     = initializeRTCMediaLib(exe_api_version,&factory,params);
