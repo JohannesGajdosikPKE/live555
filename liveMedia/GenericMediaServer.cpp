@@ -303,8 +303,8 @@ void GenericMediaServer::cleanup() {
     lock.lock();
   }
 
-  for (int i = 0; i < nr_of_workers; i++) workers[i]->stop();
-  for (int i = 0; i < nr_of_workers; i++) workers[i]->joinThread();
+  for (int i = 0; i < nr_of_workers; i++) if (workers[i]) workers[i]->stop();
+  for (int i = 0; i < nr_of_workers; i++) if (workers[i]) workers[i]->joinThread();
   delete fClientSessions; fClientSessions = nullptr;
   delete fClientConnections; fClientConnections = nullptr;
   delete fServerMediaSessions; fServerMediaSessions = nullptr;
