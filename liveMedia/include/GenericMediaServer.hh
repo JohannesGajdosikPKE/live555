@@ -38,6 +38,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include <mutex>
 #include <memory>
+#include <map>
 
 // Typedef for a handler function that gets called when "lookupServerMediaSession()"
 // (defined below) completes:
@@ -47,7 +48,6 @@ typedef void lookupServerMediaSessionCompletionFunc(void* clientData,
 class GenericMediaServer: public Medium {
 public:
   void addServerMediaSession(ServerMediaSession* serverMediaSession);
-  void addServerMediaSessionWithoutRemoving(ServerMediaSession* serverMediaSession);
 
   virtual void lookupServerMediaSession(UsageEnvironment &env, char const* streamName,
 					lookupServerMediaSessionCompletionFunc* completionFunc,
@@ -65,7 +65,7 @@ public:
       //  The "ServerMediaSession" object will not get deleted until all of these client sessions have closed.)
       // (To both delete the "ServerMediaSession" object *and* close all client sessions that use it,
       //  call "deleteServerMediaSession(serverMediaSession)" instead.)
-  virtual void removeServerMediaSession(char const* streamName);
+  virtual void removeServerMediaSession(UsageEnvironment &env, char const* streamName);
      // ditto
 
   void closeAllClientSessionsForServerMediaSession(ServerMediaSession* serverMediaSession);
@@ -77,9 +77,12 @@ public:
   void deleteServerMediaSession(ServerMediaSession* serverMediaSession);
       // Equivalent to:
       //     "closeAllClientSessionsForServerMediaSession(serverMediaSession); removeServerMediaSession(serverMediaSession);"
-  virtual void deleteServerMediaSession(char const* streamName);
+  virtual void deleteServerMediaSession(UsageEnvironment &env, char const* streamName);
       // Equivalent to:
       //     "closeAllClientSessionsForServerMediaSession(streamName); removeServerMediaSession(streamName);
+
+  virtual void deleteAllServerMediaSessions(char const* streamName);
+      // delete seesions with this name from all UsageEnvironments
 
   unsigned numClientSessions() const { return fClientSessions->numEntries(); }
 
@@ -192,7 +195,7 @@ protected:
 
   // An iterator over our "ServerMediaSession" objects:
   // while using you must lock the internal_mutex
-  class ServerMediaSessionIterator {
+/*  class ServerMediaSessionIterator {
   public:
     ServerMediaSessionIterator(GenericMediaServer& server);
     virtual ~ServerMediaSessionIterator();
@@ -200,10 +203,10 @@ protected:
   private:
     HashTable::Iterator* fOurIterator;
   };
-
+*/
 protected:
     // The basic, synchronous "ServerMediaSession" lookup operation; only for subclasses:
-  ServerMediaSession* getServerMediaSession(char const* streamName);
+  ServerMediaSession* getServerMediaSession(UsageEnvironment &env,char const* streamName);
   
 protected:
   const int fServerSocketIPv4;
@@ -225,9 +228,12 @@ private:
   }
   
 protected:
+  mutable std::recursive_mutex sms_mutex; // protectes fServerMediaSessions only
   mutable std::recursive_mutex internal_mutex; // protectes all Hashtables
 private:
-  HashTable* fServerMediaSessions; // maps 'stream name' strings to "ServerMediaSession" objects
+  typedef std::map<std::string,ServerMediaSession*> ServerMediaSessionMap;
+  typedef std::map<UsageEnvironment*,ServerMediaSessionMap> ServerMediaSessionEnvMap;
+  ServerMediaSessionEnvMap fServerMediaSessions; // maps 'stream name' strings to "ServerMediaSession" objects
   HashTable* fClientConnections; // the "ClientConnection" objects that we're using
   HashTable* fClientSessions; // maps 'session id' strings to "ClientSession" objects
   u_int32_t fPreviousClientSessionId;

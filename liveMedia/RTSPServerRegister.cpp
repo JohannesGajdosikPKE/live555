@@ -369,7 +369,7 @@ Boolean RTSPServerWithREGISTERProxying
 		      char const* proxyURLSuffix, char*& responseStr) {
   // First, check whether we have already proxied a stream as "proxyURLSuffix":
   if (proxyURLSuffix != NULL) {
-    ServerMediaSession* sms = getServerMediaSession(proxyURLSuffix);
+    ServerMediaSession* sms = getServerMediaSession(env,proxyURLSuffix);
     if ((strcmp(cmd, "REGISTER") == 0 && sms != NULL) ||
 	(strcmp(cmd, "DEREGISTER") == 0 && sms == NULL)) {
       responseStr = strDup("451 Invalid parameter");
