@@ -442,7 +442,7 @@ envir() << "GenericMediaServer::incomingConnectionHandlerOnSocket: accept(" << s
 
 GenericMediaServer::ClientConnection
 ::ClientConnection(UsageEnvironment &threaded_env, GenericMediaServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr)
-  : threaded_env(threaded_env), fOurServer(ourServer), fOurSocket(clientSocket), fClientAddr(clientAddr) {
+  : threaded_env(threaded_env), fOurServer(ourServer), init_command(0), fOurSocket(clientSocket), fClientAddr(clientAddr) {
     envir() << "GenericMediaServer::ClientConnection(" << this << ")::ClientConnection(" << clientSocket << ")\n";
     envir().taskScheduler().addNrOfUsers(1);
 }
@@ -457,17 +457,21 @@ void GenericMediaServer::ClientConnection::afterConstruction(void) {
   if (envir().taskScheduler().isSameThread()) {
     envir().taskScheduler().setBackgroundHandling(fOurSocket, SOCKET_READABLE|SOCKET_EXCEPTION, incomingRequestHandler, this);
   } else {
-    Semaphore sem;
-    envir().taskScheduler().executeCommand(
-      [this,&sem](uint64_t) {
+    init_command = envir().taskScheduler().executeCommand(
+      [this](uint64_t) {
         envir().taskScheduler().setBackgroundHandling(fOurSocket, SOCKET_READABLE|SOCKET_EXCEPTION, incomingRequestHandler, this);
-        sem.post();
+          // Maybe this task will finish fast, and assigning init_command will happen after clearing.
+          // Never mind.
+          // There is no way cancelling a wrong task: even if there is a new task every nanosecond
+          // it will take hundreds of years to wrap around uint64_t.
+        init_command = 0;
       });
-    sem.wait();
   }
 }
 
 GenericMediaServer::ClientConnection::~ClientConnection() {
+  envir().taskScheduler().assertSameThread();
+  envir().taskScheduler().cancelCommand(init_command);
   envir() << "GenericMediaServer::ClientConnection(" << this << ")::~ClientConnection\n";
   envir().taskScheduler().assertSameThread();
   envir().taskScheduler().addNrOfUsers(-1);

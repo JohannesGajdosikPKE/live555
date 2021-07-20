@@ -39,6 +39,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <mutex>
 #include <memory>
 #include <map>
+#include <atomic>
 
 // Typedef for a handler function that gets called when "lookupServerMediaSession()"
 // (defined below) completes:
@@ -152,6 +153,7 @@ public: // should be protected, but some old compilers complain otherwise
   private:
       // tread safety: do not allow wild access to fOurServer
     GenericMediaServer& fOurServer;
+    std::atomic<uint64_t> init_command;
   protected:
     int fOurSocket;
     struct sockaddr_storage fClientAddr;

@@ -904,13 +904,16 @@ ServerMediaSession *MediaServerPluginRTSPServer::createServerMediaSession(UsageE
   ServerMediaSession *sms = nullptr;
   if (!e) abort();
   const SubsessionInfo *const *sl(e->getSubsessionInfoList());
-  if (!((sl) && (*sl))) abort();
-  sms = ServerMediaSession::createNew(env, stream_name, nullptr, "MediaServerPlugin");
-  for (;*sl;sl++) {
-    MyServerMediaSubsession *s = MyServerMediaSubsession::createNew(env, stream_name, e, *sl);
-    sms->addSubsession(s);
+  if ((sl) && (*sl)) {
+    sms = ServerMediaSession::createNew(env, stream_name, nullptr, "MediaServerPlugin");
+    if (sms) {
+      for (;*sl;sl++) {
+        MyServerMediaSubsession *s = MyServerMediaSubsession::createNew(env, stream_name, e, *sl);
+        sms->addSubsession(s);
+      }
+      addServerMediaSession(sms);
+    }
   }
-  addServerMediaSession(sms);
   envir() << "MediaServerPluginRTSPServer::createServerMediaSession(" << stream_name << "): end, returning " << sms << "\n";
   return sms;
 }
