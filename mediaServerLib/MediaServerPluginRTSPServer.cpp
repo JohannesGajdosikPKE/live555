@@ -648,11 +648,11 @@ private:
                     if (registered_tasks.front() != task_nr) abort();
                     registered_tasks.pop_front();
                   }
-                  envir() << ("MyFrameSource::connect::l::l: frame in connection thread, dequeued task(" + std::to_string(task_nr) + ")\n").c_str();
+//                  envir() << ("MyFrameSource::connect::l::l: frame in connection thread, dequeued task(" + std::to_string(task_nr) + ")\n").c_str();
                     // deliverFrame may delete MyFrameSource, then locking registered_tasks_mutex would segfault.
                   deliverFrame();
                 });
-              envir() << ("MyFrameSource::connect::l: frameCb, queueing frame -> task(" + std::to_string(registered_task) + ")\n").c_str();
+//              envir() << ("MyFrameSource::connect::l: frameCb, queueing frame -> task(" + std::to_string(registered_task) + ")\n").c_str();
               registered_tasks.push_back(registered_task);
 //            }
           });
