@@ -22,7 +22,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #define _MEDIA_SERVER_PLUGIN_RTSP_SERVER_HH
 
 #include "RTSPServer.hh"
-#include "IRTC.h"
+#include "IMStream.h"
 #include "SSLSocketServerPipe.h"
 
 #include <map>
@@ -33,12 +33,12 @@ class MediaServerPluginRTSPServer : public RTSPServer {
 public:
   static MediaServerPluginRTSPServer *createNew(UsageEnvironment &env,
                                                 const RTSPParameters &params,
-                                                IRTCStreamFactory *streamManager);
+                                                IMStreamFactory *streamManager);
   class StreamMapEntry;
 protected:
   MediaServerPluginRTSPServer(UsageEnvironment &env, int ourSocketIPv4, int ourSocketIPv6,
                               int m_HTTPServerSocket, int m_HTTPsServerSocket, 
-                              const RTSPParameters &params, IRTCStreamFactory* streamManager);
+                              const RTSPParameters &params, IMStreamFactory* streamManager);
   // called only by createNew();
   ~MediaServerPluginRTSPServer() override;
 
@@ -78,7 +78,7 @@ protected:
 
   int m_HTTPServerSocket,m_HTTPsServerSocket;
   const RTSPParameters params;
-  IRTCStreamFactory *const streamManager;
+  IMStreamFactory *const streamManager;
   std::map<std::string,std::shared_ptr<StreamMapEntry> > stream_map;
   mutable std::recursive_mutex stream_map_mutex;
   const std::unique_ptr<const char[]> m_urlPrefix;

@@ -18,10 +18,9 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // based on whether or not the specified stream name exists as a file
 // Implementation
 
-#include "MediaServerPluginRTSPServer.hh"
+#include "MStreamPluginRTSPServer.hh"
 #include "H264VideoStreamDiscreteFramer.hh"
 #include "BasicUsageEnvironment.hh"
-#include "IRTC.h"
 #include <liveMedia.hh>
 #include <Base64.hh>
 #include <GroupsockHelper.hh>
@@ -41,13 +40,7 @@ std::string ToString(const T &t) {
 }
 
 static const char *SubsessionInfoToString(const SubsessionInfo &ssi) {
-  switch (ssi.GetFormat()) {
-    case RTCFormatJPEG : return "JPEG";
-    case RTCFormatH264 : return "H264";
-    case RTCFormatYUVI420: return "YUVI420";
-    case RTCFormatUnknown: return ssi.getRtpPayloadFormatName();
-  }
-  return "undefined_format_value";
+  return ssi.getRtpPayloadFormatName();
 }
 
 struct Frame {
@@ -87,7 +80,7 @@ public:
   unsigned int printConnections(const std::string &url,std::ostream &o) const;
   UsageEnvironment &env;
 private:
-  std::shared_ptr<IRTCStream> stream;
+  std::shared_ptr<IMStream> stream;
   const std::function<void(void)> on_close;
   static void OnClose(void *context) {reinterpret_cast<StreamMapEntry*>(context)->onClose();}
   TaskToken delayed_close_task = nullptr;
@@ -376,13 +369,10 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void *callerId
   }
   const auto r(e.registration_map.find(info));
   if (r != e.registration_map.end()) {
-    switch (info->GetFormat()) {
-      case RTCFormatH264:
-        OnH264FrameCallback(r->second,buffer,bufferSize,frameTime);
-        break;
-      default:
-        r->second.callFunctions(buffer,bufferSize,frameTime);
-        break;
+    if (0 == strcmp(info->getRtpPayloadFormatName(),"H264")) {
+      OnH264FrameCallback(r->second,buffer,bufferSize,frameTime);
+    } else {
+      r->second.callFunctions(buffer,bufferSize,frameTime);
     }
   }
 }
@@ -422,7 +412,7 @@ int CreateAcceptSocket(UsageEnvironment& env, Port ourPort, unsigned int bind_to
 
 
 MediaServerPluginRTSPServer*
-MediaServerPluginRTSPServer::createNew(UsageEnvironment &env, const RTSPParameters &params, IRTCStreamFactory* streamManager) {
+MediaServerPluginRTSPServer::createNew(UsageEnvironment &env, const RTSPParameters &params, IMStreamFactory* streamManager) {
   const int ourSocketIPv4 = CreateAcceptSocket(env, Port(params.port), params.bind_to_interface);
   if (ourSocketIPv4 < 0) {
     env << "MediaServerPluginRTSPServer::createNew: opening rtsp port " << params.port << " failed\n";
@@ -467,7 +457,7 @@ MediaServerPluginRTSPServer::createNew(UsageEnvironment &env, const RTSPParamete
 
 MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(UsageEnvironment &env, int ourSocketIPv4, int ourSocketIPv6,
                                                          int m_HTTPServerSocket, int m_HTTPsServerSocket,
-                                                         const RTSPParameters &params, IRTCStreamFactory *streamManager)
+                                                         const RTSPParameters &params, IMStreamFactory *streamManager)
                             :RTSPServer(env, ourSocketIPv4, ourSocketIPv6, Port(params.port), NULL, 65),
                              m_HTTPServerSocket(m_HTTPServerSocket),m_HTTPsServerSocket(m_HTTPsServerSocket),
                              params(params), streamManager(streamManager),
@@ -794,7 +784,7 @@ MyServerMediaSubsession
                                       const std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> &e,
                                       const SubsessionInfo *info) {
   MyServerMediaSubsession *rval = nullptr;
-  if (info->GetFormat() == RTCFormatH264) {
+  if (0 == strcmp(info->getRtpPayloadFormatName(),"H264")) {
     rval = new MyH264ServerMediaSubsession(env,stream_name,e,info);
   } else {
     rval = new MyUnknownServerMediaSubsession(env,stream_name,e,info);
@@ -839,7 +829,7 @@ void MediaServerPluginRTSPServer
     auto it(stream_map.find(streamName));
     if (it == stream_map.end()) {
       env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName
-          << ") end: no such stream in stream_map, delegating completionFunc to streamManager->GetStream\n";
+          << ") end: no such stream in stream_map, delegating completionFunc to stream_factory->GetStream\n";
       LookupCompletionFuncData *context = new LookupCompletionFuncData(this,env,streamName,completionFunc,completionClientData);
       streamManager->GetStream(streamName, context, &MediaServerPluginRTSPServer::GetStreamCb);
       return;
@@ -921,42 +911,42 @@ ServerMediaSession *MediaServerPluginRTSPServer::createServerMediaSession(UsageE
 
 class LoggingUsageEnvironment : public BasicUsageEnvironment {
 public:
-  LoggingUsageEnvironment(TaskScheduler &scheduler,IRTCStreamFactory *streamManager)
-    : BasicUsageEnvironment(scheduler),streamManager(streamManager) {}
+  LoggingUsageEnvironment(TaskScheduler &scheduler,const MPluginParams &params)
+    : BasicUsageEnvironment(scheduler),params(params) {}
 private:
-  IRTCStreamFactory *const streamManager;
+  const MPluginParams &params;
   UsageEnvironment& operator<<(char const* str) override {
-    streamManager->OnLog(std::string(str?str:"(NULL)"));
+    params.log(std::string(str?str:"(NULL)"));
     return *this;
   }
   UsageEnvironment& operator<<(int i) override {
     std::ostringstream o;
     o << i;
-    streamManager->OnLog(o.str());
+    params.log(o.str());
     return *this;
   }
   UsageEnvironment& operator<<(unsigned u) override {
     std::ostringstream o;
     o << u;
-    streamManager->OnLog(o.str());
+    params.log(o.str());
     return *this;
   }
   UsageEnvironment& operator<<(double d) override {
     std::ostringstream o;
     o << d;
-    streamManager->OnLog(o.str());
+    params.log(o.str());
     return *this;
   }
   UsageEnvironment& operator<<(void* p) override {
     std::ostringstream o;
     o << p;
-    streamManager->OnLog(o.str());
+    params.log(o.str());
     return *this;
   }
 };
 
 UsageEnvironment *MediaServerPluginRTSPServer::createNewUsageEnvironment(TaskScheduler &scheduler) {
-  return new LoggingUsageEnvironment(scheduler,streamManager);
+  return new LoggingUsageEnvironment(scheduler,params);
 }
 
 
@@ -986,7 +976,7 @@ void MediaServerPluginRTSPServer::generateInfoString(void)
   }
   ss << "Media Server Connections: " << connections << "\n";
   ss << std::endl;
-  streamManager->OnStatsInfo(ss.str().c_str());
+  params.status(ss.str().c_str());
   // reschedule the next status info task
   const unsigned int generate_info_string_interval = 10; //[sec]
   envir().taskScheduler().rescheduleDelayedTask(generate_info_string_task, generate_info_string_interval * 1000000ULL, GenerateInfoString, this);
@@ -1010,7 +1000,7 @@ void MediaServerPluginRTSPServer::generateInfoString(void)
 
 class RTCMediaLib {
 public:
-  static RTCMediaLib *Create(IRTCStreamFactory *streamManager,const RTSPParameters &params) {
+  static RTCMediaLib *Create(IMStreamFactory *streamManager,const RTSPParameters &params) {
     RTCMediaLib *rval = new RTCMediaLib(streamManager,params);
     if (!rval->isRunning()) {
       delete rval;
@@ -1024,12 +1014,12 @@ public:
     worker_thread.join();
   }
 private:
-  RTCMediaLib(IRTCStreamFactory *streamManager,const RTSPParameters &params)
+  RTCMediaLib(IMStreamFactory *streamManager,const RTSPParameters &params)
     : streamManager(streamManager),params(params),
       worker_thread([this](void) {
         scheduler = BasicTaskScheduler::createNew();
         scheduler->assert_threads = true;
-        env = new LoggingUsageEnvironment(*scheduler,RTCMediaLib::streamManager);
+        env = new LoggingUsageEnvironment(*scheduler,RTCMediaLib::params);
         *env << "RTCMediaLib::RTCMediaLib::l: start\n";
         MediaServerPluginRTSPServer *server
           = MediaServerPluginRTSPServer::createNew(*env,RTCMediaLib::params,RTCMediaLib::streamManager);
@@ -1063,7 +1053,7 @@ private:
   }
   bool isRunning(void) const {return scheduler;}
 private:
-  IRTCStreamFactory *const streamManager;
+  IMStreamFactory *const streamManager;
   RTSPParameters params;
   BasicTaskScheduler *scheduler = nullptr;
   UsageEnvironment *env = nullptr;
@@ -1080,12 +1070,12 @@ static const char *const rtc_media_lib_api_version = RTCMEDIALIB_API_VERSION;
 
     // will return the API version of the Library.
     // when the interface_api_version_of_caller does not match,
-    // the library will not call the streamManager.
+    // the library will not call the stream_factory.
 extern "C" RTCMEDIALIB_API
-const char *initializeRTCMediaLib(
+const char *InitializeMPlugin(
               const char *interface_api_version_of_caller,
-              IRTCStreamFactory *streamManager,
-              const RTSPParameters &params) {
+              IMStreamFactory *stream_factory,
+              const MPluginParams &params) {
   OutPacketBuffer::maxSize = 1024*512;
   if (0 == strcmp(interface_api_version_of_caller,rtc_media_lib_api_version)) {
       // unique_ptr so that threads will be stopped when closing the app
@@ -1093,10 +1083,10 @@ const char *initializeRTCMediaLib(
       // first close previous instance and free all ports
     impl = std::unique_ptr<RTCMediaLib>();
       // afterwards create new instance
-    if (streamManager) {
-      impl = std::unique_ptr<RTCMediaLib>(RTCMediaLib::Create(streamManager,params));
+    if (stream_factory) {
+      impl = std::unique_ptr<RTCMediaLib>(RTCMediaLib::Create(stream_factory,static_cast<const RTSPParameters&>(params)));
       if (!impl) {
-        return "server starting failed, probably port problem. Check the log.";
+        return "Server starting failed, probably port problem. Check the log.";
       }
     }
   }

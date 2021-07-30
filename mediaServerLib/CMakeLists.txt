@@ -16,10 +16,12 @@ else()
           " Use cmake -D OPENSSL_LIBRARY_PATH=<path_where_MT/libssl_static.lib_lives" )
 endif()
 
-project(MediaServerPluginProject DESCRIPTION "MediaServer Plugin")
+project(MStreamPluginProject DESCRIPTION "MStream Plugin")
 
-set(PLUGIN MediaServerPlugin)
-set(TESTPROG MediaServerPluginTest)
+set(CMAKE_DEBUG_POSTFIX "d")
+
+set(PLUGIN MStreamPlugin)
+set(TESTPROG MStreamPluginTest)
 
 add_library(${PLUGIN} SHARED
   ../groupsock/GroupEId.cpp
@@ -219,7 +221,7 @@ add_library(${PLUGIN} SHARED
   ../liveMedia/ourMD5.cpp
   ../liveMedia/rtcp_from_spec.c
   ../liveMedia/uLawAudioFilter.cpp
-  MediaServerPluginRTSPServer.cpp
+  MStreamPluginRTSPServer.cpp
   SSLSocketBase.cpp
   SSLSocketServerPipe.cpp
   SocketCommunication.cpp
@@ -240,7 +242,7 @@ target_compile_options(${PLUGIN} PRIVATE -DNO_OPENSSL)
 target_compile_options(${PLUGIN} PRIVATE -D__STDC_LIMIT_MACROS)
 target_compile_options(${PLUGIN} PRIVATE -DNOMINMAX)
 
-add_executable(${TESTPROG} MediaServerPluginTestMain.cpp)
+add_executable(${TESTPROG} MStreamPluginTestMain.cpp)
 target_link_libraries(${TESTPROG} ${PLUGIN})
 
 if (WIN32)
@@ -249,8 +251,8 @@ if (WIN32)
   target_compile_options(${PLUGIN} PUBLIC $<$<NOT:$<CONFIG:Debug>>:-MT>)
   target_compile_options(${PLUGIN} PUBLIC $<$<CONFIG:Debug>:-MTd>)
   target_link_libraries(${PLUGIN} ws2_32)
-  target_link_libraries(${PLUGIN} ${OPENSSL_LIBRARY_PATH}/$<$<NOT:$<CONFIG:Debug>>:MT>$<$<CONFIG:Debug>:MTd>/libssl_static.lib)
-  target_link_libraries(${PLUGIN} ${OPENSSL_LIBRARY_PATH}/$<$<NOT:$<CONFIG:Debug>>:MT>$<$<CONFIG:Debug>:MTd>/libcrypto_static.lib)
+  target_link_libraries(${PLUGIN} ${OPENSSL_LIBRARY_PATH}/$<$<NOT:$<CONFIG:Debug>>:MT>$<$<CONFIG:Debug>:MTd>/libssl_static$<$<CONFIG:Debug>:d>.lib)
+  target_link_libraries(${PLUGIN} ${OPENSSL_LIBRARY_PATH}/$<$<NOT:$<CONFIG:Debug>>:MT>$<$<CONFIG:Debug>:MTd>/libcrypto_static$<$<CONFIG:Debug>:d>.lib)
   target_compile_options(${TESTPROG} PUBLIC $<$<NOT:$<CONFIG:Debug>>:-MT>)
   target_compile_options(${TESTPROG} PUBLIC $<$<CONFIG:Debug>:-MTd>)
 endif ()
