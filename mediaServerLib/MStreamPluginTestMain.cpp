@@ -139,7 +139,8 @@ public:
     std::unique_ptr<uint8_t[]> buffer = std::make_unique<uint8_t[]>(buffer_size);
     for (MySubsessionInfo *const*s=subsession_infos;*s;s++) {
       const int size = (*s)->generateFrame(now,buffer.get(),buffer_size);
-      for (auto &it : subsession_cb_map) it.second(it.first,*s,buffer.get(),size,now);
+      for (auto &it : subsession_cb_map) it.second(it.first,*s,buffer.get(),size,
+                                                   TimeType(std::chrono::microseconds(now)));
     }
     return 40000;
   }

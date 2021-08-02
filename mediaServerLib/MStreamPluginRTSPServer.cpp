@@ -92,7 +92,7 @@ private:
   struct FrameFunctionMap;
   static void OnH264NalCallback(const FrameFunctionMap &fm, const uint8_t *buffer, int bufferSize, const int64_t frameTime);
   static void OnH264FrameCallback(const FrameFunctionMap &fm, const uint8_t *buffer, int bufferSize, const int64_t frameTime);
-  static void OnFrameCallback(void *callerId, const SubsessionInfo *info, const uint8_t *buffer, int bufferSize, const int64_t frameTime);
+  static void OnFrameCallback(void *callerId, const SubsessionInfo *info, const uint8_t *buffer, int bufferSize, const TimeType &frameTime);
   mutable std::recursive_mutex registration_mutex;
   class RegistrationEntry;
   std::map<const SubsessionInfo*,FrameFunctionMap> registration_map;
@@ -360,7 +360,7 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnH264FrameCallback(const Fram
   }
 }
 
-void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void *callerId, const SubsessionInfo *info, const uint8_t *buffer, int bufferSize, const int64_t frameTime) {
+void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void *callerId, const SubsessionInfo *info, const uint8_t *buffer, int bufferSize, const TimeType &frameTime) {
   StreamMapEntry &e(*reinterpret_cast<MediaServerPluginRTSPServer::StreamMapEntry*>(callerId));
   std::lock_guard<std::recursive_mutex> lock(e.registration_mutex);
   if (!info || !buffer || bufferSize == 0) {
@@ -370,9 +370,13 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void *callerId
   const auto r(e.registration_map.find(info));
   if (r != e.registration_map.end()) {
     if (0 == strcmp(info->getRtpPayloadFormatName(),"H264")) {
-      OnH264FrameCallback(r->second,buffer,bufferSize,frameTime);
+      OnH264FrameCallback(r->second,buffer,bufferSize,
+                          std::chrono::duration_cast<std::chrono::microseconds>(
+                            frameTime.time_since_epoch()).count());
     } else {
-      r->second.callFunctions(buffer,bufferSize,frameTime);
+      r->second.callFunctions(buffer,bufferSize,
+                              std::chrono::duration_cast<std::chrono::microseconds>(
+                                frameTime.time_since_epoch()).count());
     }
   }
 }
@@ -916,33 +920,68 @@ public:
 private:
   const MPluginParams &params;
   UsageEnvironment& operator<<(char const* str) override {
-    params.log(std::string(str?str:"(NULL)"));
+    log(std::string(str?str:"(NULL)"));
     return *this;
   }
   UsageEnvironment& operator<<(int i) override {
     std::ostringstream o;
     o << i;
-    params.log(o.str());
+    log(o.str());
     return *this;
   }
   UsageEnvironment& operator<<(unsigned u) override {
     std::ostringstream o;
     o << u;
-    params.log(o.str());
+    log(o.str());
     return *this;
   }
   UsageEnvironment& operator<<(double d) override {
     std::ostringstream o;
     o << d;
-    params.log(o.str());
+    log(o.str());
     return *this;
   }
   UsageEnvironment& operator<<(void* p) override {
     std::ostringstream o;
     o << p;
-    params.log(o.str());
+    log(o.str());
     return *this;
   }
+  class ThreadLogger {
+    const MPluginParams &params;
+    std::string content;
+  public:
+    ThreadLogger(const MPluginParams &params) : params(params) {}
+    ~ThreadLogger(void) {
+      if (!content.empty()) {
+        params.log(content);
+        content.clear();
+      }
+    }
+    void log(std::string &&msg) {
+      if (!msg.empty()) {
+        if (content.empty()) {
+          if (msg.back() == '\n') {
+            params.log(msg);
+          } else {
+            content = msg;
+          }
+        } else {
+          content += msg;
+          if (msg.back() == '\n') {
+            params.log(content);
+            content.clear();
+          }
+        }
+      }
+    }
+  };
+  void log(std::string &&msg) {
+    std::unique_ptr<ThreadLogger> &l(loggers[std::this_thread::get_id()]);
+    if (!l) l = std::make_unique<ThreadLogger>(params);
+    l->log(std::move(msg));
+  }
+  std::map<std::thread::id,std::unique_ptr<ThreadLogger> > loggers;
 };
 
 UsageEnvironment *MediaServerPluginRTSPServer::createNewUsageEnvironment(TaskScheduler &scheduler) {

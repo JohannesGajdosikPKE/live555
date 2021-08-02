@@ -1,8 +1,9 @@
-#ifndef IRTC_H_
-#define IRTC_H_
+#ifndef IM_STREAM_H_
+#define IM_STREAM_H_
 
 #include <string>
 #include <memory>
+#include <chrono>
 
 class SubsessionInfo {
 public:
@@ -19,8 +20,12 @@ private:
   SubsessionInfo &operator=(const SubsessionInfo&);
 };
 
+typedef std::chrono::duration<int64_t,std::micro> DurationType;
+typedef std::chrono::time_point<std::chrono::system_clock,DurationType> TimeType;
+
 typedef void (*TOnFrameCallbackPtr)(void *callerId, const SubsessionInfo *info,
-                                    const uint8_t *buffer, int bufferSize, int64_t frameTime);
+                                    const uint8_t *buffer, int bufferSize,
+                                    const TimeType &frameTime);
 
 class IMStream {
 public:
@@ -113,7 +118,7 @@ typedef const char *(InitializeMPluginFunc)(
                     IMStreamFactory *streamManager,
                     const MPluginParams &params);
 
-#define RTCMEDIALIB_API_VERSION "0.4"
+#define RTCMEDIALIB_API_VERSION "0.5"
     // will return the API version of the Library.
     // when the interface_api_version_of_caller does not match,
     // the library will not call the stream_factory.
