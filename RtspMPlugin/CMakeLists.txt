@@ -16,12 +16,12 @@ else()
           " Use cmake -D OPENSSL_LIBRARY_PATH=<path_where_MT/libssl_static.lib_lives" )
 endif()
 
-project(MStreamPluginProject DESCRIPTION "MStream Plugin")
+project(RtspMStreamPluginProject DESCRIPTION "RtspMStream Plugin")
 
 set(CMAKE_DEBUG_POSTFIX "d")
 
-set(PLUGIN MStreamPlugin)
-set(TESTPROG MStreamPluginTest)
+set(PLUGIN RtspMStreamPlugin)
+set(TESTPROG RtspMStreamPluginTest)
 
 add_library(${PLUGIN} SHARED
   ../groupsock/GroupEId.cpp
@@ -242,7 +242,7 @@ target_compile_options(${PLUGIN} PRIVATE -DNO_OPENSSL)
 target_compile_options(${PLUGIN} PRIVATE -D__STDC_LIMIT_MACROS)
 target_compile_options(${PLUGIN} PRIVATE -DNOMINMAX)
 
-add_executable(${TESTPROG} MStreamPluginTestMain.cpp)
+add_executable(${TESTPROG} RtspMStreamPluginTestMain.cpp)
 target_link_libraries(${TESTPROG} ${PLUGIN})
 
 if (WIN32)
