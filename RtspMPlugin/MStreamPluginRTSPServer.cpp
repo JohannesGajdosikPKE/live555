@@ -1115,7 +1115,7 @@ const char *InitializeMPlugin(
               const char *interface_api_version_of_caller,
               IMStreamFactory *stream_factory,
               const MPluginParams &params) {
-  OutPacketBuffer::maxSize = 1024*1024;
+  OutPacketBuffer::maxSize = 4*1024*1024;
   if (0 == strcmp(interface_api_version_of_caller,rtc_media_lib_api_version)) {
       // unique_ptr so that threads will be stopped when closing the app
     static std::unique_ptr<RTCMediaLib> impl;
