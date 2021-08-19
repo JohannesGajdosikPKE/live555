@@ -835,7 +835,7 @@ void MediaServerPluginRTSPServer
       env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName
           << ") end: no such stream in stream_map, delegating completionFunc to stream_factory->GetStream\n";
       LookupCompletionFuncData *context = new LookupCompletionFuncData(this,env,streamName,completionFunc,completionClientData);
-      streamManager->GetStream(streamName, context, &MediaServerPluginRTSPServer::GetStreamCb);
+      streamManager->GetStream(streamName, context, false, &MediaServerPluginRTSPServer::GetStreamCb);
       return;
     }
     ServerMediaSession *sms = createServerMediaSession(env,streamName,it->second);

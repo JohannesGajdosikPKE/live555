@@ -53,7 +53,8 @@ class IMStreamFactory
 public:
   virtual ~IMStreamFactory(void) {}
   typedef void (GetStreamCb)(void *context,const TStreamPtr &stream);
-  virtual void GetStream(const char *url,void *context,GetStreamCb *cb) = 0;
+  virtual void GetStream(const char *url,void *context,
+                         bool only_video,GetStreamCb *cb) = 0;
 };
 
 
@@ -118,7 +119,7 @@ typedef const char *(InitializeMPluginFunc)(
                     IMStreamFactory *streamManager,
                     const MPluginParams &params);
 
-#define RTCMEDIALIB_API_VERSION "0.5"
+#define RTCMEDIALIB_API_VERSION "0.6"
     // will return the API version of the Library.
     // when the interface_api_version_of_caller does not match,
     // the library will not call the stream_factory.
