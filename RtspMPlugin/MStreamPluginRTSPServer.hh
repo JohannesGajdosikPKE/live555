@@ -53,7 +53,6 @@ protected:
                                 void *completionClientData,
                                 Boolean isFirstLookupInSession = True) override;
   ServerMediaSession *createServerMediaSession(UsageEnvironment &env,
-                                               const char *stream_name,
                                                const std::shared_ptr<StreamMapEntry> &e);
 
   static void incomingConnectionHandlerHTTPoverSSL(void* instance, int /*mask*/);
