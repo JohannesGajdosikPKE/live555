@@ -660,7 +660,7 @@ private:
                     if (s >= 2 && 2*s <= prev_task_queue_size) {
                       prev_task_queue_size = s;
                       envir() << "MyFrameSource(" << this << "," << name.c_str() << ")::connect::l::l: "
-                                 "task_queue.size >= " << s << "\n";
+                                 "task_queue.size <= " << s << "\n";
                     }
                   }
 //                  envir() << ("MyFrameSource::connect::l::l: frame in connection thread, dequeued task(" + std::to_string(task_nr) + ")\n").c_str();
