@@ -877,7 +877,7 @@ if (!streamName[0]) {
     it->second->delayAutoClosing();
     env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << "): "
            "creating new ServerMediaSession with existing StreamMap entry\n";
-    ServerMediaSession *sms = createServerMediaSession(env,it->second);
+    sms = createServerMediaSession(env,it->second);
     env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << "): "
            "new ServerMediaSession " << sms << " with existing StreamMap entry created\n";
   }
