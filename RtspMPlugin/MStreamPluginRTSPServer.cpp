@@ -27,10 +27,76 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include <string.h>
 
+#include <map>
 #include <deque>
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#include <atomic>
+
+class MemAccounter {
+public:
+  static MemAccounter &Singleton(void) {
+    static MemAccounter m;
+    return m;
+  }
+  void accountAlloc(size_t size) {bins[GetBin(size)] += size;}
+  void accountFree(size_t size) {bins[GetBin(size)] -= size;}
+  void print(std::ostream &o) const {
+    o << "RTSP Plugin C++ Memory:\n";
+    size_t s = 32;
+    size_t total = 0;
+    for (unsigned int i=0;i<nr_of_bins;i++,s<<=1) {
+      const size_t bytes = bins[i];
+      if (bytes) {
+        total += bytes;
+        o << s << ": " << bytes << '\n';
+      }
+    }
+    o << "total: " << total << '\n';
+  }
+private:
+  enum {nr_of_bins = 21};
+  std::atomic<size_t> bins[nr_of_bins];
+  static unsigned int GetBin(size_t size) {
+    unsigned int rval = 0;
+    while (size > 32) {
+      rval++;
+      if (rval >= nr_of_bins) return (nr_of_bins-1);
+      size >>= 1;
+    }
+    return rval;
+  }
+  MemAccounter(void) {
+    for (unsigned int i=0;i<nr_of_bins;i++) bins[i] = 0;
+  }
+};
+
+#define OWN_MEMOPERATORS
+#ifdef OWN_MEMOPERATORS
+void *operator new(size_t size) {
+  if (!size) size=1;
+  size_t *const rval = (uint64_t*)malloc(sizeof(size_t)+size);
+  if (!rval) abort();
+  MemAccounter::Singleton().accountAlloc(size);
+  *rval = size;
+  return rval+1;
+}
+
+void operator delete(void *p) noexcept {
+  if (!p) return;
+  size_t *const d = ((size_t*)p)-1;
+  MemAccounter::Singleton().accountFree(*d);
+  free(d);
+}
+
+void *operator new[](size_t size) {return operator new(size);}
+void operator delete[](void *p) noexcept {operator delete(p);}
+
+#endif
+
+
+
 
 template<class T>
 std::string ToString(const T &t) {
@@ -43,15 +109,38 @@ static const char *SubsessionInfoToString(const SubsessionInfo &ssi) {
   return ssi.getRtpPayloadFormatName();
 }
 
+struct AllocStatEntry {
+  AllocStatEntry(void) : alloc_count(0),alloc_size(0) {}
+  std::atomic<uint32_t> alloc_count;
+  std::atomic<uint64_t> alloc_size;
+};
+
+static std::mutex alloc_stat_mutex;
+static std::map<std::string,std::unique_ptr<AllocStatEntry> > alloc_stat;
+
+static AllocStatEntry &GetAllocEntry(const std::string &name) {
+  std::lock_guard<std::mutex> lock(alloc_stat_mutex);
+  std::unique_ptr<AllocStatEntry> &ae(alloc_stat[name]);
+  if (!ae) ae = std::make_unique<AllocStatEntry>();
+  return *ae;
+}
+
+static void PrintAllocInfos(std::ostream &o) {
+  o << "RTSP Plugin allocated Frames:\n";
+  std::lock_guard<std::mutex> lock(alloc_stat_mutex);
+  for (auto &i : alloc_stat) {
+    o << i.first << ": " << i.second->alloc_count
+      << " / " << i.second->alloc_size << '\n';
+  }
+}
+
+
 struct Frame {
   Frame(void) : size(0), time(0) {}
-  Frame(const uint8_t *data,int32_t size,int64_t time)
-   : size((data && size>0)?size:0), time(time), data(new uint8_t[Frame::size]) {
-    if (Frame::size) memcpy(const_cast<uint8_t*>(Frame::data.get()),data,Frame::size);
-  }
-  const int32_t size;
+  Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t *data,int32_t size,int64_t time);
+  const uint32_t size;
   const int64_t time;
-  const std::shared_ptr<const uint8_t[]> data;
+  std::shared_ptr<const uint8_t[]> data;
 };
 
 static inline
@@ -100,6 +189,23 @@ private:
   std::map<const SubsessionInfo*,FrameFunctionMap> registration_map;
   const SubsessionInfo *const *subsession_info_list;
 };
+
+Frame::Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t *data,int32_t size,int64_t time)
+      :size((data && size>0)?size:0),time(time) {
+  if (Frame::size) {
+    AllocStatEntry &ae(GetAllocEntry(e.name));
+    Frame::data = std::shared_ptr<const uint8_t[]>(
+      new uint8_t[Frame::size],
+      [s=Frame::size,&ae](const uint8_t *d) {
+        ae.alloc_size -= s;
+        ae.alloc_count--;
+        delete[] d;
+      });
+    memcpy(const_cast<uint8_t*>(Frame::data.get()),data,Frame::size);
+    ae.alloc_count++;
+    ae.alloc_size += Frame::size;
+  }
+}
 
 class MediaServerPluginRTSPServer::StreamMapEntry::Registration {
   Registration(const std::shared_ptr<StreamMapEntry> &map_entry,const SubsessionInfo *info)
@@ -162,9 +268,10 @@ public:
 struct MediaServerPluginRTSPServer::StreamMapEntry::FrameFunctionMap : public std::map<Registration*,RegistrationEntry> {
   FrameFunctionMap(void) : h264_profile_level_id(0) {}
   void callFunctions(const uint8_t *buffer, int bufferSize, const int64_t frameTime) const {
-    const Frame f(buffer,bufferSize,frameTime);
+    const Frame f(*e,buffer,bufferSize,frameTime);
     for (auto &it : *this) it.second.func(f);
   }
+  StreamMapEntry *e;
   void setH264ProfileLevelId(unsigned int x) {h264_profile_level_id = x;}
   void setH264Sps64(const std::shared_ptr<const char[]> &x) {h264_sps64 = x;}
   void setH264Pps64(const std::shared_ptr<const char[]> &x) {h264_pps64 = x;}
@@ -236,9 +343,10 @@ MediaServerPluginRTSPServer::StreamMapEntry::connect(const SubsessionInfo *info,
   std::shared_ptr<Registration> reg;
   {
     std::lock_guard<std::recursive_mutex> lock(registration_mutex);
-    auto &r(registration_map[info]);
+    FrameFunctionMap &fm(registration_map[info]);
+    fm.e = this;
     reg = Registration::Create(shared_from_this(),info);
-    r[reg.get()].swap(RegistrationEntry(std::move(f),reg));
+    fm[reg.get()].swap(RegistrationEntry(std::move(f),reg));
   }
     // setting the callback many times does not hurt:
   stream->RegisterOnFrame(this,StreamMapEntry::OnFrameCallback);
@@ -297,11 +405,13 @@ void MediaServerPluginRTSPServer::StreamMapEntry::onClose(void) {
   }
   env << "MediaServerPluginRTSPServer::StreamMapEntry(" << name.c_str() << ")::onClose: calling resetStream\n";
   resetStream();
+  const std::string name_for_logging(name);
   if (on_close) {
     env << "MediaServerPluginRTSPServer::StreamMapEntry(" << name.c_str() << ")::onClose: calling on_close cb\n";
     on_close(name);
   }
-  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << name.c_str() << ")::onClose: end\n";
+    // StreamMapEntry may have been deleted, do not use it for logging
+  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << name_for_logging.c_str() << ")::onClose: end\n";
 }
 
 unsigned int MediaServerPluginRTSPServer::StreamMapEntry::printConnections(const std::string &url,std::ostream &o) const {
@@ -1041,7 +1151,7 @@ void MediaServerPluginRTSPServer::generateInfoString(void)
   std::stringstream ss;
   {
     std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
-    ss << "---- MediaServer: " << stream_map.size() << " Session(s) active ---- " << "url: " << m_urlPrefix.get() << "[cameraNum]-[streamId]";
+    ss << "---- RTSP Plugin: " << stream_map.size() << " Session(s) active ---- " << "url: " << m_urlPrefix.get() << "[cameraNum]-[streamId]";
     if (params.httpPort)
       ss << " | RTSP-over-HTTP tunnel (Port " << params.httpPort << ")";
     else
@@ -1055,9 +1165,12 @@ void MediaServerPluginRTSPServer::generateInfoString(void)
       connections += it.second->printConnections(m_urlPrefix.get()+it.first,ss);
     }
   }
-  ss << "Media Server Connections: " << connections << "\n";
+  ss << "RTSP Plugin Connections: " << connections << "\n";
+  MemAccounter::Singleton().print(ss);
+  PrintAllocInfos(ss);
   ss << std::endl;
   params.status(ss.str().c_str());
+
   // reschedule the next status info task
   const unsigned int generate_info_string_interval = 10; //[sec]
   envir().taskScheduler().rescheduleDelayedTask(generate_info_string_task, generate_info_string_interval * 1000000ULL, GenerateInfoString, this);
