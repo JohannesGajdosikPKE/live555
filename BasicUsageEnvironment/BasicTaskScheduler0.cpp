@@ -28,7 +28,7 @@ public:
   AlarmHandler(TaskFunc* proc, void* clientData, DelayInterval timeToDelay)
     : DelayQueueEntry(timeToDelay), fProc(proc), fClientData(clientData) {
   }
-
+  void *getClientData(void) const {return fClientData;}
 private: // redefined virtual functions
   virtual void handleTimeout() {
     (*fProc)(fClientData);
@@ -60,6 +60,7 @@ TaskToken BasicTaskScheduler0::scheduleDelayedTask(int64_t microseconds,
 						 TaskFunc* proc,
 						 void* clientData) {
   assertSameThread();
+  if (!proc) return nullptr;
   if (microseconds < 0) microseconds = 0;
   DelayInterval timeToDelay((long)(microseconds/1000000), (long)(microseconds%1000000));
   AlarmHandler* alarmHandler = new AlarmHandler(proc, clientData, timeToDelay);
@@ -68,11 +69,18 @@ TaskToken BasicTaskScheduler0::scheduleDelayedTask(int64_t microseconds,
   return (void*)(alarmHandler->token());
 }
 
-void BasicTaskScheduler0::unscheduleDelayedTask(TaskToken& prevTask) {
+void *BasicTaskScheduler0::unscheduleDelayedTask(TaskToken& prevTask) {
   assertSameThread();
-  DelayQueueEntry* alarmHandler = fDelayQueue.removeEntry((intptr_t)prevTask);
-  prevTask = NULL;
-  delete alarmHandler;
+  void *rval = 0;
+  if (prevTask) {
+    AlarmHandler* alarmHandler = (AlarmHandler*)fDelayQueue.removeEntry((intptr_t)prevTask);
+    prevTask = NULL;
+    if (alarmHandler) {
+      rval = alarmHandler->getClientData();
+      delete alarmHandler;
+    }
+  }
+  return rval;
 }
 
 void BasicTaskScheduler0::doEventLoop(char volatile* watchVariable) {

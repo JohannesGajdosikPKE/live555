@@ -122,14 +122,14 @@ public:
 	// unscheduleDelayedTask() or rescheduleDelayedTask()
         // (but only if the task has not yet occurred).
 
-  virtual void unscheduleDelayedTask(TaskToken& prevTask) = 0;
+  virtual void *unscheduleDelayedTask(TaskToken& prevTask) = 0; // returns clientData
 	// (Has no effect if "prevTask" == NULL)
         // Sets "prevTask" to NULL afterwards.
         // Note: This MUST NOT be called if the scheduled task has already occurred.
 
-  virtual void rescheduleDelayedTask(TaskToken& task,
+  virtual void *rescheduleDelayedTask(TaskToken& task,
 				     int64_t microseconds, TaskFunc* proc,
-				     void* clientData);
+				     void* clientData); // returns previous clientData
         // Combines "unscheduleDelayedTask()" with "scheduleDelayedTask()"
         // (setting "task" to the new task token).
         // Note: This MUST NOT be called if the scheduled task has already occurred.

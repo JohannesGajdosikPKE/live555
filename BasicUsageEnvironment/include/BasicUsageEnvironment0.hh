@@ -84,7 +84,7 @@ public:
   // Redefined virtual functions:
   virtual TaskToken scheduleDelayedTask(int64_t microseconds, TaskFunc* proc,
 				void* clientData);
-  virtual void unscheduleDelayedTask(TaskToken& prevTask);
+  virtual void *unscheduleDelayedTask(TaskToken& prevTask);
 
   virtual void doEventLoop(char volatile* watchVariable);
 
