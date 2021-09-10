@@ -74,11 +74,12 @@ protected:
   UsageEnvironment *createNewUsageEnvironment(TaskScheduler &scheduler) override;
   static void GenerateInfoString(void *context);
   void generateInfoString(void);
+  std::shared_ptr<StreamMapEntry> getStreamMapEntry(const std::string &stream_name) const;
 
   int m_HTTPServerSocket,m_HTTPsServerSocket;
   const RTSPParameters params;
   IMStreamFactory *const streamManager;
-  std::map<std::string,std::shared_ptr<StreamMapEntry> > stream_map;
+  std::map<std::string,std::weak_ptr<StreamMapEntry> > stream_map;
   mutable std::recursive_mutex stream_map_mutex;
   const std::unique_ptr<const char[]> m_urlPrefix;
   TaskToken generate_info_string_task;

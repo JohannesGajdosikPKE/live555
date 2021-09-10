@@ -28,6 +28,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <string.h>
 
 #include <map>
+#include <set>
 #include <deque>
 #include <iostream>
 #include <sstream>
@@ -96,6 +97,17 @@ void operator delete[](void *p) noexcept {operator delete(p);}
 #endif
 
 
+class IdContainer {
+  static unsigned int GetSequenceId(void) {
+    static std::atomic<unsigned int> seq(0);
+    return ++seq;
+  }
+public:
+  const unsigned int id;
+  IdContainer(void) : id(GetSequenceId()) {}
+  IdContainer(const IdContainer &c) : id(c.id) {}
+};
+
 
 
 template<class T>
@@ -151,7 +163,7 @@ void PrintBytes(const uint8_t *data, int size, int64_t time) {
 }
 
 
-class MediaServerPluginRTSPServer::StreamMapEntry : public std::enable_shared_from_this<MediaServerPluginRTSPServer::StreamMapEntry> {
+class MediaServerPluginRTSPServer::StreamMapEntry : public std::enable_shared_from_this<MediaServerPluginRTSPServer::StreamMapEntry>, public IdContainer {
   StreamMapEntry(UsageEnvironment &env,const TStreamPtr &stream,const std::string &name,std::function<void(const std::string&)> &&on_close);
 public:
   static std::shared_ptr<StreamMapEntry> Create(UsageEnvironment &env,const TStreamPtr &stream,const std::string &name,std::function<void(const std::string&)> &&on_close) {
@@ -163,30 +175,30 @@ public:
   ~StreamMapEntry(void);
   const SubsessionInfo *const *getSubsessionInfoList(void) const {return subsession_info_list;}
   typedef std::function<void(const Frame&)> FrameFunction;
-  class RegistrationEntry;
   class Registration;
-  std::shared_ptr<Registration> connect(const SubsessionInfo *info,FrameFunction &&f);
-  void delayAutoClosing(void);
+  std::unique_ptr<Registration> connect(const SubsessionInfo *info,FrameFunction &&f);
   unsigned int printConnections(const std::string &url,std::ostream &o) const;
+  void keepAlive(void);
   UsageEnvironment &env;
   const std::string name;
 private:
-  std::shared_ptr<IMStream> stream;
+  const std::shared_ptr<IMStream> stream;
   const std::function<void(const std::string&)> on_close;
-  static void OnClose(void *context) {reinterpret_cast<StreamMapEntry*>(context)->onClose();}
-  TaskToken delayed_close_task = nullptr;
+  TaskToken delayed_keep_task = nullptr; // must only be accessed from plugin thread(=own thread)
+  bool i_want_to_die = false;            // must only be accessed from plugin thread(=own thread)
   void onClose(void);
-  void resetStream(void);
-  void scheduleCloseTask(bool scedule);
+  static void ScheduleKeepTaskHelper(std::shared_ptr<StreamMapEntry> *ptr);
+  void scheduleCancelTaskHelper(void);
+  void cancelKeepAlive(void);
   friend class Registration;
-  void disconnect(Registration *reg);
-  struct FrameFunctionMap;
-  static void OnH264NalCallback(const FrameFunctionMap &fm, const uint8_t *buffer, int bufferSize, const int64_t frameTime);
-  static void OnH264FrameCallback(const FrameFunctionMap &fm, const uint8_t *buffer, int bufferSize, const int64_t frameTime);
+  void remember(Registration *reg);
+  void forget(Registration *reg);
+  struct RegistrationSet;
+  static void OnH264NalCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const int64_t frameTime);
+  static void OnH264FrameCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const int64_t frameTime);
   static void OnFrameCallback(void *callerId, const SubsessionInfo *info, const uint8_t *buffer, int bufferSize, const TimeType &frameTime);
   mutable std::recursive_mutex registration_mutex;
-  class RegistrationEntry;
-  std::map<const SubsessionInfo*,FrameFunctionMap> registration_map;
+  std::map<const SubsessionInfo*,RegistrationSet> registration_map;
   const SubsessionInfo *const *subsession_info_list;
 };
 
@@ -207,69 +219,40 @@ Frame::Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t 
   }
 }
 
-class MediaServerPluginRTSPServer::StreamMapEntry::Registration {
-  Registration(const std::shared_ptr<StreamMapEntry> &map_entry,const SubsessionInfo *info)
-    : env(map_entry->env),info(info),map_entry(map_entry) {
-    env << "MediaServerPluginRTSPServer::StreamMapEntry::Registration(" << this << ")::Registration(" << map_entry->name.c_str() << ")\n";
+class MediaServerPluginRTSPServer::StreamMapEntry::Registration : public IdContainer {
+  Registration(const std::shared_ptr<StreamMapEntry> &map_entry,
+               const SubsessionInfo *info,FrameFunction &&f)
+    : map_entry(map_entry),env(map_entry->env),info(info),f(std::move(f)) {
+    map_entry->remember(this);
+    env << "StreamMapEntry::Registration(" << id << ")::Registration(" << map_entry->name.c_str() << "), use_count: " << map_entry.use_count() << "\n";
   }
+  const std::shared_ptr<StreamMapEntry> map_entry;
 public:
-    // only StreamMapEntry::connect calls Create:
-  static std::shared_ptr<Registration> Create(const std::shared_ptr<StreamMapEntry> &map_entry,const SubsessionInfo *info) {
-    return std::shared_ptr<Registration>(new Registration(map_entry,info));
-//    I would like to write
-//    return std::make_shared<Registration>(map_entry,info);
-//    but this is impossible because std::make_shared cannot access the private constructor
+    // Having a Registration means having a shared_ptr to the StreamMapEntry
+    // and thus having a shared_ptr to the stream itself and its internal memory like *info.
+    // It cannot guarantee that frames will be received, rather guarantees that no more frames will be received
+    // after the destructor is finished.
+    // Only StreamMapEntry::connect calls Create:
+  static std::unique_ptr<Registration> Create(const std::shared_ptr<StreamMapEntry> &map_entry,
+                                              const SubsessionInfo *info,FrameFunction &&f) {
+    return std::unique_ptr<Registration>(new Registration(map_entry,info,std::move(f)));
   }
   ~Registration(void) {
-    env << ("MediaServerPluginRTSPServer::StreamMapEntry::Registration(" + ToString(this) + ")::~Registration start\n").c_str();
-    disconnect();
-    env << ("MediaServerPluginRTSPServer::StreamMapEntry::Registration(" + ToString(this) + ")::~Registration end\n").c_str();
-  }
-private:
-  void disconnect(void) {
-    std::shared_ptr<StreamMapEntry> e(map_entry.lock());
-    if (e) {
-      env << "MediaServerPluginRTSPServer::StreamMapEntry::Registration(" << this << ")::disconnect: calling " << e->name.c_str() << "->disconnect\n";
-      e->disconnect(this); // will reset the map_entry
-    } else {
-      env << ("MediaServerPluginRTSPServer::StreamMapEntry::Registration(" + ToString(this) + ")::disconnect: nothing to disconnect\n").c_str();
-    }
+    env << "StreamMapEntry::Registration(" << id << "," << map_entry->name.c_str() << ")::~Registration start\n";
+    map_entry->forget(this);
+    env << "StreamMapEntry::Registration(" << id << "," << map_entry->name.c_str() << ")::~Registration end, use_count:" << (map_entry.use_count()-1) << "\n";
   }
 public:
   UsageEnvironment &env;
   const SubsessionInfo *const info;
-private:
-  friend class RegistrationEntry;
-  std::weak_ptr<StreamMapEntry> map_entry;
+  const FrameFunction f;
 };
 
-class MediaServerPluginRTSPServer::StreamMapEntry::RegistrationEntry {
-public:
-  RegistrationEntry(void) {}
-  RegistrationEntry(FrameFunction &&func,const std::shared_ptr<Registration> &reg)
-    : func(std::move(func)),reg(reg) {}
-  ~RegistrationEntry(void) {
-      // registration_mutex is already locked
-    const std::shared_ptr<Registration> r(reg.lock());
-    if (r) {
-      static const Frame empty_frame;
-      func(empty_frame);
-      r->map_entry.reset();
-    }
-  }
-  void swap(RegistrationEntry &e) {
-    func.swap(e.func);
-    reg.swap(e.reg);
-  }
-  FrameFunction func;
-  std::weak_ptr<Registration> reg;
-};
-
-struct MediaServerPluginRTSPServer::StreamMapEntry::FrameFunctionMap : public std::map<Registration*,RegistrationEntry> {
-  FrameFunctionMap(void) : h264_profile_level_id(0) {}
+struct MediaServerPluginRTSPServer::StreamMapEntry::RegistrationSet : public std::set<Registration*> {
+  RegistrationSet(void) : e(0),h264_profile_level_id(0) {}
   void callFunctions(const uint8_t *buffer, int bufferSize, const int64_t frameTime) const {
     const Frame f(*e,buffer,bufferSize,frameTime);
-    for (auto &it : *this) it.second.func(f);
+    for (auto &it : *this) it->f(f);
   }
   StreamMapEntry *e;
   void setH264ProfileLevelId(unsigned int x) {h264_profile_level_id = x;}
@@ -284,134 +267,149 @@ MediaServerPluginRTSPServer::StreamMapEntry::StreamMapEntry(UsageEnvironment &en
                                                             std::function<void(const std::string&)> &&on_close)
                                             :env(env),name(name),stream(stream),on_close(std::move(on_close)) {
   if (!stream) abort();
-    // RegisterOnClose might call OnClose early, so lock the mutex:
+    // RegisterOnClose might call Destroy early, so lock the mutex:
   std::lock_guard<std::recursive_mutex> lock(registration_mutex);
   subsession_info_list = stream->getSubsessionInfoList();
-  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << name.c_str() << ")::StreamMapEntry:";
+  env << "StreamMapEntry(" << id << "," <<name.c_str() << ")::StreamMapEntry:";
   for (const SubsessionInfo *const*s=subsession_info_list;*s;s++) env << " " << SubsessionInfoToString(**s);
   env << "\n";
+  stream->RegisterOnFrame(this,StreamMapEntry::OnFrameCallback);
 }
 
 MediaServerPluginRTSPServer::StreamMapEntry::~StreamMapEntry(void) {
-  scheduleCloseTask(false);
-  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << name.c_str() << ")::~StreamMapEntry\n";
+  env << "StreamMapEntry(" << id << "," <<name.c_str() << ")::~StreamMapEntry start\n";
+  stream->RegisterOnFrame(this,nullptr);
+  env << "StreamMapEntry(" << id << "," <<name.c_str() << ")::~StreamMapEntry: calling onClose\n";
+  onClose();
   {
     std::lock_guard<std::recursive_mutex> lock(registration_mutex);
-    registration_map.clear();
+    if (!registration_map.empty()) abort();
   }
-  stream.reset();
-//  resetStream();
     // defensive programming: in case of programming error segfault as early as possible:
   subsession_info_list = nullptr;
-}
-
-void MediaServerPluginRTSPServer::StreamMapEntry::scheduleCloseTask(bool scedule) {
-  if (scedule || delayed_close_task) {
-    if (env.taskScheduler().isSameThread()) {
-      if (scedule) env.taskScheduler().rescheduleDelayedTask(delayed_close_task,15000000,OnClose,this);
-      else env.taskScheduler().unscheduleDelayedTask(delayed_close_task);
-    } else {
-      Semaphore sem;
-      env.taskScheduler().executeCommand(
-        [this,&sem,s=scedule](uint64_t) {
-          if (s) env.taskScheduler().rescheduleDelayedTask(delayed_close_task,15000000,OnClose,this);
-          else {
-            env.taskScheduler().unscheduleDelayedTask(delayed_close_task);
-            sem.post();
-          }
-        });
-        // no need to wait if I just scedule:
-      if (!scedule) sem.wait();
-    }
-  }
-}
-
-void MediaServerPluginRTSPServer::StreamMapEntry::delayAutoClosing(void) {
-  if (delayed_close_task) {
-    env << "MediaServerPluginRTSPServer::StreamMapEntry(" << name.c_str() << ")::delayAutoClosing: delay closing\n";
-    scheduleCloseTask(true);
-  }
+  env << "StreamMapEntry(" << id << "," <<name.c_str() << ")::~StreamMapEntry end\n";
 }
 
 
 
-std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry::Registration>
+std::unique_ptr<MediaServerPluginRTSPServer::StreamMapEntry::Registration>
 MediaServerPluginRTSPServer::StreamMapEntry::connect(const SubsessionInfo *info,FrameFunction &&f) {
-  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << name.c_str() << ")::connect(" << SubsessionInfoToString(*info) << "): start\n";
-  scheduleCloseTask(false);
+  return Registration::Create(shared_from_this(),info,std::move(f));
+}
+
+void MediaServerPluginRTSPServer::StreamMapEntry::remember(Registration *reg) {
+    // only called from the Registration constructor
+  env << "StreamMapEntry(" << id << "," <<name.c_str() << ")::remember(" << SubsessionInfoToString(*reg->info) << "): start\n";
   if (!stream) abort();
-  std::shared_ptr<Registration> reg;
+  bool call_register;
   {
     std::lock_guard<std::recursive_mutex> lock(registration_mutex);
-    FrameFunctionMap &fm(registration_map[info]);
-    fm.e = this;
-    reg = Registration::Create(shared_from_this(),info);
-    fm[reg.get()].swap(RegistrationEntry(std::move(f),reg));
+    call_register = registration_map.empty();
+    RegistrationSet &rs(registration_map[reg->info]);
+    rs.e = this;
+    if (!rs.insert(reg).second) abort();
   }
-    // setting the callback many times does not hurt:
-  stream->RegisterOnFrame(this,StreamMapEntry::OnFrameCallback);
-  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << name.c_str() << ")::connect returns " << reg.get() << "\n";
-  return reg;
+  if (call_register) 
+  env << "StreamMapEntry(" << id << "," <<name.c_str() << ")::remember end\n";
 }
 
-void MediaServerPluginRTSPServer::StreamMapEntry::disconnect(Registration *reg) {
-  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << name.c_str() << ")::disconnect(" << SubsessionInfoToString(*reg->info) << "): start\n";
+void MediaServerPluginRTSPServer::StreamMapEntry::forget(Registration *reg) {
+    // only called from the Registration destructor: from the worker threads, when MyFrameSource is destructed
+  env << "StreamMapEntry(" << id << "," <<name.c_str() << ")::forget(" << SubsessionInfoToString(*reg->info) << "): start\n";
   std::lock_guard<std::recursive_mutex> lock(registration_mutex);
   auto it(registration_map.find(reg->info));
   if (it == registration_map.end()) abort();
     // will call the destructor of the RegistrationEntry wich in turn
-    // will invalidate the registration and call the FrameCb with an emty Frame
-  if (it->second.erase(reg) != 1) abort();
+    // will invalidate the registration and call the FrameCb with an empty Frame
+  const auto erase_rc = it->second.erase(reg);
+  if (erase_rc != 1) abort();
   if (it->second.empty()) {
     registration_map.erase(it);
     if (registration_map.empty()) {
-      env << "MediaServerPluginRTSPServer::StreamMapEntry(" << name.c_str() << ")::disconnect: going to deregister the entire stream in 15 seconds if no one needs it\n";
-      scheduleCloseTask(true);
+      keepAlive();
     }
   }
-  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << name.c_str() << ")::disconnect(" << SubsessionInfoToString(*reg->info) << "): end, "
-         "registrations: " << (int)(registration_map.size()) << "\n";
+  env << "StreamMapEntry(" << id << "," <<name.c_str() << ")::forget(" << SubsessionInfoToString(*reg->info) << "): end\n";
 }
 
-void MediaServerPluginRTSPServer::StreamMapEntry::resetStream(void) {
-  // releasing the stream might lead to the destruction of the stream object
-  // which might lead to joining the thread the callback comes from.
-  // Therefore: do the destruction in a different thread
-  if (!stream) return;
-  const bool same_thread = env.taskScheduler().isSameThread();
-    // release the stream later and finish on_close/destructor
-  if (same_thread) {
-    env << ("MediaServerPluginRTSPServer::StreamMapEntry::resetStream(" + name + "), plugin thread: releasing " + ToString(stream.get()) + "\n").c_str();
-    stream.reset();
-    env << ("MediaServerPluginRTSPServer::StreamMapEntry::resetStream(" + name + "): plugin thread: released " + ToString(stream.get()) + "\n").c_str();
+static void Destroy(void *context) {
+  std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> *ptr
+    = reinterpret_cast<std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry>*>(context);
+  (*ptr)->env << "Destroy(" << (*ptr)->name.c_str() << "): releasing shared_ptr, use_count: " << ((*ptr).use_count()-1) << "\n";
+  delete ptr;
+}
+
+void MediaServerPluginRTSPServer::StreamMapEntry::ScheduleKeepTaskHelper(std::shared_ptr<StreamMapEntry> *self) {
+    // called only from my own thread = plugin thead
+  std::shared_ptr<StreamMapEntry> *old_ptr = nullptr;
+  if ((*self)->i_want_to_die) {
+    if ((*self)->delayed_keep_task) {
+      (*self)->env << "StreamMapEntry::ScheduleKeepTaskHelper(" << (*self)->id << "," << (*self)->name.c_str() << "): "
+                      "unsceduling KeepAlive task\n";
+      old_ptr = (std::shared_ptr<StreamMapEntry>*)
+        (*self)->env.taskScheduler().unscheduleDelayedTask((*self)->delayed_keep_task);
+    }
   } else {
-    env << ("MediaServerPluginRTSPServer::StreamMapEntry::resetStream(" + name + "): delegating releasing of " + ToString(stream.get()) + " to the plugin thread\n").c_str();
-    env.taskScheduler().executeCommand(
-        // try to force ownership of the shared_ptr to the lambda, so that the labda must delete the stream,
-        // even if it is executed immediately and is finished before this scope finishes:
-      [tmp=std::move(stream),e=&env,n=name](uint64_t) {
-        *e << ("MediaServerPluginRTSPServer::StreamMapEntry::resetStream(" + n + ")::l: plugin thread: releasing " + ToString(tmp.get()) + "\n").c_str();
-      });
+    (*self)->env << "StreamMapEntry::ScheduleKeepTaskHelper(" << (*self)->id << "," << (*self)->name.c_str() << "): "
+                    "going to destroy the StreamMapEntry in 15 seconds if no one needs it\n";
+    old_ptr = (std::shared_ptr<StreamMapEntry>*)
+      (*self)->env.taskScheduler().rescheduleDelayedTask((*self)->delayed_keep_task,15000000,
+                                                         Destroy,self);
+  }
+  if (old_ptr) {
+    (*self)->env << "StreamMapEntry::ScheduleKeepTaskHelper(" << (*self)->id << "," << (*self)->name.c_str() << "): "
+                    "releasing old shared_ptr, old use_count: " << old_ptr->use_count() << "\n";
+    delete old_ptr;
+  }
+}
+
+void MediaServerPluginRTSPServer::StreamMapEntry::keepAlive(void) {
+    // creating shared_from_this() prevents destruction
+  std::shared_ptr<StreamMapEntry> *self = new std::shared_ptr<StreamMapEntry>(shared_from_this());
+  if (env.taskScheduler().isSameThread()) {
+    ScheduleKeepTaskHelper(self);
+  } else {
+    env << "StreamMapEntry(" << id << "," << (*self)->name.c_str() << ")::keepAlive: "
+           "delegating release into plugin thread, use_count: " << self->use_count() << "\n";
+    env.taskScheduler().executeCommand([self](uint64_t) {ScheduleKeepTaskHelper(self);});
+  }
+}
+
+void MediaServerPluginRTSPServer::StreamMapEntry::scheduleCancelTaskHelper(void) {
+    // called only from my own thread = plugin thead
+  i_want_to_die = true;
+  if (delayed_keep_task) {
+    std::shared_ptr<StreamMapEntry> *old_ptr = (std::shared_ptr<StreamMapEntry>*)
+      env.taskScheduler().unscheduleDelayedTask(delayed_keep_task);
+    env << "StreamMapEntry(" << id << "," << name.c_str() << ")::scheduleCancelTaskHelper: unscheduled, ";
+    if (old_ptr) env << "releasing old shared_ptr, old use_count: " << old_ptr->use_count() << "\n";
+    else env << "no old shared_ptr\n";
+    delete old_ptr;
+  }
+}
+
+void MediaServerPluginRTSPServer::StreamMapEntry::cancelKeepAlive(void) {
+  if (env.taskScheduler().isSameThread()) {
+    scheduleCancelTaskHelper();
+  } else {
+    env << "StreamMapEntry(" << id << "," << name.c_str() << ")::cancelKeepAlive: "
+           "delegating cancellation into plugin thread\n";
+    env.taskScheduler().executeCommand([this](uint64_t) {
+      scheduleCancelTaskHelper();
+    });
   }
 }
 
 void MediaServerPluginRTSPServer::StreamMapEntry::onClose(void) {
-  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << name.c_str() << ")::onClose: start\n";
-    // called from the executable's thread:
-  {
-    std::lock_guard<std::recursive_mutex> lock(registration_mutex);
-    registration_map.clear();
-    subsession_info_list = nullptr;
-  }
-  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << name.c_str() << ")::onClose: calling resetStream\n";
-  resetStream();
+  env << "StreamMapEntry(" << id << "," << name.c_str() << ")::onClose: start\n";
+  cancelKeepAlive();
   const std::string name_for_logging(name);
   if (on_close) {
-    env << "MediaServerPluginRTSPServer::StreamMapEntry(" << name.c_str() << ")::onClose: calling on_close cb\n";
+    env << "StreamMapEntry(" << id << "," << name.c_str() << ")::onClose: calling on_close cb\n";
     on_close(name);
   }
     // StreamMapEntry may have been deleted, do not use it for logging
-  env << "MediaServerPluginRTSPServer::StreamMapEntry(" << name_for_logging.c_str() << ")::onClose: end\n";
+  env << "StreamMapEntry(" << id << "," << name_for_logging.c_str() << ")::onClose: end\n";
 }
 
 unsigned int MediaServerPluginRTSPServer::StreamMapEntry::printConnections(const std::string &url,std::ostream &o) const {
@@ -435,25 +433,24 @@ unsigned int MediaServerPluginRTSPServer::StreamMapEntry::printConnections(const
 }
 
 
-void MediaServerPluginRTSPServer::StreamMapEntry::OnH264NalCallback(const FrameFunctionMap &fm, const uint8_t *buffer, int bufferSize, const int64_t frameTime) {
+void MediaServerPluginRTSPServer::StreamMapEntry::OnH264NalCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const int64_t frameTime) {
 /*
       maybe this code will be useful later
-    FrameFunctionMap &r(*reinterpret_cast<FrameFunctionMap*>(callerId));
     const uint8_t nal_unit_type = (*buffer & 0x1f);
     if (nal_unit_type == 7) {
       if (bufferSize >= 4) {
-        r.setH264ProfileLevelId(
-            (((uint32_t)buffer[1])<<16)|(((uint32_t)buffer[2])<<8)|((uint32_t)buffer[3]));
+        rs.setH264ProfileLevelId(
+             (((uint32_t)buffer[1])<<16)|(((uint32_t)buffer[2])<<8)|((uint32_t)buffer[3]));
       }
-      r.setH264Sps64(std::shared_ptr<const char[]>(base64Encode((const char*)buffer,bufferSize)));
+      rs.setH264Sps64(std::shared_ptr<const char[]>(base64Encode((const char*)buffer,bufferSize)));
     } else if (nal_unit_type == 8) {
-      r.setH264Pps64(std::shared_ptr<const char[]>(base64Encode((const char*)buffer,bufferSize)));
+      rs.setH264Pps64(std::shared_ptr<const char[]>(base64Encode((const char*)buffer,bufferSize)));
     }
 */
-  fm.callFunctions(buffer,bufferSize,frameTime);
+  rs.callFunctions(buffer,bufferSize,frameTime);
 }
 
-void MediaServerPluginRTSPServer::StreamMapEntry::OnH264FrameCallback(const FrameFunctionMap &fm, const uint8_t *buffer, int bufferSize, const int64_t frameTime) {
+void MediaServerPluginRTSPServer::StreamMapEntry::OnH264FrameCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const int64_t frameTime) {
   if (bufferSize <= 0) return;
     // extract all nal units, strip h264 bytestream headers:
   const uint8_t *p = buffer;
@@ -467,13 +464,13 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnH264FrameCallback(const Fram
       }
     }
       // no more 001 until the end:
-    OnH264NalCallback(fm,p,end-p,frameTime);
+    OnH264NalCallback(rs,p,end-p,frameTime);
     break;
     nal_start_found:
     const uint8_t *p_next = p0 + 3;
     if (p0 > p) {
       if (p0[-1]==0) p0--;
-      if (p0 > p) OnH264NalCallback(fm,p,p0-p,frameTime);
+      if (p0 > p) OnH264NalCallback(rs,p,p0-p,frameTime);
     }
     p = p_next;
   }
@@ -483,6 +480,8 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void *callerId
   StreamMapEntry &e(*reinterpret_cast<MediaServerPluginRTSPServer::StreamMapEntry*>(callerId));
   std::lock_guard<std::recursive_mutex> lock(e.registration_mutex);
   if (!info || !buffer || bufferSize == 0) {
+    e.env << "StreamMapEntry(" << e.id << "," << e.name.c_str() << ")::OnFrameCallback: "
+             "empty frame received, calling onClose\n";
     e.onClose();
     return;
   }
@@ -698,7 +697,7 @@ MediaServerPluginRTSPServer::RTSPClientConnectionSSL::~RTSPClientConnectionSSL(v
 
 class MyServerMediaSubsession;
 
-class MyFrameSource : public FramedSource {
+class MyFrameSource : public FramedSource, public IdContainer {
 public:
   static MyFrameSource *createNew(UsageEnvironment &env,
                                   MediaServerPluginRTSPServer::StreamMapEntry &e,
@@ -711,11 +710,11 @@ private:
   MyFrameSource(const MyFrameSource&);
   MyFrameSource &operator=(MyFrameSource&);
   MyFrameSource(UsageEnvironment &env,const std::string &name) : FramedSource(env),name(name) {
-    env << "MyFrameSource(" << this << "," << name.c_str() << ")::MyFrameSource\n";
+    env << "MyFrameSource(" << id << "," << name.c_str() << ")::MyFrameSource\n";
   }
   ~MyFrameSource(void) override {
     envir().taskScheduler().assertSameThread();
-    envir() << "MyFrameSource(" << this << "," << name.c_str() << ")::~MyFrameSource start: releasing frame_registration\n";
+    envir() << "MyFrameSource(" << id << "," << name.c_str() << ")::~MyFrameSource start: releasing frame_registration\n";
       // release connection before cleanup so that no new framecallbacks will be deliverd
     frame_registration.reset();
 
@@ -729,26 +728,26 @@ private:
         auto registered_task = registered_tasks.front();
         registered_tasks.pop_front();
         if (envir().taskScheduler().cancelCommand(registered_task)) {
-          envir() << ("MyFrameSource(" + ToString(this) + "," + name + ")::~MyFrameSource: cancelled (" + std::to_string(registered_task) + ")\n").c_str();
+          envir() << ("MyFrameSource(" + ToString(id) + "," + name + ")::~MyFrameSource: cancelled (" + std::to_string(registered_task) + ")\n").c_str();
         } else {
-          envir() << ("MyFrameSource(" + ToString(this) + "," + name + ")::~MyFrameSource: cancelling (" + std::to_string(registered_task) + ") failed, "
+          envir() << ("MyFrameSource(" + ToString(id) + "," + name + ")::~MyFrameSource: cancelling (" + std::to_string(registered_task) + ") failed, "
                       "this can happen when I want to cancel my own task\n").c_str();
         }
       } while (!registered_tasks.empty());
     } else {
-      envir() << ("MyFrameSource(" + ToString(this) + "," + name + ")::~MyFrameSource: no task to cancel\n").c_str();
+      envir() << ("MyFrameSource(" + ToString(id) + "," + name + ")::~MyFrameSource: no task to cancel\n").c_str();
     }
-    envir() << "MyFrameSource(" << this << "," << name.c_str() << ")::~MyFrameSource end\n";
+    envir() << "MyFrameSource(" << id << "," << name.c_str() << ")::~MyFrameSource end\n";
   }
   void connect(MediaServerPluginRTSPServer::StreamMapEntry &e,
                const SubsessionInfo *info) {
-    envir() << "MyFrameSource::connect\n";
+    envir() << "MyFrameSource(" << id << "," << name.c_str() << ")::connect(" << e.name.c_str() << "," << SubsessionInfoToString(*info) << ")\n";
     frame_registration = e.connect(info,
           [this](const Frame &f) {
               // called from some thread outside the plugin
 //            if (f.size == 0) {
                 // no more frames for this SubsessionInfo
-//              envir() << "MyFrameSource::connect::l: empty frame received\n";
+//              envir() << "MyFrameSource(" << id << "," << name.c_str() << ")::connect::l: empty frame received\n";
 //            } else {
               std::lock_guard<std::mutex> lock(registered_tasks_mutex);
               const uint64_t registered_task = envir().taskScheduler().executeCommand(
@@ -759,18 +758,22 @@ private:
                   const unsigned int s = my_frame_queue.size();
                   if (s >= 2*prev_frame_queue_size) {
                     prev_frame_queue_size = s;
-                    envir() << "MyFrameSource(" << this << "," << name.c_str() << ")::connect::l::l: "
-                               "frame_queue.size >= " << s << "\n";
+                    if (s >= 4) {
+                      envir() << "MyFrameSource(" << id << "," << name.c_str() << ")::connect::l::l: "
+                                 "frame_queue.size >= " << s << "\n";
+                    }
                   }
                   {
                     std::lock_guard<std::mutex> lock(registered_tasks_mutex);
                     if (registered_tasks.front() != task_nr) abort();
                     registered_tasks.pop_front();
                     const unsigned int s = registered_tasks.size();
-                    if (s >= 2 && 2*s <= prev_task_queue_size) {
+                    if (2*s <= prev_task_queue_size) {
                       prev_task_queue_size = s;
-                      envir() << "MyFrameSource(" << this << "," << name.c_str() << ")::connect::l::l: "
-                                 "task_queue.size <= " << s << "\n";
+                      if (s >= 4) {
+                        envir() << "MyFrameSource(" << id << "," << name.c_str() << ")::connect::l::l: "
+                                   "task_queue.size <= " << s << "\n";
+                      }
                     }
                   }
 //                  envir() << ("MyFrameSource::connect::l::l: frame in connection thread, dequeued task(" + std::to_string(task_nr) + ")\n").c_str();
@@ -782,8 +785,10 @@ private:
               const unsigned int s = registered_tasks.size();
               if (s >= 2*prev_task_queue_size) {
                 prev_task_queue_size = s;
-                envir() << "MyFrameSource(" << this << "," << name.c_str() << ")::connect::l: "
-                           "task_queue.size >= " << s << "\n";
+                if (s >= 4) {
+                  envir() << "MyFrameSource(" << id << "," << name.c_str() << ")::connect::l: "
+                             "task_queue.size >= " << s << "\n";
+                }
               }
 //            }
           });
@@ -795,13 +800,13 @@ private:
     const u_int8_t *const frame_data = f.data.get();
     const unsigned int frame_size = f.size;
     if (frame_size <= 0) {
-      envir() << "MyFrameSource(" << this << "," << name.c_str() << ")::deliverFrame: handleClosure\n";
+      envir() << "MyFrameSource(" << id << "," << name.c_str() << ")::deliverFrame: handleClosure\n";
         // this will destruct MyFrameSource. Do not access *this afterwards.
       handleClosure(); // teardown
       return;
     }
     if (frame_size > fMaxSize) {
-      envir() << "MyFrameSource(" << this << "," << name.c_str() << ")::deliverFrame: frame_size(" << frame_size << ") > fMaxSize(" << fMaxSize << ")\n";
+      envir() << "MyFrameSource(" << id << "," << name.c_str() << ")::deliverFrame: frame_size(" << frame_size << ") > fMaxSize(" << fMaxSize << ")\n";
       fFrameSize = fMaxSize;
       fNumTruncatedBytes = frame_size - fMaxSize;
     } else {
@@ -817,10 +822,12 @@ private:
     memcpy(fTo,frame_data,fFrameSize);
     my_frame_queue.pop_front();
     const unsigned int s = my_frame_queue.size();
-    if (s >= 2 && 2*s <= prev_frame_queue_size) {
+    if (2*s <= prev_frame_queue_size) {
       prev_frame_queue_size = s;
-      envir() << "MyFrameSource(" << this << "," << name.c_str() << ")::deliverFrame: "
-      "frame_queue.size <= " << s << "\n";
+      if (s >= 4) {
+        envir() << "MyFrameSource(" << id << "," << name.c_str() << ")::deliverFrame: "
+                   "frame_queue.size <= " << s << "\n";
+      }
     }
     FramedSource::afterGetting(this);
   }
@@ -837,30 +844,40 @@ private:
 };
 
 
-class MyServerMediaSubsession : public OnDemandServerMediaSubsession {
+class MyServerMediaSubsession : public OnDemandServerMediaSubsession, public IdContainer {
 public:
   static MyServerMediaSubsession *createNew(UsageEnvironment &env,
-                                            const std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> &e,
+                                            const std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> &entry,
                                             const SubsessionInfo *info);
-  MyServerMediaSubsession(UsageEnvironment &env,
-                          const std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> &e,
-                          const SubsessionInfo *info)
-    : OnDemandServerMediaSubsession(env,True), // reuseFirstSource
-      e(e),
-      info(info) {
-    envir() << "MyServerMediaSubsession(" << this << ")::MyServerMediaSubsession(" << e->name.c_str() << "," << SubsessionInfoToString(*info) << ")\n";
-  }
   ~MyServerMediaSubsession(void) {
-    envir() << "MyServerMediaSubsession(" << this << "," << e->name.c_str() << "," << SubsessionInfoToString(*info) << ")::~MyServerMediaSubsession\n";
-      // reset e before destroying *e:
-    std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> tmp;
-    tmp.swap(e);
+    envir() << "MyServerMediaSubsession(" << id;
+    {
+      const std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> e(entry.lock());
+      if (e) envir() << "," << e->name.c_str() << "," << SubsessionInfoToString(*info);
+    }
+    envir() << ")::~MyServerMediaSubsession\n";
   }
 protected:
-  MyFrameSource *createFrameSource(unsigned clientSessionId) {
-    return MyFrameSource::createNew(envir(),*e,info);
+  MyServerMediaSubsession(UsageEnvironment &env,
+                          const std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> &entry,
+                          const SubsessionInfo *info)
+    : OnDemandServerMediaSubsession(env,True), // reuseFirstSource, meaning createNewStreamSource will not be called excessively
+      entry(entry),
+      info(info) {
+    envir() << "MyServerMediaSubsession(" << id << ")::MyServerMediaSubsession(" << entry->name.c_str() << "," << SubsessionInfoToString(*info) << ")\n";
+    entry->keepAlive();
   }
-  std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> e;
+  MyFrameSource *createFrameSource(unsigned clientSessionId) {
+    const std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> e(entry.lock());
+    if (e) {
+      return MyFrameSource::createNew(envir(),*e,info);
+    } else {
+      envir() << "MyServerMediaSubsession(" << id << ")::MyServerMediaSubsession::createFrameSource: "
+                 "the StreamMapEntry has died, returning NULL\n";
+      return nullptr;
+    }
+  }
+  const std::weak_ptr<MediaServerPluginRTSPServer::StreamMapEntry> entry;
   const SubsessionInfo *info;
 };
 
@@ -870,25 +887,29 @@ public:
                               const std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> &e,
                               const SubsessionInfo *info)
     : MyServerMediaSubsession(env,e,info) {
-//    envir() << "MyH264ServerMediaSubsession(" << this << ")::MyH264ServerMediaSubsession(" << SubsessionInfoToString(*info) << ")\n";
   }
 protected:
   const char *getAuxSDPLine(RTPSink*,FramedSource*) override {return info->getAuxSdpLine();}
   FramedSource *createNewStreamSource(unsigned clientSessionId,
                                       unsigned &estBitrate) override {
-//    envir() << "MyH264ServerMediaSubsession(" << this << ")::createNewStreamSource start\n";
-    estBitrate = info->getEstBitrate(); // kbps, estimate
-    H264VideoStreamDiscreteFramer *const rval
-      = H264VideoStreamDiscreteFramer::createNew(envir(),createFrameSource(clientSessionId));
-//    envir() << "MyH264ServerMediaSubsession(" << this << ")::createNewStreamSource end\n";
+    FramedSource *rval = createFrameSource(clientSessionId);
+    if (rval) {
+      estBitrate = info->getEstBitrate(); // kbps, estimate
+      rval = H264VideoStreamDiscreteFramer::createNew(envir(),rval);
+    } else {
+      estBitrate = 0;
+    }
     return rval;
   }
   RTPSink *createNewRTPSink(Groupsock* rtpGroupsock,
                             unsigned char rtpPayloadTypeIfDynamic,
                             FramedSource* inputSource) override {
-    RTPSink *const rval = H264VideoRTPSink::createNew(envir(),
-                                                      rtpGroupsock,
-                                                      rtpPayloadTypeIfDynamic);
+    RTPSink *rval = nullptr;
+    if (inputSource) {
+      rval = H264VideoRTPSink::createNew(envir(),
+                                         rtpGroupsock,
+                                         rtpPayloadTypeIfDynamic);
+    }
     return rval;
   }
 };
@@ -903,21 +924,27 @@ public:
 protected:
   FramedSource *createNewStreamSource(unsigned clientSessionId,
                                       unsigned &estBitrate) override {
-    estBitrate = info->getEstBitrate();
-    MyFrameSource *const rval = createFrameSource(clientSessionId);
+    FramedSource *rval = createFrameSource(clientSessionId);
+    if (rval) {
+      estBitrate = info->getEstBitrate();
+    } else {
+      estBitrate = 0;
+    }
     return rval;
   }
   RTPSink *createNewRTPSink(Groupsock* rtpGroupsock,
                             unsigned char rtpPayloadTypeIfDynamic,
                             FramedSource* inputSource) override {
-    RTPSink *const rval
-      = SimpleRTPSink::createNew(envir(),
-                                 rtpGroupsock,
-                                 rtpPayloadTypeIfDynamic,
-                                 info->getRtpTimestampFrequency(),
-                                 info->getSdpMediaTypeString(),
-                                 info->getRtpPayloadFormatName(),
-                                 1,False);
+    RTPSink *rval = nullptr;
+    if (inputSource) {
+      rval = SimpleRTPSink::createNew(envir(),
+                                      rtpGroupsock,
+                                      rtpPayloadTypeIfDynamic,
+                                      info->getRtpTimestampFrequency(),
+                                      info->getSdpMediaTypeString(),
+                                      info->getRtpPayloadFormatName(),
+                                      1,False);
+    }
     return rval;
   }
 };
@@ -953,6 +980,20 @@ struct MediaServerPluginRTSPServer::LookupCompletionFuncData {
   void *const completionClientData;
 };
 
+std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry>
+MediaServerPluginRTSPServer::getStreamMapEntry(const std::string &stream_name) const {
+  std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
+  auto it(stream_map.find(stream_name));
+  if (it != stream_map.end()) {
+    const std::shared_ptr<StreamMapEntry> rval(it->second.lock());
+    if (rval) {
+      rval->env << "MediaServerPluginRTSPServer::getStreamMapEntry(" << stream_name.c_str() << "): id: " << rval->id << ", use_count: " << rval.use_count() << "\n";
+    }
+    return rval;
+  }
+  return std::shared_ptr<StreamMapEntry>();
+}
+
 void MediaServerPluginRTSPServer
 ::lookupServerMediaSession(UsageEnvironment &env, char const *streamName,
                            lookupServerMediaSessionCompletionFunc *completionFunc,
@@ -974,9 +1015,8 @@ if (!streamName[0]) {
            "found existing ServerMediaSession " << sms << "\n";
   } else {
       // called from the thread of the new rtsp connection (env-thread): lock recursive mutex
-    std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
-    auto it(stream_map.find(streamName));
-    if (it == stream_map.end()) {
+    const std::shared_ptr<StreamMapEntry> e(getStreamMapEntry(streamName));
+    if (!e) {
       env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") begin: "
              "no such stream in stream_map, delegating completionFunc to stream_factory->GetStream\n";
       LookupCompletionFuncData *context = new LookupCompletionFuncData(this,env,streamName,completionFunc,completionClientData);
@@ -984,10 +1024,9 @@ if (!streamName[0]) {
       env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") end\n";
       return;
     }
-    it->second->delayAutoClosing();
     env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << "): "
-           "creating new ServerMediaSession with existing StreamMap entry\n";
-    sms = createServerMediaSession(env,it->second);
+           "creating new ServerMediaSession with existing StreamMap entry, use_count: " << e.use_count() << "\n";
+    sms = createServerMediaSession(env,e);
     env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << "): "
            "new ServerMediaSession " << sms << " with existing StreamMap entry created\n";
   }
@@ -1011,29 +1050,40 @@ void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer:
     std::shared_ptr<StreamMapEntry> e;
     {
       std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
-      e = StreamMapEntry::Create(envir(),stream,l->streamName,
+      auto &entry(stream_map[l->streamName]);
+      if (e = entry.lock()) {
+        envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str() << "): "
+                   "existing StreamMapEntry found, new stream is not needed, creating ServerMediaSession\n";
+      } else {
+        e = StreamMapEntry::Create(envir(),stream,l->streamName,
           [this](const std::string &name) {
             if (envir().taskScheduler().isSameThread()) {
-              envir() << "MediaServerPluginRTSPServer::getStreamCb::close-lambda(" << name.c_str() << "): start in plugin thread\n";
-              std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
-              stream_map.erase(name);
+              envir() << "MediaServerPluginRTSPServer::getStreamCb::close-lambda(" << name.c_str() << ") start: already in plugin thread\n";
+              {
+                std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
+                stream_map.erase(name);
+              }
               deleteAllServerMediaSessions(name.c_str());
             } else {
-              envir() << "MediaServerPluginRTSPServer::getStreamCb::close-lambda(" << name.c_str() << "): delegating into in plugin thread\n";
+              envir() << "MediaServerPluginRTSPServer::getStreamCb::close-lambda(" << name.c_str() << ") start: delegating into plugin thread\n";
               envir().taskScheduler().executeCommand(
                 [this,name](uint64_t) {
                   envir() << "MediaServerPluginRTSPServer::getStreamCb::close-lambda(" << name.c_str() << ")::l: start in plugin thread\n";
-                  std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
-                  stream_map.erase(name);
+                  {
+                    std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
+                    stream_map.erase(name);
+                  }
                   deleteAllServerMediaSessions(name.c_str());
                   envir() << "MediaServerPluginRTSPServer::getStreamCb::close-lambda(" << name.c_str() << ")::l: end\n";
                 });
-              envir() << "MediaServerPluginRTSPServer::getStreamCb::close-lambda(" << name.c_str() << "): end\n";
             }
+            envir() << "MediaServerPluginRTSPServer::getStreamCb::close-lambda(" << name.c_str() << "): end\n";
           });
-      stream_map[l->streamName] = e;
+        entry = e;
+        envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str() << "): "
+                   "StreamMapEntry created, creating ServerMediaSession\n";
+      }
     }
-    envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str() << "): StreamMapEntry created, creating ServerMediaSession\n";
     sms = createServerMediaSession(l->env, e);
   } else {
     envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str() << "): cannot create StreamMapEntry and ServerMediaSession"
@@ -1046,12 +1096,12 @@ void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer:
 }
 
 ServerMediaSession *MediaServerPluginRTSPServer::createServerMediaSession(UsageEnvironment &env, const std::shared_ptr<StreamMapEntry> &e) {
-  envir() << "MediaServerPluginRTSPServer::createServerMediaSession(" << e->name.c_str() << "): start\n";
+  envir() << "MediaServerPluginRTSPServer::createServerMediaSession(" << e->name.c_str() << "): start, use_count: " << e.use_count() << "\n";
   ServerMediaSession *sms = nullptr;
   if (!e) abort();
   const SubsessionInfo *const *sl(e->getSubsessionInfoList());
   if ((sl) && (*sl)) {
-    sms = ServerMediaSession::createNew(env, nullptr, "MediaServerPlugin");
+    sms = ServerMediaSession::createNew(env, e->name.c_str(), "MediaServerPlugin");
     if (sms) {
       for (;*sl;sl++) {
         MyServerMediaSubsession *s = MyServerMediaSubsession::createNew(env, e, *sl);
@@ -1151,7 +1201,7 @@ void MediaServerPluginRTSPServer::generateInfoString(void)
   std::stringstream ss;
   {
     std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
-    ss << "---- RTSP Plugin: " << stream_map.size() << " Session(s) active ---- " << "url: " << m_urlPrefix.get() << "[cameraNum]-[streamId]";
+    ss << "---- RTSP Plugin: url: " << m_urlPrefix.get() << "stream_name";
     if (params.httpPort)
       ss << " | RTSP-over-HTTP tunnel (Port " << params.httpPort << ")";
     else
@@ -1162,7 +1212,8 @@ void MediaServerPluginRTSPServer::generateInfoString(void)
       ss << " | no RTSP-over-HTTP-over-SSL tunnel";
     ss << "\n";
     for (auto &it : stream_map) {
-      connections += it.second->printConnections(m_urlPrefix.get()+it.first,ss);
+      auto s(it.second.lock());
+      if (s) connections += s->printConnections(m_urlPrefix.get()+it.first,ss);
     }
   }
   ss << "RTSP Plugin Connections: " << connections << "\n";
@@ -1220,7 +1271,7 @@ private:
         if (server) {
           *env << "RTCMediaLib::RTCMediaLib::l: running...\n";
           {
-            std::unique_lock<std::mutex> lck(mtx);
+            std::lock_guard<std::mutex> lck(mtx);
             watchVariable = 0;
             cv.notify_one();
           }
@@ -1237,7 +1288,7 @@ private:
         delete scheduler; scheduler = nullptr;
         if (!server) {
             // when construction has failed: notify only after cleanup is finished
-          std::unique_lock<std::mutex> lck(mtx);
+          std::lock_guard<std::mutex> lck(mtx);
           watchVariable = 0;
           cv.notify_one();
         }
