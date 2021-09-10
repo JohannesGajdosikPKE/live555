@@ -196,7 +196,7 @@ protected:
   ClientSession* lookupClientSession(char const* sessionIdStr);
 
   // An iterator over our "ServerMediaSession" objects:
-  // while using you must lock the internal_mutex
+  // while using you must lock the sms_mutex
 /*  class ServerMediaSessionIterator {
   public:
     ServerMediaSessionIterator(GenericMediaServer& server);
@@ -221,23 +221,23 @@ protected:
 private:
   virtual UsageEnvironment *createNewUsageEnvironment(TaskScheduler &scheduler);
   void addClientConnection(ClientConnection *c) {
-    std::lock_guard<std::recursive_mutex> guard(internal_mutex);
+    std::lock_guard<std::recursive_mutex> guard(fClientConnections_mutex);
     fClientConnections->Add((char const*)c, c);
   }
   void removeClientConnection(ClientConnection *c) {
-    std::lock_guard<std::recursive_mutex> guard(internal_mutex);
+    std::lock_guard<std::recursive_mutex> guard(fClientConnections_mutex);
     fClientConnections->Remove((char const*)c);
   }
   
-protected:
-  mutable std::recursive_mutex sms_mutex; // protectes fServerMediaSessions only
-  mutable std::recursive_mutex internal_mutex; // protectes all Hashtables
 private:
   typedef std::map<std::string,ServerMediaSession*> ServerMediaSessionMap;
   typedef std::map<UsageEnvironment*,ServerMediaSessionMap> ServerMediaSessionEnvMap;
   ServerMediaSessionEnvMap fServerMediaSessions; // maps 'stream name' strings to "ServerMediaSession" objects
+  mutable std::recursive_mutex sms_mutex; // protectes fServerMediaSessions only
   HashTable* fClientConnections; // the "ClientConnection" objects that we're using
+  mutable std::recursive_mutex fClientConnections_mutex; // protectes fClientConnections
   HashTable* fClientSessions; // maps 'session id' strings to "ClientSession" objects
+  mutable std::recursive_mutex fClientSessions_mutex; // protectes fClientSessions
   u_int32_t fPreviousClientSessionId;
 
   const unsigned int nr_of_workers;

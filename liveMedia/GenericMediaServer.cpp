@@ -110,7 +110,7 @@ void GenericMediaServer
 }
 
 void GenericMediaServer::removeServerMediaSession(ServerMediaSession* serverMediaSession) {
-  envir() << "GenericMediaServer::removeServerMediaSession(" << serverMediaSession << ") start\n";
+//  envir() << "GenericMediaServer::removeServerMediaSession(" << serverMediaSession << ") start\n";
   if (serverMediaSession == NULL) return;
   {
     std::lock_guard<std::recursive_mutex> guard(sms_mutex);
@@ -120,11 +120,11 @@ void GenericMediaServer::removeServerMediaSession(ServerMediaSession* serverMedi
   if (serverMediaSession->envir().taskScheduler().isSameThread()) {
       // the desructor of a Medium must be called from its own UsageEnvironment,
       // because it unscedules a task:
-    envir() << "GenericMediaServer::removeServerMediaSession(" << serverMediaSession << "): removing in this thread\n";
+//    envir() << "GenericMediaServer::removeServerMediaSession(" << serverMediaSession << "): removing in this thread\n";
     removeServerMediaSessionImpl(serverMediaSession);
   } else {
     Semaphore sem;
-    envir() << "GenericMediaServer::removeServerMediaSession(" << serverMediaSession << "): delegating to sms thread\n";
+//    envir() << "GenericMediaServer::removeServerMediaSession(" << serverMediaSession << "): delegating to sms thread\n";
     serverMediaSession->envir().taskScheduler().executeCommand(
       [serverMediaSession,&sem](uint64_t) {
         serverMediaSession->envir() << "GenericMediaServer::removeServerMediaSession(" << serverMediaSession << ")::l: removing in this thread\n";
@@ -133,23 +133,26 @@ void GenericMediaServer::removeServerMediaSession(ServerMediaSession* serverMedi
 ///        sem.post();
 ///        serverMediaSession->envir() << "GenericMediaServer::removeServerMediaSession(" << serverMediaSession << ")::l: sem posted\n";
       });
-    envir() << "GenericMediaServer::removeServerMediaSession(" << serverMediaSession << "): waiting for sem\n";
+//    envir() << "GenericMediaServer::removeServerMediaSession(" << serverMediaSession << "): waiting for sem\n";
 ///    sem.wait();
-    envir() << "GenericMediaServer::removeServerMediaSession(" << serverMediaSession << "): waited for sem\n";
+//    envir() << "GenericMediaServer::removeServerMediaSession(" << serverMediaSession << "): waited for sem\n";
   }
-  envir() << "GenericMediaServer::removeServerMediaSession(" << serverMediaSession << ") end\n";
+//  envir() << "GenericMediaServer::removeServerMediaSession(" << serverMediaSession << ") end\n";
 }
 
 void GenericMediaServer::removeServerMediaSession(UsageEnvironment &env, char const* streamName) {
-  env << "GenericMediaServer::removeServerMediaSession(" << streamName << ") start\n";
+//  env << "GenericMediaServer::removeServerMediaSession(" << streamName << ") start\n";
   lookupServerMediaSession(env, streamName, &GenericMediaServer::removeServerMediaSession);
-  env << "GenericMediaServer::removeServerMediaSession(" << streamName << ") end\n";
+//  env << "GenericMediaServer::removeServerMediaSession(" << streamName << ") end\n";
 }
 
 void GenericMediaServer::closeAllClientSessionsForServerMediaSession(ServerMediaSession* serverMediaSession) {
   if (serverMediaSession == NULL) return;
-  
-  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
+
+  Semaphore sem;
+  unsigned int post_count = 0;
+  {
+  std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
   HashTable::Iterator* iter = HashTable::Iterator::create(*fClientSessions);
   GenericMediaServer::ClientSession* clientSession;
   char const* key; // dummy
@@ -158,11 +161,20 @@ void GenericMediaServer::closeAllClientSessionsForServerMediaSession(ServerMedia
       if (clientSession->envir().taskScheduler().isSameThread()) {
         delete clientSession;
       } else {
-        clientSession->envir().taskScheduler().executeCommand([clientSession](uint64_t) {delete clientSession;});
+        clientSession->envir().taskScheduler().executeCommand([clientSession,&sem](uint64_t) {
+          delete clientSession;
+          sem.post();
+        });
+        post_count++;
       }
     }
   }
   delete iter;
+  }
+  while (post_count) {
+    sem.wait();
+    post_count--;
+  }
 }
 
 void GenericMediaServer::closeAllClientSessionsForServerMediaSession(char const* streamName) {
@@ -174,7 +186,7 @@ void GenericMediaServer::deleteServerMediaSession(ServerMediaSession* serverMedi
   if (serverMediaSession == NULL) return;
   
   {
-    std::lock_guard<std::recursive_mutex> guard(internal_mutex);
+    std::lock_guard<std::recursive_mutex> guard(fClientConnections_mutex);
     closeAllClientSessionsForServerMediaSession(serverMediaSession);
   }
   removeServerMediaSession(serverMediaSession);
@@ -203,18 +215,19 @@ class GenericMediaServer::Worker {
 public:
   Worker(GenericMediaServer &server)
     : worker_thread([this,&server](void) {
-//        std::cout << "Worker::mainThread(" << std::this_thread::get_id() << "): start" << std::endl << std::flush;
+//        std::cout << "GenericMediaServer::Worker::mainThread(" << std::this_thread::get_id() << "): start" << std::endl << std::flush;
         scheduler = BasicTaskScheduler::createNew();
         scheduler->assert_threads = true;
-//        std::cout << "Worker::mainThread(" << std::this_thread::get_id() << "): scheduler created" << std::endl << std::flush;
+//        std::cout << "GenericMediaServer::Worker::mainThread(" << std::this_thread::get_id() << "): scheduler created" << std::endl << std::flush;
         env = server.createNewUsageEnvironment(*scheduler);
         {
-          std::unique_lock<std::mutex> lck(mtx);
+          std::lock_guard<std::mutex> lck(mtx);
           watchVariable = 0;
           cv.notify_one();
         }
-        (*env) << "Worker::mainThread: start\n";
+        (*env) << "GenericMediaServer::Worker::mainThread: start\n";
         env->taskScheduler().doEventLoop(&watchVariable);
+        (*env) << "GenericMediaServer::Worker::mainThread: end\n";
         if (!env->reclaim()) abort();
         env = nullptr;
         delete scheduler; scheduler = nullptr;
@@ -226,7 +239,7 @@ public:
     try {
       worker_thread.join();
     } catch (std::system_error &e) {
-      fprintf(stderr,"Worker::joinThread: %s\n",e.what());
+      fprintf(stderr,"GenericMediaServer::Worker::joinThread: join failed, %s\n",e.what());
       abort();
     }
   }
@@ -311,50 +324,76 @@ void GenericMediaServer::cleanup() {
   // affect (break) the destruction of the "ClientSession" and "ClientConnection" objects, which
   // themselves will have been subclassed.)
 
+  Semaphore sem;
+  unsigned int post_count = 0;
   {
-  std::unique_lock<std::recursive_mutex> lock(internal_mutex);
-
-  // Close all client session objects:
-  GenericMediaServer::ClientSession* clientSession;
-  while ((clientSession = (GenericMediaServer::ClientSession*)fClientSessions->getFirst()) != NULL) {
-    clientSession->envir().taskScheduler().executeCommand([clientSession](uint64_t){delete clientSession;});
-    char sessionIdStr[8 + 1];
-    sprintf(sessionIdStr, "%08X", clientSession->fOurSessionId);
-    fClientSessions->Remove(sessionIdStr);
-  }
-  
-  // Close all client connection objects:
-  GenericMediaServer::ClientConnection* connection;
-  while ((connection = (GenericMediaServer::ClientConnection*)fClientConnections->getFirst()) != NULL) {
-    connection->envir().taskScheduler().executeCommand([connection](uint64_t) {delete connection;});
-    removeClientConnection(connection);
-  }
-  }
-  {
-  std::unique_lock<std::recursive_mutex> lock(sms_mutex);
-  // Delete all server media sessions
-  ServerMediaSession* serverMediaSession;
-  for (auto e : fServerMediaSessions) {
-    while (!e.second.empty()) {
-      ServerMediaSession *serverMediaSession = e.second.begin()->second;
-      if (e.first->taskScheduler().isSameThread()) {
-        removeServerMediaSessionImpl(serverMediaSession);
+    std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
+    // Close all client session objects:
+    GenericMediaServer::ClientSession* clientSession;
+    while ((clientSession = (GenericMediaServer::ClientSession*)fClientSessions->getFirst()) != NULL) {
+      char sessionIdStr[8 + 1];
+      sprintf(sessionIdStr, "%08X", clientSession->fOurSessionId);
+      if (clientSession->envir().taskScheduler().isSameThread()) {
+        delete clientSession;
       } else {
-        Semaphore sem;
-        e.first->taskScheduler().executeCommand(
-          [serverMediaSession,&sem](uint64_t) {
-            removeServerMediaSessionImpl(serverMediaSession);
+        clientSession->envir().taskScheduler().executeCommand(
+          [clientSession,&sem,&post_count](uint64_t) {
+            delete clientSession;
+            post_count++;
             sem.post();
           });
-        sem.wait();
       }
-      e.second.erase(e.second.begin());
+      fClientSessions->Remove(sessionIdStr);
     }
   }
+
+  {
+    std::lock_guard<std::recursive_mutex> lock(fClientConnections_mutex);
+    // Close all client connection objects:
+    GenericMediaServer::ClientConnection* connection;
+    while ((connection = (GenericMediaServer::ClientConnection*)fClientConnections->getFirst()) != NULL) {
+      if (connection->envir().taskScheduler().isSameThread()) {
+        delete connection;
+      } else {
+        connection->envir().taskScheduler().executeCommand(
+          [connection,&sem,&post_count](uint64_t) {
+            delete connection;
+            post_count++;
+            sem.post();
+          });
+      }
+      removeClientConnection(connection);
+    }
+  }
+  {
+    std::lock_guard<std::recursive_mutex> lock(sms_mutex);
+    // Delete all server media sessions
+    ServerMediaSession* serverMediaSession;
+    for (auto e : fServerMediaSessions) {
+      while (!e.second.empty()) {
+        ServerMediaSession *serverMediaSession = e.second.begin()->second;
+        if (e.first->taskScheduler().isSameThread()) {
+          removeServerMediaSessionImpl(serverMediaSession);
+        } else {
+          e.first->taskScheduler().executeCommand(
+            [serverMediaSession,&sem,&post_count](uint64_t) {
+              removeServerMediaSessionImpl(serverMediaSession);
+              post_count++;
+              sem.post();
+            });
+        }
+        e.second.erase(e.second.begin());
+      }
+    }
   }
 
-  for (int i = 0; i < nr_of_workers; i++) if (workers[i]) workers[i]->stop();
-  for (int i = 0; i < nr_of_workers; i++) if (workers[i]) workers[i]->joinThread();
+  while (post_count >= 0) {
+    sem.wait();
+    post_count--;
+  }
+
+  for (unsigned int i = 0; i < nr_of_workers; i++) if (workers[i]) workers[i]->stop();
+  for (unsigned int i = 0; i < nr_of_workers; i++) if (workers[i]) workers[i]->joinThread();
   delete fClientSessions; fClientSessions = nullptr;
   delete fClientConnections; fClientConnections = nullptr;
 }
@@ -500,8 +539,11 @@ void GenericMediaServer::ClientConnection::incomingRequestHandler() {
   struct sockaddr_storage dummy; // 'from' address, meaningless in this case
   
   int bytesRead = readSocket(envir(), fOurSocket, &fRequestBuffer[fRequestBytesAlreadySeen], fRequestBufferBytesLeft, dummy);
-  envir() << "GenericMediaServer::ClientConnection(" << this << ")::incomingRequestHandler: "
-             "readSocket(" << fOurSocket << ") returned " << bytesRead << "\n";
+  if (bytesRead < 0) {
+    envir() << "GenericMediaServer::ClientConnection(" << this << ")::incomingRequestHandler: "
+               "readSocket(" << fOurSocket << ") failed, probably client hangup: "
+            << envir().getResultMsg() << "\n";
+  }
   handleRequestBytes(bytesRead);
 }
 
@@ -527,8 +569,10 @@ GenericMediaServer::ClientSession::~ClientSession() {
   // Remove ourself from the server's 'client sessions' hash table before we go:
   char sessionIdStr[8+1];
   sprintf(sessionIdStr, "%08X", fOurSessionId);
+  {
+  std::lock_guard<std::recursive_mutex> lock(fOurServer.fClientSessions_mutex);
   fOurServer.fClientSessions->Remove(sessionIdStr);
-  
+  }
   if (fOurServerMediaSession != NULL) {
     fOurServerMediaSession->decrementReferenceCount();
     if (fOurServerMediaSession->referenceCount() == 0
@@ -575,7 +619,7 @@ GenericMediaServer::ClientSession* GenericMediaServer::createNewClientSessionWit
   u_int32_t sessionId;
   char sessionIdStr[8+1];
 
-  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
+  std::lock_guard<std::recursive_mutex> lock(fClientSessions_mutex);
 
   // Choose a random (unused) 32-bit integer for the session id
   // (it will be encoded as a 8-digit hex number).  (We avoid choosing session id 0,
@@ -603,7 +647,7 @@ GenericMediaServer::lookupClientSession(u_int32_t sessionId) {
 
 GenericMediaServer::ClientSession*
 GenericMediaServer::lookupClientSession(char const* sessionIdStr) {
-  std::lock_guard<std::recursive_mutex> guard(internal_mutex);
+  std::lock_guard<std::recursive_mutex> lock(fClientSessions_mutex);
   return (GenericMediaServer::ClientSession*)fClientSessions->Lookup(sessionIdStr);
 }
 

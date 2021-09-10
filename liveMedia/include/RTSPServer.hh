@@ -324,6 +324,7 @@ private:
   unsigned fRegisterOrDeregisterRequestCounter;
   UserAuthenticationDatabase* fAuthDB;
   Boolean fAllowStreamingRTPOverTCP; // by default, True
+  mutable std::recursive_mutex internal_mutex;
 };
 
 
