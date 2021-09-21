@@ -387,7 +387,7 @@ void GenericMediaServer::cleanup() {
     }
   }
 
-  while (post_count >= 0) {
+  while (post_count) {
     sem.wait();
     post_count--;
   }
