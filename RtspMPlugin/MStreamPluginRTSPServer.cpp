@@ -35,6 +35,10 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <iomanip>
 #include <atomic>
 
+
+//#define ALLOC_STATS
+#ifdef ALLOC_STATS
+
 class MemAccounter {
 public:
   static MemAccounter &Singleton(void) {
@@ -73,8 +77,6 @@ private:
   }
 };
 
-#define OWN_MEMOPERATORS
-#ifdef OWN_MEMOPERATORS
 void *operator new(size_t size) {
   if (!size) size=1;
   size_t *const rval = (uint64_t*)malloc(sizeof(size_t)+size);
@@ -93,6 +95,32 @@ void operator delete(void *p) noexcept {
 
 void *operator new[](size_t size) {return operator new(size);}
 void operator delete[](void *p) noexcept {operator delete(p);}
+
+
+struct AllocStatEntry {
+  AllocStatEntry(void) : alloc_count(0),alloc_size(0) {}
+  std::atomic<uint32_t> alloc_count;
+  std::atomic<uint64_t> alloc_size;
+};
+
+static std::mutex alloc_stat_mutex;
+static std::map<std::string,std::unique_ptr<AllocStatEntry> > alloc_stat;
+
+static AllocStatEntry &GetAllocEntry(const std::string &name) {
+  std::lock_guard<std::mutex> lock(alloc_stat_mutex);
+  std::unique_ptr<AllocStatEntry> &ae(alloc_stat[name]);
+  if (!ae) ae = std::make_unique<AllocStatEntry>();
+  return *ae;
+}
+
+static void PrintAllocInfos(std::ostream &o) {
+  o << "RTSP Plugin allocated Frames:\n";
+  std::lock_guard<std::mutex> lock(alloc_stat_mutex);
+  for (auto &i : alloc_stat) {
+    o << i.first << ": " << i.second->alloc_count
+      << " / " << i.second->alloc_size << '\n';
+  }
+}
 
 #endif
 
@@ -119,31 +147,6 @@ std::string ToString(const T &t) {
 
 static const char *SubsessionInfoToString(const SubsessionInfo &ssi) {
   return ssi.getRtpPayloadFormatName();
-}
-
-struct AllocStatEntry {
-  AllocStatEntry(void) : alloc_count(0),alloc_size(0) {}
-  std::atomic<uint32_t> alloc_count;
-  std::atomic<uint64_t> alloc_size;
-};
-
-static std::mutex alloc_stat_mutex;
-static std::map<std::string,std::unique_ptr<AllocStatEntry> > alloc_stat;
-
-static AllocStatEntry &GetAllocEntry(const std::string &name) {
-  std::lock_guard<std::mutex> lock(alloc_stat_mutex);
-  std::unique_ptr<AllocStatEntry> &ae(alloc_stat[name]);
-  if (!ae) ae = std::make_unique<AllocStatEntry>();
-  return *ae;
-}
-
-static void PrintAllocInfos(std::ostream &o) {
-  o << "RTSP Plugin allocated Frames:\n";
-  std::lock_guard<std::mutex> lock(alloc_stat_mutex);
-  for (auto &i : alloc_stat) {
-    o << i.first << ": " << i.second->alloc_count
-      << " / " << i.second->alloc_size << '\n';
-  }
 }
 
 
@@ -205,17 +208,27 @@ private:
 Frame::Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t *data,int32_t size,int64_t time)
       :size((data && size>0)?size:0),time(time) {
   if (Frame::size) {
+#ifdef ALLOC_STATS
     AllocStatEntry &ae(GetAllocEntry(e.name));
+#endif
     Frame::data = std::shared_ptr<const uint8_t[]>(
       new uint8_t[Frame::size],
-      [s=Frame::size,&ae](const uint8_t *d) {
+      [s=Frame::size
+#ifdef ALLOC_STATS
+        ,&ae
+#endif
+      ](const uint8_t *d) {
+#ifdef ALLOC_STATS
         ae.alloc_size -= s;
         ae.alloc_count--;
+#endif
         delete[] d;
       });
     memcpy(const_cast<uint8_t*>(Frame::data.get()),data,Frame::size);
+#ifdef ALLOC_STATS
     ae.alloc_count++;
     ae.alloc_size += Frame::size;
+#endif
   }
 }
 
@@ -1217,8 +1230,10 @@ void MediaServerPluginRTSPServer::generateInfoString(void)
     }
   }
   ss << "RTSP Plugin Connections: " << connections << "\n";
+#ifdef ALLOC_STATS
   MemAccounter::Singleton().print(ss);
   PrintAllocInfos(ss);
+#endif
   ss << std::endl;
   params.status(ss.str().c_str());
 
