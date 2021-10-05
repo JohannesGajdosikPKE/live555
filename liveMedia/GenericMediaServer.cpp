@@ -184,11 +184,7 @@ void GenericMediaServer::closeAllClientSessionsForServerMediaSession(char const*
 
 void GenericMediaServer::deleteServerMediaSession(ServerMediaSession* serverMediaSession) {
   if (serverMediaSession == NULL) return;
-  
-  {
-    std::lock_guard<std::recursive_mutex> guard(fClientConnections_mutex);
-    closeAllClientSessionsForServerMediaSession(serverMediaSession);
-  }
+  closeAllClientSessionsForServerMediaSession(serverMediaSession);
   removeServerMediaSession(serverMediaSession);
 }
 
@@ -271,7 +267,6 @@ GenericMediaServer
   : Medium(env),
     fServerSocketIPv4(ourSocketIPv4), fServerSocketIPv6(ourSocketIPv6),
     fServerPort(ourPort), fReclamationSeconds(reclamationSeconds),
-    fClientConnections(HashTable::create(ONE_WORD_HASH_KEYS)),
     fClientSessions(HashTable::create(STRING_HASH_KEYS)),
     fPreviousClientSessionId(0),
     nr_of_workers(GetNrOfCores()),
@@ -350,8 +345,8 @@ void GenericMediaServer::cleanup() {
   {
     std::lock_guard<std::recursive_mutex> lock(fClientConnections_mutex);
     // Close all client connection objects:
-    GenericMediaServer::ClientConnection* connection;
-    while ((connection = (GenericMediaServer::ClientConnection*)fClientConnections->getFirst()) != NULL) {
+    for (auto &it : fClientConnections) {
+      GenericMediaServer::ClientConnection *connection(it.second);
       if (connection->envir().taskScheduler().isSameThread()) {
         delete connection;
       } else {
@@ -362,8 +357,8 @@ void GenericMediaServer::cleanup() {
             sem.post();
           });
       }
-      removeClientConnection(connection);
     }
+    fClientConnections.clear();
   }
   {
     std::lock_guard<std::recursive_mutex> lock(sms_mutex);
@@ -395,7 +390,6 @@ void GenericMediaServer::cleanup() {
   for (unsigned int i = 0; i < nr_of_workers; i++) if (workers[i]) workers[i]->stop();
   for (unsigned int i = 0; i < nr_of_workers; i++) if (workers[i]) workers[i]->joinThread();
   delete fClientSessions; fClientSessions = nullptr;
-  delete fClientConnections; fClientConnections = nullptr;
 }
 
 #define LISTEN_BACKLOG_SIZE 20
@@ -479,10 +473,17 @@ envir() << "GenericMediaServer::incomingConnectionHandlerOnSocket: accept(" << s
 
 ////////// GenericMediaServer::ClientConnection implementation //////////
 
+static GenericMediaServer::ClientConnection::IdType GenerateId(void) {
+  static std::atomic<uintptr_t> id_generator(0);
+  uintptr_t rval = ++id_generator;
+  if (rval == 0) rval = ++id_generator;
+  return reinterpret_cast<GenericMediaServer::ClientConnection::IdType>(rval);
+}
+
 GenericMediaServer::ClientConnection
 ::ClientConnection(UsageEnvironment &threaded_env, GenericMediaServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr)
-  : threaded_env(threaded_env), fOurServer(ourServer), init_command(0), fOurSocket(clientSocket), fClientAddr(clientAddr) {
-    envir() << "GenericMediaServer::ClientConnection(" << this << ")::ClientConnection(" << clientSocket << ")\n";
+  : threaded_env(threaded_env), fOurServer(ourServer), id(GenerateId()), init_command(0), fOurSocket(clientSocket), fClientAddr(clientAddr) {
+    envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::ClientConnection(" << clientSocket << ")\n";
     envir().taskScheduler().addNrOfUsers(1);
 }
 
@@ -492,7 +493,7 @@ void GenericMediaServer::ClientConnection::afterConstruction(void) {
   
   // Arrange to handle incoming requests:
   resetRequestBuffer();
-  envir() << "GenericMediaServer::ClientConnection(" << this << ")::afterConstruction: setBackgroundHandling(" << fOurSocket << ")\n";
+  envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::afterConstruction: setBackgroundHandling(" << fOurSocket << ")\n";
   if (envir().taskScheduler().isSameThread()) {
     envir().taskScheduler().setBackgroundHandling(fOurSocket, SOCKET_READABLE|SOCKET_EXCEPTION, incomingRequestHandler, this);
   } else {
@@ -511,7 +512,7 @@ void GenericMediaServer::ClientConnection::afterConstruction(void) {
 GenericMediaServer::ClientConnection::~ClientConnection() {
   envir().taskScheduler().assertSameThread();
   envir().taskScheduler().cancelCommand(init_command);
-  envir() << "GenericMediaServer::ClientConnection(" << this << ")::~ClientConnection\n";
+  envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::~ClientConnection\n";
   envir().taskScheduler().assertSameThread();
   envir().taskScheduler().addNrOfUsers(-1);
   // Remove ourself from the server's 'client connections' hash table before we go:
@@ -521,7 +522,7 @@ GenericMediaServer::ClientConnection::~ClientConnection() {
 }
 
 void GenericMediaServer::ClientConnection::closeSockets() {
-  envir() << "GenericMediaServer::ClientConnection(" << this << ")::closeSockets: disableBackgroundHandling(" << fOurSocket << ")\n";
+  envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::closeSockets: disableBackgroundHandling(" << fOurSocket << ")\n";
   // Turn off background handling on our socket:
   envir().taskScheduler().disableBackgroundHandling(fOurSocket);
   if (fOurSocket>= 0) ::closeSocket(fOurSocket);
@@ -540,7 +541,7 @@ void GenericMediaServer::ClientConnection::incomingRequestHandler() {
   
   int bytesRead = readSocket(envir(), fOurSocket, &fRequestBuffer[fRequestBytesAlreadySeen], fRequestBufferBytesLeft, dummy);
   if (bytesRead < 0) {
-    envir() << "GenericMediaServer::ClientConnection(" << this << ")::incomingRequestHandler: "
+    envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::incomingRequestHandler: "
                "readSocket(" << fOurSocket << ") failed, probably client hangup: "
             << envir().getResultMsg() << "\n";
   }

@@ -144,6 +144,7 @@ private: // redefined virtual functions
 public: // should be protected, but some old compilers complain otherwise
   // The state of a TCP connection used by a RTSP client:
   class RTSPClientSession; // forward
+  using GenericMediaServer::getClientSession;
   class RTSPClientConnection: public GenericMediaServer::ClientConnection {
   public:
     static RTSPClientConnection *create(UsageEnvironment &threaded_env, RTSPServer &ourServer, int clientSocket, struct sockaddr_storage const& clientAddr);

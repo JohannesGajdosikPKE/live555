@@ -322,10 +322,12 @@ RTSPServer::RTSPClientConnection
     fOurRTSPServer(ourServer), fClientInputSocket(fOurSocket), fClientOutputSocket(fOurSocket),
     fAddressFamily(clientAddr.ss_family),
     fIsActive(True), fRecursionCount(0), fOurSessionCookie(NULL) {
+  envir() << "RTSPServer::RTSPClientConnection(" << getId() << ")::~RTSPClientConnection\n";
   resetRequestBuffer();
 }
 
 RTSPServer::RTSPClientConnection::~RTSPClientConnection() {
+  envir() << "RTSPServer::RTSPClientConnection(" << getId() << ")::~RTSPClientConnection\n";
   envir().taskScheduler().assertSameThread();
   if (fOurSessionCookie != NULL) {
     // We were being used for RTSP-over-HTTP tunneling. Also remove ourselves from the 'session cookie' hash table before we go:
@@ -363,6 +365,14 @@ void RTSPServer::RTSPClientConnection
   setRTSPResponse("200 OK");
 }
 
+struct LookupContext {
+  LookupContext(RTSPServer &server,
+                GenericMediaServer::ClientConnection::IdType connection_id)
+    : server(server),connection_id(connection_id) {}
+  RTSPServer &server;
+  const GenericMediaServer::ClientConnection::IdType connection_id;
+};
+
 void RTSPServer::RTSPClientConnection
 ::handleCmd_DESCRIBE(char const* urlPreSuffix, char const* urlSuffix, char const* fullRequestStr) {
   envir().taskScheduler().assertSameThread();
@@ -381,13 +391,21 @@ void RTSPServer::RTSPClientConnection
   // for "application/sdp", because that's what we're sending back #####
     
   // Begin by looking up the "ServerMediaSession" object for the specified "urlTotalSuffix":
-  lookupServerMediaSession(envir(), urlTotalSuffix, DESCRIBELookupCompletionFunction);
+  LookupContext *context = new LookupContext(fOurRTSPServer,getId());
+  lookupServerMediaSession(envir(), urlTotalSuffix, context, DESCRIBELookupCompletionFunction);
 }
 
 void RTSPServer::RTSPClientConnection
 ::DESCRIBELookupCompletionFunction(void* clientData, ServerMediaSession* sessionLookedUp) {
-  RTSPServer::RTSPClientConnection* connection = (RTSPServer::RTSPClientConnection*)clientData;
-  connection->handleCmd_DESCRIBE_afterLookup(sessionLookedUp);
+  LookupContext *context(reinterpret_cast<LookupContext*>(clientData));
+  RTSPServer::RTSPClientConnection* connection = (RTSPServer::RTSPClientConnection*)context->server.getClientSession(context->connection_id);
+  if (connection) {
+    connection->handleCmd_DESCRIBE_afterLookup(sessionLookedUp);
+  } else {
+    context->server.envir() << "RTSPServer::RTSPClientConnection::DESCRIBELookupCompletionFunction: "
+                               "client connection " << context->connection_id << " has been closed during lookup\n";
+  }
+  delete context;
 }
 
 void RTSPServer::RTSPClientConnection
@@ -673,7 +691,7 @@ void RTSPServer::RTSPClientConnection::handleAlternativeRequestByte1(u_int8_t re
 
 void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
   envir().taskScheduler().assertSameThread();
-//  envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << ") begin\n";
+//  envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << ") begin\n";
 //  fprintf(stderr,"RTSPServer::RTSPClientConnection(%p)::handleRequestBytes(%d) start, recursion: %d\n", this, newBytesRead, fRecursionCount);
   int numBytesRemaining = 0;
   ++fRecursionCount;
@@ -687,7 +705,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
 #ifdef DEBUG
       fprintf(stderr, "RTSPClientConnection[%p]::handleRequestBytes() read %d new bytes (of %d); terminating connection!\n", this, newBytesRead, fRequestBufferBytesLeft);
 #endif
-      envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << "): terminating connection\n";
+      envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << "): terminating connection\n";
       fIsActive = False;
       break;
     }
@@ -700,7 +718,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
 	    this, numBytesRemaining > 0 ? "processing" : "read", newBytesRead, ptr);
 #endif
   ptr[newBytesRead] = '\0';
-//  envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << "): "
+//  envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << "): "
 //          << (numBytesRemaining > 0 ? "processing " : "read ") << (const char*)ptr << "\n";
     
     if (fClientOutputSocket != fClientInputSocket && numBytesRemaining == 0) {
@@ -729,7 +747,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
 	for (unsigned k = 0; k < decodedSize; ++k) fprintf(stderr, "%c", decodedBytes[k]);
 	fprintf(stderr, "\n");
 #endif
-//    envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::handleRequestBytes: "
+//    envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes: "
 //               "Base64-decoded " << numBytesToDecode << " input bytes into " << decodedSize << " new bytes\n";
 	
 	// Copy the new decoded bytes in place of the old ones (we can do this because there are fewer decoded bytes than original):
@@ -979,7 +997,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
   } while (numBytesRemaining > 0);
   
   --fRecursionCount;
-//  envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::handleRequestBytes end: fIsActive: " << (int)fIsActive << "\n";
+//  envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: fIsActive: " << (int)fIsActive << "\n";
   if (!fIsActive) {
     if (fRecursionCount > 0) closeSockets(); else delete this;
     // Note: The "fRecursionCount" test is for a pathological situation where we reenter the event loop and get called recursively
@@ -1197,11 +1215,11 @@ void RTSPServer::RTSPClientConnection
 void RTSPServer::RTSPClientConnection
 ::changeClientInputSocket(const int newSocketNum, UsageEnvironment &other_env, unsigned char const* extraData, unsigned extraDataSize) {
   if (&envir() == &other_env) {
-    other_env << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
+    other_env << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
                  "disabling handling for " << fClientInputSocket << " in this same thread\n";
     other_env.taskScheduler().disableBackgroundHandling(fClientInputSocket);
 
-    other_env << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
+    other_env << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
                  "enabling handling for " << newSocketNum << " in the this same thread\n";
     fClientInputSocket = newSocketNum;
     other_env.taskScheduler().setBackgroundHandling(fClientInputSocket, SOCKET_READABLE|SOCKET_EXCEPTION,
@@ -1215,17 +1233,17 @@ void RTSPServer::RTSPClientConnection
       handleRequestBytes(extraDataSize);
     }
   } else {
-    other_env << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
+    other_env << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
                  "disabling handling for " << newSocketNum << " in the this same thread\n";
     other_env.taskScheduler().disableBackgroundHandling(newSocketNum);
     Semaphore sem;
     envir().taskScheduler().executeCommand(
       [this, &sem, newSocketNum, extraData, extraDataSize](uint64_t) {
-        envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
+        envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
                    "disabling handling for " << fClientInputSocket << " in this other thread\n";
         envir().taskScheduler().disableBackgroundHandling(fClientInputSocket);
 
-        envir() << "RTSPServer::RTSPClientConnection(" << this << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
+        envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
                    "enabling handling for " << newSocketNum << " in the this other thread\n";
         fClientInputSocket = newSocketNum;
         envir().taskScheduler().setBackgroundHandling(fClientInputSocket, SOCKET_READABLE|SOCKET_EXCEPTION,

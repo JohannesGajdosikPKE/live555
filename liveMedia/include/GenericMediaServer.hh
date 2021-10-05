@@ -132,6 +132,8 @@ public: // should be protected, but some old compilers complain otherwise
   public:
     virtual ~ClientConnection();
     UsageEnvironment& envir() { return threaded_env; }
+    typedef void *IdType;
+    IdType getId(void) const {return id;}
   protected:
     void closeSockets();
 
@@ -143,9 +145,10 @@ public: // should be protected, but some old compilers complain otherwise
   protected:
     UsageEnvironment &threaded_env;
     void lookupServerMediaSession(UsageEnvironment& env, char const* streamName,
+                                  void *context,
                                   lookupServerMediaSessionCompletionFunc* completionFunc,
                                   Boolean isFirstLookupInSession = True) {
-      fOurServer.lookupServerMediaSession(env, streamName, completionFunc, this, isFirstLookupInSession);
+      fOurServer.lookupServerMediaSession(env, streamName, completionFunc, context, isFirstLookupInSession);
     }
     void removeServerMediaSession(ServerMediaSession* serverMediaSession) {
       fOurServer.removeServerMediaSession(serverMediaSession);
@@ -153,6 +156,7 @@ public: // should be protected, but some old compilers complain otherwise
   private:
       // tread safety: do not allow wild access to fOurServer
     GenericMediaServer& fOurServer;
+    const IdType id;
     std::atomic<uint64_t> init_command;
   protected:
     int fOurSocket;
@@ -210,6 +214,13 @@ protected:
     // The basic, synchronous "ServerMediaSession" lookup operation; only for subclasses:
   ServerMediaSession* getServerMediaSession(UsageEnvironment &env,char const* streamName);
   
+  ClientConnection *getClientSession(ClientConnection::IdType id) const {
+    std::lock_guard<std::recursive_mutex> lock(fClientConnections_mutex);
+    auto it(fClientConnections.find(id));
+    if (it != fClientConnections.end()) return it->second;
+    return nullptr;
+  }
+
 protected:
   const int fServerSocketIPv4;
   const int fServerSocketIPv6;
@@ -222,11 +233,15 @@ private:
   virtual UsageEnvironment *createNewUsageEnvironment(TaskScheduler &scheduler);
   void addClientConnection(ClientConnection *c) {
     std::lock_guard<std::recursive_mutex> guard(fClientConnections_mutex);
-    fClientConnections->Add((char const*)c, c);
+    auto rc(fClientConnections.insert(std::pair<ClientConnection::IdType,ClientConnection*>(c->getId(),c)));
+    if (!rc.second) {
+      envir() << "GenericMediaServer::addClientConnection(" << c->getId() << "): fatal: double id\n";
+      abort();
+    }
   }
   void removeClientConnection(ClientConnection *c) {
     std::lock_guard<std::recursive_mutex> guard(fClientConnections_mutex);
-    fClientConnections->Remove((char const*)c);
+    fClientConnections.erase(c->getId());
   }
   
 private:
@@ -234,7 +249,7 @@ private:
   typedef std::map<UsageEnvironment*,ServerMediaSessionMap> ServerMediaSessionEnvMap;
   ServerMediaSessionEnvMap fServerMediaSessions; // maps 'stream name' strings to "ServerMediaSession" objects
   mutable std::recursive_mutex sms_mutex; // protectes fServerMediaSessions only
-  HashTable* fClientConnections; // the "ClientConnection" objects that we're using
+  std::map<ClientConnection::IdType,ClientConnection*> fClientConnections; // the "ClientConnection" objects that we're using
   mutable std::recursive_mutex fClientConnections_mutex; // protectes fClientConnections
   HashTable* fClientSessions; // maps 'session id' strings to "ClientSession" objects
   mutable std::recursive_mutex fClientSessions_mutex; // protectes fClientSessions
