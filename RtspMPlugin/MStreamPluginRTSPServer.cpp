@@ -518,12 +518,12 @@ static
 int CreateAcceptSocket(UsageEnvironment& env, Port ourPort, unsigned int bind_to_interface) {
   int accept_fd = ::socket(AF_INET,SOCK_STREAM,0);
   if (accept_fd < 0) {
-    env << "socket() failed: " << env.getErrno() << "\n";
+    env << "MStreamPluginRtspServer CreateAcceptSocket: socket() failed: " << env.getErrno() << "\n";
     return -1;
   }
   const int yes = -1; // all bits set to 1
   if (0 != ::setsockopt(accept_fd,SOL_SOCKET,SO_EXCLUSIVEADDRUSE,(const char*)(&yes),sizeof(yes))) {
-    env << "setsockopt(SO_EXCLUSIVEADDRUSE) failed: " << env.getErrno() << "\n";
+    env << "MStreamPluginRtspServer CreateAcceptSocket: setsockopt(SO_EXCLUSIVEADDRUSE) failed: " << env.getErrno() << "\n";
     ::closeSocket(accept_fd);
     return -1;
   }
@@ -532,12 +532,13 @@ int CreateAcceptSocket(UsageEnvironment& env, Port ourPort, unsigned int bind_to
   sock_addr.sin_addr.s_addr = htonl(bind_to_interface);
   sock_addr.sin_port = ourPort.num(); // already network order
   if (0 != bind(accept_fd,(struct sockaddr*)(&sock_addr),sizeof(sock_addr))) {
-    env << "bind() failed: " << env.getErrno() << "\n";
+    env << "MStreamPluginRtspServer CreateAcceptSocket: bind("
+        << ntohs(sock_addr.sin_port) << ") failed: " << env.getErrno() << "\n";
     ::closeSocket(accept_fd);
     return -1;
   }
   if (0 != ::listen(accept_fd,20)) {
-    env << "listen() failed: " << env.getErrno() << "\n";
+    env << "MStreamPluginRtspServer CreateAcceptSocket: listen() failed: " << env.getErrno() << "\n";
     ::closeSocket(accept_fd);
     return -1;
   }
@@ -985,7 +986,12 @@ struct MediaServerPluginRTSPServer::LookupCompletionFuncData {
     lookupServerMediaSessionCompletionFunc *completionFunc,
     void *completionClientData)
       : self(self),env(env),streamName(streamName),
-        completionFunc(completionFunc),completionClientData(completionClientData) {}
+        completionFunc(completionFunc),completionClientData(completionClientData) {
+//    env << "MediaServerPluginRTSPServer::LookupCompletionFuncData::LookupCompletionFuncData(" << streamName << ")\n";
+  }
+  ~LookupCompletionFuncData(void) {
+//    env << "MediaServerPluginRTSPServer::LookupCompletionFuncData::~LookupCompletionFuncData(" << streamName.c_str() << ")\n";
+  }
   MediaServerPluginRTSPServer *self;
   UsageEnvironment &env;
   const std::string streamName;
