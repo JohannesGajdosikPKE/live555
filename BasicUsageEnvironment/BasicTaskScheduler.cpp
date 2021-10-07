@@ -106,7 +106,6 @@ uint64_t BasicTaskScheduler::executeCommand(std::function<void(uint64_t task_nr)
 bool BasicTaskScheduler::cancelCommand(const uint64_t token) {
   if (token == 0) return false;
   std::lock_guard<std::mutex> guard(command_queue_mutex);
-  assertSameThread();
   for (auto it(command_queue.begin());it!=command_queue.end();++it) {
     if (token == it->seq) {
       command_queue.erase(it);
@@ -131,7 +130,6 @@ void BasicTaskScheduler::CommandRequestHandler(void* instance, int /*mask*/) {
 }
 
 void BasicTaskScheduler::commandRequestHandler(void) {
-  assertSameThread();
   for (;;) {
     char data;
 #if defined(__WIN32__) || defined(_WIN32)
@@ -179,7 +177,6 @@ void BasicTaskScheduler::schedulerTickTask(void* clientData) {
 }
 
 void BasicTaskScheduler::schedulerTickTask() {
-  assertSameThread();
   scheduleDelayedTask(fMaxSchedulerGranularity, schedulerTickTask, this);
 }
 

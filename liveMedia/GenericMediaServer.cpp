@@ -157,12 +157,15 @@ void GenericMediaServer::closeAllClientSessionsForServerMediaSession(ServerMedia
   GenericMediaServer::ClientSession* clientSession;
   char const* key; // dummy
   while ((clientSession = (GenericMediaServer::ClientSession*)(iter->next(key))) != NULL) {
+      // the RTSPClientSession destructor delets the "streamStates" which in turn delete....
+      // So I cannot delete it in aother thread
     if (clientSession->fOurServerMediaSession == serverMediaSession) {
       if (clientSession->envir().taskScheduler().isSameThread()) {
         delete clientSession;
       } else {
         clientSession->envir().taskScheduler().executeCommand([clientSession,&sem](uint64_t) {
           delete clientSession;
+            // I must guarantee that all clientSessions are deleted when this function finishes 
           sem.post();
         });
         post_count++;
@@ -510,10 +513,9 @@ void GenericMediaServer::ClientConnection::afterConstruction(void) {
 }
 
 GenericMediaServer::ClientConnection::~ClientConnection() {
-  envir().taskScheduler().assertSameThread();
-  envir().taskScheduler().cancelCommand(init_command);
+    // may be called from another thread
   envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::~ClientConnection\n";
-  envir().taskScheduler().assertSameThread();
+  envir().taskScheduler().cancelCommand(init_command);
   envir().taskScheduler().addNrOfUsers(-1);
   // Remove ourself from the server's 'client connections' hash table before we go:
   fOurServer.removeClientConnection(this);
@@ -536,6 +538,7 @@ void GenericMediaServer::ClientConnection::incomingRequestHandler(void* instance
 }
 
 void GenericMediaServer::ClientConnection::incomingRequestHandler() {
+    // this is called from the tasksceduler, asserting does not hurt:
   envir().taskScheduler().assertSameThread();
   struct sockaddr_storage dummy; // 'from' address, meaningless in this case
   

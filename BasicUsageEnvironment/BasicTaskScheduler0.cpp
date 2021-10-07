@@ -59,7 +59,6 @@ BasicTaskScheduler0::~BasicTaskScheduler0() {
 TaskToken BasicTaskScheduler0::scheduleDelayedTask(int64_t microseconds,
 						 TaskFunc* proc,
 						 void* clientData) {
-  assertSameThread();
   if (!proc) return nullptr;
   if (microseconds < 0) microseconds = 0;
   DelayInterval timeToDelay((long)(microseconds/1000000), (long)(microseconds%1000000));
@@ -70,7 +69,6 @@ TaskToken BasicTaskScheduler0::scheduleDelayedTask(int64_t microseconds,
 }
 
 void *BasicTaskScheduler0::unscheduleDelayedTask(TaskToken& prevTask) {
-  assertSameThread();
   void *rval = 0;
   if (prevTask) {
     AlarmHandler* alarmHandler = (AlarmHandler*)fDelayQueue.removeEntry((intptr_t)prevTask);

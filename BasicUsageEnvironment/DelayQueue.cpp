@@ -116,14 +116,18 @@ DelayQueue::DelayQueue()
 }
 
 DelayQueue::~DelayQueue() {
+  std::unique_lock<std::mutex> lock(queue_mutex);
   while (fNext != this) {
     DelayQueueEntry* entryToRemove = fNext;
     removeEntry(entryToRemove);
+    lock.unlock();
     delete entryToRemove;
+    lock.lock();
   }
 }
 
 void DelayQueue::addEntry(DelayQueueEntry* newEntry) {
+  std::lock_guard<std::mutex> lock(queue_mutex);
   synchronize();
 
   DelayQueueEntry* cur = head();
@@ -139,7 +143,7 @@ void DelayQueue::addEntry(DelayQueueEntry* newEntry) {
   newEntry->fPrev = cur->fPrev;
   cur->fPrev = newEntry->fPrev->fNext = newEntry;
 }
-
+/*
 void DelayQueue::updateEntry(DelayQueueEntry* entry, DelayInterval newDelay) {
   if (entry == NULL) return;
 
@@ -152,7 +156,7 @@ void DelayQueue::updateEntry(intptr_t tokenToFind, DelayInterval newDelay) {
   DelayQueueEntry* entry = findEntryByToken(tokenToFind);
   updateEntry(entry, newDelay);
 }
-
+*/
 void DelayQueue::removeEntry(DelayQueueEntry* entry) {
   if (entry == NULL || entry->fNext == NULL) return;
 
@@ -164,12 +168,14 @@ void DelayQueue::removeEntry(DelayQueueEntry* entry) {
 }
 
 DelayQueueEntry* DelayQueue::removeEntry(intptr_t tokenToFind) {
+  std::lock_guard<std::mutex> lock(queue_mutex);
   DelayQueueEntry* entry = findEntryByToken(tokenToFind);
   removeEntry(entry);
   return entry;
 }
 
 DelayInterval const& DelayQueue::timeToNextAlarm() {
+  std::lock_guard<std::mutex> lock(queue_mutex);
   if (head()->fDeltaTimeRemaining == DELAY_ZERO) return DELAY_ZERO; // a common case
 
   synchronize();
@@ -177,15 +183,17 @@ DelayInterval const& DelayQueue::timeToNextAlarm() {
 }
 
 void DelayQueue::handleAlarm() {
-  if (head()->fDeltaTimeRemaining != DELAY_ZERO) synchronize();
+  DelayQueueEntry *toRemove;
+  {
+    std::lock_guard<std::mutex> lock(queue_mutex);
+    if (head()->fDeltaTimeRemaining != DELAY_ZERO) synchronize();
 
-  if (head()->fDeltaTimeRemaining == DELAY_ZERO) {
+    if (head()->fDeltaTimeRemaining != DELAY_ZERO) return;
     // This event is due to be handled:
-    DelayQueueEntry* toRemove = head();
+    toRemove = head();
     removeEntry(toRemove); // do this first, in case handler accesses queue
-
-    toRemove->handleTimeout();
   }
+  toRemove->handleTimeout();
 }
 
 DelayQueueEntry* DelayQueue::findEntryByToken(intptr_t tokenToFind) {

@@ -45,9 +45,9 @@ protected:
 protected:
   struct LookupCompletionFuncData;
   static void GetStreamCb(void *cb_context,
-                          const TStreamPtr &stream);
+                          const std::shared_ptr<IMStream> &stream);
   void getStreamCb(const LookupCompletionFuncData *l,
-                   const TStreamPtr &stream);
+                   const std::shared_ptr<IMStream> &stream);
   void lookupServerMediaSession(UsageEnvironment &env, char const *streamName,
                                 lookupServerMediaSessionCompletionFunc *completionFunc,
                                 void *completionClientData,

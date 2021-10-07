@@ -167,9 +167,9 @@ void PrintBytes(const uint8_t *data, int size, int64_t time) {
 
 
 class MediaServerPluginRTSPServer::StreamMapEntry : public std::enable_shared_from_this<MediaServerPluginRTSPServer::StreamMapEntry>, public IdContainer {
-  StreamMapEntry(UsageEnvironment &env,const TStreamPtr &stream,const std::string &name,std::function<void(const std::string&)> &&on_close);
+  StreamMapEntry(UsageEnvironment &env,const std::shared_ptr<IMStream> &stream,const std::string &name,std::function<void(const std::string&)> &&on_close);
 public:
-  static std::shared_ptr<StreamMapEntry> Create(UsageEnvironment &env,const TStreamPtr &stream,const std::string &name,std::function<void(const std::string&)> &&on_close) {
+  static std::shared_ptr<StreamMapEntry> Create(UsageEnvironment &env,const std::shared_ptr<IMStream> &stream,const std::string &name,std::function<void(const std::string&)> &&on_close) {
     // std::make_shared does not work in because
     //  it cannot access the private constructor
 //    return std::make_shared<StreamMapEntry>(env,stream,std::move(on_close));
@@ -276,7 +276,7 @@ struct MediaServerPluginRTSPServer::StreamMapEntry::RegistrationSet : public std
 };
 
 
-MediaServerPluginRTSPServer::StreamMapEntry::StreamMapEntry(UsageEnvironment &env,const TStreamPtr &stream,const std::string &name,
+MediaServerPluginRTSPServer::StreamMapEntry::StreamMapEntry(UsageEnvironment &env,const std::shared_ptr<IMStream> &stream,const std::string &name,
                                                             std::function<void(const std::string&)> &&on_close)
                                             :env(env),name(name),stream(stream),on_close(std::move(on_close)) {
   if (!stream) abort();
@@ -490,14 +490,17 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnH264FrameCallback(const Regi
 }
 
 void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void *callerId, const SubsessionInfo *info, const uint8_t *buffer, int bufferSize, const TimeType &frameTime) {
+    // The executable has called the callback, meaning that the stream is still alive an registered.
+    // This implies that the StreamMapEntry is not yet destructed,
+    // and I can get its address from the callerId, which was given to the executable upon registration of OnFrameCallback:
   StreamMapEntry &e(*reinterpret_cast<MediaServerPluginRTSPServer::StreamMapEntry*>(callerId));
-  std::lock_guard<std::recursive_mutex> lock(e.registration_mutex);
   if (!info || !buffer || bufferSize == 0) {
     e.env << "StreamMapEntry(" << e.id << "," << e.name.c_str() << ")::OnFrameCallback: "
              "empty frame received, calling onClose\n";
     e.onClose();
     return;
   }
+  std::lock_guard<std::recursive_mutex> lock(e.registration_mutex);
   const auto r(e.registration_map.find(info));
   if (r != e.registration_map.end()) {
     if (0 == strcmp(info->getRtpPayloadFormatName(),"H264")) {
@@ -617,6 +620,8 @@ MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(UsageEnvironment &env, 
 }
 
 MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer() {
+  envir().taskScheduler().unscheduleDelayedTask(generate_info_string_task);
+
   if (m_HTTPsServerSocket >= 0) {
     envir().taskScheduler().turnOffBackgroundReadHandling(m_HTTPsServerSocket);
     ::closeSocket(m_HTTPsServerSocket);
@@ -727,7 +732,7 @@ private:
     env << "MyFrameSource(" << id << "," << name.c_str() << ")::MyFrameSource\n";
   }
   ~MyFrameSource(void) override {
-    envir().taskScheduler().assertSameThread();
+      // I do not care from which thread this is called
     envir() << "MyFrameSource(" << id << "," << name.c_str() << ")::~MyFrameSource start: releasing frame_registration\n";
       // release connection before cleanup so that no new framecallbacks will be deliverd
     frame_registration.reset();
@@ -1040,7 +1045,7 @@ if (!streamName[0]) {
              "no such stream in stream_map, delegating completionFunc to stream_factory->GetStream\n";
       LookupCompletionFuncData *context = new LookupCompletionFuncData(this,env,streamName,completionFunc,completionClientData);
       streamManager->GetStream(streamName, context, false, &MediaServerPluginRTSPServer::GetStreamCb);
-      env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") end\n";
+      env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") end, expecting getStreamCb\n";
       return;
     }
     env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << "): "
@@ -1054,18 +1059,18 @@ if (!streamName[0]) {
   env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") end\n";
 }
 
-void MediaServerPluginRTSPServer::GetStreamCb(void *cb_context,const TStreamPtr &stream) {
+void MediaServerPluginRTSPServer::GetStreamCb(void *cb_context,const std::shared_ptr<IMStream> &stream) {
   LookupCompletionFuncData *l = (LookupCompletionFuncData*)cb_context;
   l->self->getStreamCb(l,stream);
   delete l;
 }
 
 void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer::LookupCompletionFuncData *l,
-                                              const TStreamPtr &stream) {
+                                              const std::shared_ptr<IMStream> &stream) {
     // called from some thread in the executable (or from my own thread, direct callback)
-  envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str() << "): start\n";
   ServerMediaSession *sms = nullptr;
   if (stream) {
+    envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str() << "): start\n";
     std::shared_ptr<StreamMapEntry> e;
     {
       std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
@@ -1076,26 +1081,17 @@ void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer:
       } else {
         e = StreamMapEntry::Create(envir(),stream,l->streamName,
           [this](const std::string &name) {
-            if (envir().taskScheduler().isSameThread()) {
-              envir() << "MediaServerPluginRTSPServer::getStreamCb::close-lambda(" << name.c_str() << ") start: already in plugin thread\n";
-              {
-                std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
-                stream_map.erase(name);
-              }
-              deleteAllServerMediaSessions(name.c_str());
-            } else {
-              envir() << "MediaServerPluginRTSPServer::getStreamCb::close-lambda(" << name.c_str() << ") start: delegating into plugin thread\n";
-              envir().taskScheduler().executeCommand(
-                [this,name](uint64_t) {
-                  envir() << "MediaServerPluginRTSPServer::getStreamCb::close-lambda(" << name.c_str() << ")::l: start in plugin thread\n";
-                  {
-                    std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
-                    stream_map.erase(name);
-                  }
-                  deleteAllServerMediaSessions(name.c_str());
-                  envir() << "MediaServerPluginRTSPServer::getStreamCb::close-lambda(" << name.c_str() << ")::l: end\n";
-                });
+              // may be called from any thread
+            envir() << "MediaServerPluginRTSPServer::getStreamCb::close-lambda(" << name.c_str() << ") start\n";
+            {
+                // It is not strictly necessary to erase the weak_ptr from the map.
+                // This is to guard against an insane executable that does not call the callback with a NULL stream
+                // when the url is wrong. In this case the map would fill up with wrong urls over time.
+              std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
+              stream_map.erase(name);
             }
+            deleteAllServerMediaSessions(name.c_str());
+              // Now the StreamMapEntry with the shared_ptr to the stream is deleted.
             envir() << "MediaServerPluginRTSPServer::getStreamCb::close-lambda(" << name.c_str() << "): end\n";
           });
         entry = e;
@@ -1105,7 +1101,7 @@ void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer:
     }
     sms = createServerMediaSession(l->env, e);
   } else {
-    envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str() << "): cannot create StreamMapEntry and ServerMediaSession"
+    envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str() << "): start: cannot create StreamMapEntry and ServerMediaSession"
                " because stream==NULL\n";
   }
   envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str()
@@ -1218,24 +1214,24 @@ void MediaServerPluginRTSPServer::generateInfoString(void)
 {
   unsigned int connections = 0;
   std::stringstream ss;
+  ss << "---- RtspMStreamPlugin: url: " << m_urlPrefix.get() << "stream_name";
+  if (params.httpPort)
+    ss << " | RTSP-over-HTTP tunnel (Port " << params.httpPort << ")";
+  else
+    ss << " | no RTSP-over-HTTP tunnel";
+  if (params.httpsPort)
+    ss << " | RTSP-over-HTTP-over-SSL tunnel (Port " << params.httpsPort << ")";
+  else
+    ss << " | no RTSP-over-HTTP-over-SSL tunnel";
+  ss << "\n";
   {
     std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
-    ss << "---- RTSP Plugin: url: " << m_urlPrefix.get() << "stream_name";
-    if (params.httpPort)
-      ss << " | RTSP-over-HTTP tunnel (Port " << params.httpPort << ")";
-    else
-      ss << " | no RTSP-over-HTTP tunnel";
-    if (params.httpsPort)
-      ss << " | RTSP-over-HTTP-over-SSL tunnel (Port " << params.httpsPort << ")";
-    else
-      ss << " | no RTSP-over-HTTP-over-SSL tunnel";
-    ss << "\n";
     for (auto &it : stream_map) {
       auto s(it.second.lock());
       if (s) connections += s->printConnections(m_urlPrefix.get()+it.first,ss);
     }
   }
-  ss << "RTSP Plugin Connections: " << connections << "\n";
+  ss << "RtspMStreamPlugin Connections: " << connections << "\n";
 #ifdef ALLOC_STATS
   MemAccounter::Singleton().print(ss);
   PrintAllocInfos(ss);

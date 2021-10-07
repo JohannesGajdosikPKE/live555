@@ -24,6 +24,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "NetCommon.h"
 #endif
 
+#include <mutex>
+
 #ifdef TIME_BASE
 typedef TIME_BASE time_base_seconds;
 #else
@@ -163,15 +165,16 @@ public:
   virtual ~DelayQueue();
 
   void addEntry(DelayQueueEntry* newEntry); // returns a token for the entry
-  void updateEntry(DelayQueueEntry* entry, DelayInterval newDelay);
-  void updateEntry(intptr_t tokenToFind, DelayInterval newDelay);
-  void removeEntry(DelayQueueEntry* entry); // but doesn't delete it
+//  void updateEntry(DelayQueueEntry* entry, DelayInterval newDelay);
+//  void updateEntry(intptr_t tokenToFind, DelayInterval newDelay);
   DelayQueueEntry* removeEntry(intptr_t tokenToFind); // but doesn't delete it
 
   DelayInterval const& timeToNextAlarm();
   void handleAlarm();
 
 private:
+  void removeEntry(DelayQueueEntry* entry); // but doesn't delete it
+  std::mutex queue_mutex;
   DelayQueueEntry* head() { return fNext; }
   DelayQueueEntry* findEntryByToken(intptr_t token);
   void synchronize(); // bring the 'time remaining' fields up-to-date
