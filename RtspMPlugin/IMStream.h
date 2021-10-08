@@ -8,11 +8,21 @@
 class SubsessionInfo {
 public:
   virtual ~SubsessionInfo(void) {}
-  virtual const char *getAuxSdpLine(void) const {return nullptr;}
+
+    // used for creation of FramedSource, will show up in the SDP description
   virtual uint32_t getEstBitrate(void) const {return 0;}
+
+    // currently supported: H264, MP4V-ES, JPEG, AAC-hbr.
+    // all others will result in a SimpleRTPSink with the given
+    // RtpTimestampFrequency, SdpMediaTypeString and RtpPayloadFormatName
+  virtual const char *getRtpPayloadFormatName(void) const = 0;
   virtual uint32_t getRtpTimestampFrequency(void) const {return 0;}
   virtual const char *getSdpMediaTypeString(void) const {return nullptr;}
-  virtual const char *getRtpPayloadFormatName(void) const = 0;
+
+    // payload specific extra information
+    // like AuxSdpLine in case of H264 or FmtpConfig in case of AAC-hbr
+  virtual const char *getExtraInfo(void) const {return nullptr;}
+
 protected:
   SubsessionInfo(void) {}
 private:
@@ -119,7 +129,7 @@ typedef const char *(InitializeMPluginFunc)(
                     IMStreamFactory *streamManager,
                     const MPluginParams &params);
 
-#define RTCMEDIALIB_API_VERSION "0.6"
+#define RTCMEDIALIB_API_VERSION "0.7"
     // will return the API version of the Library.
     // when the interface_api_version_of_caller does not match,
     // the library will not call the stream_factory.

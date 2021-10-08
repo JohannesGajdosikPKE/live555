@@ -908,7 +908,7 @@ public:
     : MyServerMediaSubsession(env,e,info) {
   }
 protected:
-  const char *getAuxSDPLine(RTPSink*,FramedSource*) override {return info->getAuxSdpLine();}
+  const char *getAuxSDPLine(RTPSink*,FramedSource*) override {return info->getExtraInfo();}
   FramedSource *createNewStreamSource(unsigned clientSessionId,
                                       unsigned &estBitrate) override {
     FramedSource *rval = createFrameSource(clientSessionId);
@@ -932,6 +932,373 @@ protected:
     return rval;
   }
 };
+
+class MyMpg4ServerMediaSubsession: public MyServerMediaSubsession {
+public:
+  MyMpg4ServerMediaSubsession(UsageEnvironment &env,
+                              const std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> &e,
+                              const SubsessionInfo *info)
+    : MyServerMediaSubsession(env,e,info) {}
+protected:
+  FramedSource *createNewStreamSource(unsigned clientSessionId,
+                                      unsigned &estBitrate) override {
+    FramedSource *rval = createFrameSource(clientSessionId);
+    if (rval) {
+      estBitrate = info->getEstBitrate(); // kbps, estimate
+      rval = MPEG4VideoStreamDiscreteFramer::createNew(envir(),rval);
+    } else {
+      estBitrate = 0;
+    }
+    return rval;
+  }
+  RTPSink *createNewRTPSink(Groupsock* rtpGroupsock,
+                            unsigned char rtpPayloadTypeIfDynamic,
+                            FramedSource* inputSource) override {
+    RTPSink *rval = nullptr;
+    if (inputSource) {
+      rval = MPEG4ESVideoRTPSink::createNew(envir(),
+                                            rtpGroupsock,
+                                            rtpPayloadTypeIfDynamic);
+    }
+    return rval;
+  }
+};
+
+  // CAUTION: JPEGVideoSource is no FramedFilter, but I use MyJPEGVideoFramer
+  // like a FramedFilter.
+class MyJPEGVideoFramer : public JPEGVideoSource {
+public:
+  static MyJPEGVideoFramer* createNew(UsageEnvironment& env,
+                                      FramedSource* inputSource) {
+    return new MyJPEGVideoFramer(env,inputSource);
+  }
+protected:
+  MyJPEGVideoFramer(UsageEnvironment& env,FramedSource* inputSource)
+    : JPEGVideoSource(env),fInputSource(inputSource) {
+    memset(quant_tables,0,sizeof(quant_tables));
+  }
+  ~MyJPEGVideoFramer(void) { // as in FramedFilter
+    Medium::close(fInputSource);
+  }
+private:
+    // implementation of virtual functions:
+  void doStopGettingFrames(void) override { // as in FramedFilter
+    JPEGVideoSource::doStopGettingFrames();
+    if (fInputSource) fInputSource->stopGettingFrames();
+  }
+  void doGetNextFrame(void) override {
+// who calls this function?
+// fInputSource is MyFrameSource.
+// This call will set
+//  fInputSource->fTo = fTo;
+//  fInputSource->fMaxSize = fMaxSize;
+//  fInputSource->fNumTruncatedBytes = 0; // by default; could be changed by doGetNextFrame()
+//  fInputSource->fDurationInMicroseconds = 0; // by default; could be changed by doGetNextFrame()
+//  fInputSource->fAfterGettingFunc = afterGettingFrame
+//  fInputSource->fAfterGettingClientData = this
+//  fInputSource->fOnCloseFunc = FramedSource::handleClosure
+//  fInputSource->fOnCloseClientData = this
+//  fInputSource->fIsCurrentlyAwaitingData = True;
+// and afterwards call fInputSource->doGetNextFrame()
+    fInputSource->getNextFrame(fTo, fMaxSize,
+                               afterGettingFrame, this,
+                               FramedSource::handleClosure, this);
+  }
+  u_int8_t type(void) override {return fLastType;}
+  u_int8_t qFactor(void) override {
+      // transmit the quantisation tables with each frame:
+      // this works better with mplayer
+    return 255;
+//    return fInputSource->getJpegQuality();
+  }
+  u_int8_t width(void) override {return fLastWidth;}
+  u_int8_t height(void) override {return fLastHeight;}
+  u_int8_t const* quantizationTables(u_int8_t& precision,
+                                     u_int16_t& length) override {
+    precision = 0; // 8-Bit tables
+    length = 128;  // 2 tables
+    return quant_tables;
+  }
+  u_int8_t quant_tables[128];
+private:
+  static void afterGettingFrame(void* clientData, unsigned frameSize,
+                                unsigned numTruncatedBytes,
+                                struct timeval presentationTime,
+                                unsigned durationInMicroseconds) {
+    MyJPEGVideoFramer* source = (MyJPEGVideoFramer*)clientData;
+    source->afterGettingFrame1(frameSize, numTruncatedBytes,
+                               presentationTime, durationInMicroseconds);
+  }
+  void afterGettingFrame1(int frameSize,
+                          unsigned numTruncatedBytes,
+                          struct timeval presentationTime,
+                          unsigned durationInMicroseconds) {
+      // RFC2435: RTP Payload Format for JPEG-compressed Video
+      // requires to strip away the jpeg header, although the quantisation
+      // tables may be (re-)transmitted for each frame, see RFC2435.
+
+#define DQT 	 0xDB	// Define Quantization Table
+#define SOF 	 0xC0	// Start of Frame (size information)
+#define SOI 	 0xD8	// Start of Image
+#define SOS 	 0xDA	// Start of Scan
+      // parse jpeg
+    const u_int8_t *p = fTo;
+    const u_int8_t *end = fTo+frameSize;
+    if (p+2 > end) return;
+    if (*p++ != 0xFF) return;
+    if (*p++ != SOI) return;
+    for (;;) {
+      if (p+4 > end) return;
+      if (*p++ != 0xFF) return;
+      const int marker = *p++;
+      int chunk_size = (*p++) << 8;
+      chunk_size |= (*p++);
+      switch (marker) {
+        case SOF: {
+          if (p+6 > end) return;
+          const u_int8_t *h = p;
+          const u_int8_t precision = *h++;
+          if (precision != 8) return;
+          fLastHeight = ((*h++) << 5);
+          fLastHeight|= ((*h++) >> 3);
+          fLastWidth = ((*h++) << 5);
+          fLastWidth|= ((*h++) >> 3);
+          u_int8_t nr_components = *h++;
+          if (nr_components > 3) return;
+          for (u_int8_t i=0;i<nr_components;i++) {
+            if (p+3 > end) return;
+            const u_int8_t cid = *h++;
+            if (cid != i+1) return;
+            const u_int8_t sampling_factor = *h++;
+            const u_int8_t vFactor = sampling_factor&15;
+            const u_int8_t hFactor = sampling_factor>>4;
+            const u_int8_t Q_table = *h++;
+
+//   The two RTP/JPEG types currently defined are described below:
+//
+//                            horizontal   vertical   Quantization
+//           types  component samp. fact. samp. fact. table number
+//         +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//         |       |  1 (Y)  |     2     |     1     |     0     |
+//         | 0, 64 |  2 (U)  |     1     |     1     |     1     |
+//         |       |  3 (V)  |     1     |     1     |     1     |
+//         +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//         |       |  1 (Y)  |     2     |     2     |     0     |
+//         | 1, 65 |  2 (U)  |     1     |     1     |     1     |
+//         |       |  3 (V)  |     1     |     1     |     1     |
+//         +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//
+            if (i == 0) {
+              if (nr_components == 1) fLastType = 0;
+              else {
+                if (hFactor != 2) return;
+                if (vFactor == 2) fLastType = 1; else
+                if (vFactor == 1) fLastType = 0; else return;
+              }
+              if (Q_table != 0) return;
+            } else {
+              if (hFactor != 1) return;
+              if (vFactor != 1) return;
+              if (Q_table != 1) return;
+            }
+          }
+        } break;
+        case DQT: {
+          if (p+65 > end) return;
+          const u_int8_t *h = p;
+          const u_int8_t qi = *h++;
+          if (qi & 0xF0) return; // precision must be 0: 8bit
+          if (qi > 2) return;
+          memcpy(quant_tables+qi*64,h,64);
+        } break;
+        case SOS: {
+          p += (chunk_size-2);
+          if (p >= end) return;
+          fFrameSize = end - p;
+          memmove(fTo,p,fFrameSize);
+          fNumTruncatedBytes = numTruncatedBytes;
+          fPresentationTime = presentationTime;
+          fDurationInMicroseconds = durationInMicroseconds;
+          afterGetting(this);
+        } return;
+      }
+      p += (chunk_size-2);
+    }
+  }
+
+private:
+  FramedSource* fInputSource;
+  u_int8_t fLastType, fLastWidth, fLastHeight, fLastQuality;
+};
+
+
+class MyMJPEGServerMediaSubsession: public MyServerMediaSubsession {
+public:
+  MyMJPEGServerMediaSubsession(UsageEnvironment &env,
+                               const std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> &e,
+                               const SubsessionInfo *info)
+    : MyServerMediaSubsession(env,e,info) {
+  }
+protected:
+  FramedSource *createNewStreamSource(unsigned clientSessionId,
+                                      unsigned &estBitrate) override {
+    FramedSource *rval = createFrameSource(clientSessionId);
+    if (rval) {
+      estBitrate = info->getEstBitrate(); // kbps, estimate
+      rval = MyJPEGVideoFramer::createNew(envir(),rval);
+    } else {
+      estBitrate = 0;
+    }
+    return rval;
+  }
+  RTPSink *createNewRTPSink(Groupsock* rtpGroupsock,
+                            unsigned char rtpPayloadTypeIfDynamic,
+                            FramedSource* inputSource) override {
+    RTPSink *rval = nullptr;
+    if (inputSource) {
+      rval = JPEGVideoRTPSink::createNew(envir(),
+                                            rtpGroupsock);
+    }
+    return rval;
+  }
+};
+
+
+static inline int HexDigitToInt(char c) {
+  if ('0' <= c && c <= '9') return (c-'0');
+  if ('a' <= c && c <= 'f') return (c-('a'-10));
+  if ('A' <= c && c <= 'F') return (c-('A'-10));
+  return -1;
+}
+
+static const int sample_frequency_index_table[16] = {
+  96000,
+  88200,
+  64000,
+  48000,
+  44100,
+  32000,
+  24000,
+  22050,
+  16000,
+  12000,
+  11025,
+  8000,
+  7350,
+  -1, // reserved
+  -1, // reserved
+  -1  // escape value
+};
+
+static const int nr_of_channel_table[16] = {
+  0, // defined in GASpecificConfig
+  1,
+  2,
+  3,
+  4,
+  5, // 5
+  6, // 5+1
+  8, // 7+1
+  -1,-1,-1,-1,-1,-1,-1,-1 // reserved
+};
+
+  // returns error(<0) or how many bytes have been parsed: 2 or 5
+static inline int ParseAudioSpecificConfig(const unsigned char *data,
+                                           int &audio_object_type,
+                                           int &sampling_frequency,
+                                           int &nr_of_channels) {
+  const unsigned char *dp = data;
+  audio_object_type = dp[0] >> 3;
+  if (audio_object_type == 31) return -1;
+  const unsigned char samplingFrequencyIndex = ((dp[0]&7)<<1) | (dp[1]>>7);
+  dp++;
+  if (samplingFrequencyIndex == 0x0f) {
+    sampling_frequency  = ((dp[0]<<1) | (dp[1]>>7));
+    dp++;
+    sampling_frequency <<= 8;
+    sampling_frequency |= ((dp[0]<<1) | (dp[1]>>7));
+    dp++;
+    sampling_frequency <<= 8;
+    sampling_frequency |= ((dp[0]<<1) | (dp[1]>>7));
+  } else {
+    sampling_frequency = sample_frequency_index_table[samplingFrequencyIndex];
+  }
+  const unsigned char channelConfiguration = (dp[0]>>3)&0x0f;
+  dp++;
+  nr_of_channels = nr_of_channel_table[channelConfiguration];
+  if (sampling_frequency < 0) return -2;
+  if (nr_of_channels < 0) return -3;
+  return (dp - data);
+}
+
+class MyAacServerMediaSubsession : public MyServerMediaSubsession {
+public:
+  MyAacServerMediaSubsession(UsageEnvironment &env,
+                             const std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> &e,
+                             const SubsessionInfo *info)
+      : MyServerMediaSubsession(env,e,info) {
+    fmtp_config = info->getExtraInfo();
+    if (!fmtp_config) {
+      envir() << "MyAacServerMediaSubsession::MyAacServerMediaSubsession: initialization failed, no fmtp_config\n";
+      return;
+    }
+    const int size = (1+strlen(fmtp_config)) / 2;
+
+    auto audio_specific_config(std::make_unique<unsigned char[]>(std::max(5,size)));
+    int i = 0;
+    for (;i<size;i++) {
+      const int hi = HexDigitToInt(fmtp_config[2*i]);
+      const int lo = HexDigitToInt(fmtp_config[2*i+1]);
+      if (hi < 0 || lo < 0) {
+        envir() << "MyAacServerMediaSubsession::MyAacServerMediaSubsession: initialization failed, bad fmtp_config: \"" << fmtp_config << "\"\n";
+        fmtp_config = nullptr;
+        return;
+      }
+      audio_specific_config[i] = 16*hi + lo;
+    }
+    for (;i<5;i++) audio_specific_config[i] = 0;
+    int audio_object_type;
+    const int rc = ParseAudioSpecificConfig(audio_specific_config.get(),
+                                            audio_object_type,
+                                            sampling_frequency,
+                                            nr_of_channels);
+    if (rc < 0) {
+      envir() << "MyAacServerMediaSubsession::MyAacServerMediaSubsession: initialization failed, fmtp_config: \"" << fmtp_config
+              << "\" contains no valid AudioSpecificConfig: " << rc << "\n";
+      fmtp_config = nullptr;
+    }
+  }
+protected:
+  FramedSource *createNewStreamSource(unsigned clientSessionId,
+                                      unsigned &estBitrate) override {
+    FramedSource *rval = createFrameSource(clientSessionId);
+    if (rval) {
+      estBitrate = info->getEstBitrate(); // kbps, estimate
+    } else {
+      estBitrate = 0;
+    }
+    return rval;
+  }
+  RTPSink *createNewRTPSink(Groupsock* rtpGroupsock,
+                            unsigned char rtpPayloadTypeIfDynamic,
+                            FramedSource* inputSource) override {
+    RTPSink *rval = nullptr;
+    if (inputSource && fmtp_config) {
+      rval = MPEG4GenericRTPSink::createNew(envir(),
+                                            rtpGroupsock,
+                                            rtpPayloadTypeIfDynamic,
+                                            sampling_frequency,
+                                            "audio", "AAC-hbr",
+                                            fmtp_config,
+                                            nr_of_channels);
+    }
+    return rval;
+  }
+private:
+  const char *fmtp_config;
+  int sampling_frequency,nr_of_channels;
+};
+
 
 class MyUnknownServerMediaSubsession : public MyServerMediaSubsession {
 public:
@@ -975,6 +1342,12 @@ MyServerMediaSubsession
   MyServerMediaSubsession *rval = nullptr;
   if (0 == strcmp(info->getRtpPayloadFormatName(),"H264")) {
     rval = new MyH264ServerMediaSubsession(env,e,info);
+  } else if (0 == strcmp(info->getRtpPayloadFormatName(),"MP4V-ES")) {
+    rval = new MyMpg4ServerMediaSubsession(env,e,info);
+  } else if (0 == strcmp(info->getRtpPayloadFormatName(),"JPEG")) {
+    rval = new MyMJPEGServerMediaSubsession(env,e,info);
+  } else if (0 == strcmp(info->getRtpPayloadFormatName(),"AAC-hbr")) {
+    rval = new MyAacServerMediaSubsession(env,e,info);
   } else {
     rval = new MyUnknownServerMediaSubsession(env,e,info);
   }
