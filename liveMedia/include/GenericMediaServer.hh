@@ -214,7 +214,7 @@ protected:
     // The basic, synchronous "ServerMediaSession" lookup operation; only for subclasses:
   ServerMediaSession* getServerMediaSession(UsageEnvironment &env,char const* streamName);
   
-  ClientConnection *getClientSession(ClientConnection::IdType id) const {
+  ClientConnection *getClientConnection(ClientConnection::IdType id) const {
     std::lock_guard<std::recursive_mutex> lock(fClientConnections_mutex);
     auto it(fClientConnections.find(id));
     if (it != fClientConnections.end()) return it->second;

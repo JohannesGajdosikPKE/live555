@@ -398,7 +398,8 @@ void RTSPServer::RTSPClientConnection
 void RTSPServer::RTSPClientConnection
 ::DESCRIBELookupCompletionFunction(void* clientData, ServerMediaSession* sessionLookedUp) {
   LookupContext *context(reinterpret_cast<LookupContext*>(clientData));
-  RTSPServer::RTSPClientConnection* connection = (RTSPServer::RTSPClientConnection*)context->server.getClientSession(context->connection_id);
+  RTSPServer::RTSPClientConnection *const connection
+    = static_cast<RTSPServer::RTSPClientConnection*>(context->server.getClientConnection(context->connection_id));
   if (connection) {
     connection->handleCmd_DESCRIBE_afterLookup(sessionLookedUp);
   } else {
