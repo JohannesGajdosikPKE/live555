@@ -544,9 +544,15 @@ void GenericMediaServer::ClientConnection::incomingRequestHandler() {
   
   int bytesRead = readSocket(envir(), fOurSocket, &fRequestBuffer[fRequestBytesAlreadySeen], fRequestBufferBytesLeft, dummy);
   if (bytesRead < 0) {
-    envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::incomingRequestHandler: "
-               "readSocket(" << fOurSocket << ") failed, probably client hangup: "
-            << envir().getResultMsg() << "\n";
+    if (bytesRead == -1) {
+      envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::incomingRequestHandler: "
+                 "readSocket(" << fOurSocket << ") failed, client hangup\n";
+    } else {
+      const int errnr = envir().getErrno();
+      envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::incomingRequestHandler: "
+                 "readSocket(" << fOurSocket << ") failed: "
+              << envir().getResultMsg() << "(errno=" << errnr << ")\n";
+    }
   }
   handleRequestBytes(bytesRead);
 }
