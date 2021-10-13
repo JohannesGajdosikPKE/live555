@@ -889,10 +889,13 @@ protected:
   MyFrameSource *createFrameSource(unsigned clientSessionId) {
     const std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> e(entry.lock());
     if (e) {
-      return MyFrameSource::createNew(envir(),*e,info);
+      MyFrameSource *const rval = MyFrameSource::createNew(envir(),*e,info);
+      envir() << "MyServerMediaSubsession(" << id << ")::createFrameSource(" << clientSessionId
+              << "): returning MyFrameSource(" << rval->id << ")\n";
+      return rval;
     } else {
-      envir() << "MyServerMediaSubsession(" << id << ")::MyServerMediaSubsession::createFrameSource: "
-                 "the StreamMapEntry has died, returning NULL\n";
+      envir() << "MyServerMediaSubsession(" << id << ")::createFrameSource(" << clientSessionId
+              << "): the StreamMapEntry has died, returning NULL\n";
       return nullptr;
     }
   }
@@ -1397,35 +1400,36 @@ void MediaServerPluginRTSPServer
                            void *completionClientData,
                            Boolean isFirstLookupInSession) {
   if (!completionFunc) abort();
+  if (!streamName) abort();
     // this function seems to be called for each subsession.
     // when we already have a ServerMediaSession for the first subsession,
     // return this stream, the stream of the second subsession will not work
-if (!streamName) abort();
-if (!streamName[0]) {
-  env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") be aware of a mad live555: the streamname is empty! "
-         "To me this seems to be an abuse of the mediasession storage, perhaps for parsing H264 sdp\n";
-}
-
-  ServerMediaSession* sms = getServerMediaSession(env,streamName);
-  if (sms) {
+  ServerMediaSession *sms = nullptr;
+  if (!streamName[0]) {
     env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") begin: "
-           "found existing ServerMediaSession " << sms << "\n";
+           "empty streamName\n";
   } else {
-      // called from the thread of the new rtsp connection (env-thread): lock recursive mutex
-    const std::shared_ptr<StreamMapEntry> e(getStreamMapEntry(streamName));
-    if (!e) {
+    sms = getServerMediaSession(env,streamName);
+    if (sms) {
       env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") begin: "
-             "no such stream in stream_map, delegating completionFunc to stream_factory->GetStream\n";
-      LookupCompletionFuncData *context = new LookupCompletionFuncData(this,env,streamName,completionFunc,completionClientData);
-      streamManager->GetStream(streamName, context, false, &MediaServerPluginRTSPServer::GetStreamCb);
-      env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") end, expecting getStreamCb\n";
-      return;
-    }
-    env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << "): "
-           "creating new ServerMediaSession with existing StreamMap entry, use_count: " << e.use_count() << "\n";
-    sms = createServerMediaSession(env,e);
-    env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << "): "
+             "found existing ServerMediaSession " << sms << "\n";
+    } else {
+        // called from the thread of the new rtsp connection (env-thread): lock recursive mutex
+      const std::shared_ptr<StreamMapEntry> e(getStreamMapEntry(streamName));
+      if (!e) {
+        env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") begin: "
+               "no such stream in stream_map, delegating completionFunc to stream_factory->GetStream\n";
+        LookupCompletionFuncData *context = new LookupCompletionFuncData(this,env,streamName,completionFunc,completionClientData);
+        streamManager->GetStream(streamName, context, false, &MediaServerPluginRTSPServer::GetStreamCb);
+        env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") end, expecting getStreamCb\n";
+        return;
+      }
+      env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << "): "
+             "creating new ServerMediaSession with existing StreamMap entry, use_count: " << e.use_count() << "\n";
+      sms = createServerMediaSession(env,e);
+      env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << "): "
            "new ServerMediaSession " << sms << " with existing StreamMap entry created\n";
+    }
   }
   env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << "): calling completionFunc(" << sms << ")\n";
   (*completionFunc)(completionClientData,sms);
@@ -1433,14 +1437,24 @@ if (!streamName[0]) {
 }
 
 void MediaServerPluginRTSPServer::GetStreamCb(void *cb_context,const std::shared_ptr<IMStream> &stream) {
+    // called from some thread in the executable (or from my own thread, direct callback)
   LookupCompletionFuncData *l = (LookupCompletionFuncData*)cb_context;
-  l->self->getStreamCb(l,stream);
+  if (l->env.taskScheduler().isSameThread()) {
+    l->self->getStreamCb(l,stream);
+  } else {
+    Semaphore sem;
+    l->env.taskScheduler().executeCommand(
+      [l,stream,&sem](uint64_t) {
+        l->self->getStreamCb(l,stream);
+        sem.post();
+      });
+    sem.wait();
+  }
   delete l;
 }
 
 void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer::LookupCompletionFuncData *l,
                                               const std::shared_ptr<IMStream> &stream) {
-    // called from some thread in the executable (or from my own thread, direct callback)
   ServerMediaSession *sms = nullptr;
   if (stream) {
     envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str() << "): start\n";
