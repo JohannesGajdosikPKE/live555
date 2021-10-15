@@ -182,7 +182,7 @@ public: // should be protected, but some old compilers complain otherwise
     friend class ClientConnection;
     UsageEnvironment &threaded_env;
     GenericMediaServer& fOurServer;
-    u_int32_t fOurSessionId;
+    const u_int32_t fOurSessionId;
     ServerMediaSession* fOurServerMediaSession;
     TaskToken fLivenessCheckTask;
   };
