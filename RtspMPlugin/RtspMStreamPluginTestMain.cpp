@@ -284,7 +284,7 @@ public:
   ~MyIMStreamFactory(void) {
   }
 private:
-  void GetStream(const char *url,void *context,bool only_video,GetStreamCb *cb) override {
+  void GetStream(const char *url,void *context,GetStreamCb *cb) override {
     std::cout << "MyIMStreamFactory::GetStream(" << url << ')' << std::endl;
     MyTestIMStream *rval(new MyTestIMStream(url,
                              [this](MyTestIMStream *self) {
