@@ -345,10 +345,11 @@ void MediaServerPluginRTSPServer::StreamMapEntry::forget(Registration *reg) {
   env << "StreamMapEntry(" << id << "," <<name.c_str() << ")::forget(" << SubsessionInfoToString(*reg->info) << "): end\n";
 }
 
-static void Destroy(void *context) {
+static void KeepTaskHelper(void *context) {
   std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> *ptr
     = reinterpret_cast<std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry>*>(context);
-  (*ptr)->env << "Destroy(" << (*ptr)->name.c_str() << "): releasing shared_ptr, use_count: " << ((*ptr).use_count()-1) << "\n";
+  (*ptr)->env << "KeepTaskHelper(" << (*ptr)->id << "," << (*ptr)->name.c_str() << "): "
+                 "releasing shared_ptr, use_count: " << ((*ptr).use_count()-1) << "\n";
   delete ptr;
 }
 
@@ -357,20 +358,20 @@ void MediaServerPluginRTSPServer::StreamMapEntry::ScheduleKeepTaskHelper(std::sh
   std::shared_ptr<StreamMapEntry> *old_ptr = nullptr;
   if ((*self)->i_want_to_die) {
     if ((*self)->delayed_keep_task) {
-      (*self)->env << "StreamMapEntry::ScheduleKeepTaskHelper(" << (*self)->id << "," << (*self)->name.c_str() << "): "
+      (*self)->env << "StreamMapEntry(" << (*self)->id << "," << (*self)->name.c_str() << ")::ScheduleKeepTaskHelper: "
                       "unsceduling KeepAlive task\n";
       old_ptr = (std::shared_ptr<StreamMapEntry>*)
         (*self)->env.taskScheduler().unscheduleDelayedTask((*self)->delayed_keep_task);
     }
   } else {
-    (*self)->env << "StreamMapEntry::ScheduleKeepTaskHelper(" << (*self)->id << "," << (*self)->name.c_str() << "): "
+    (*self)->env << "StreamMapEntry(" << (*self)->id << "," << (*self)->name.c_str() << ")::ScheduleKeepTaskHelper: "
                     "going to destroy the StreamMapEntry in 15 seconds if no one needs it\n";
     old_ptr = (std::shared_ptr<StreamMapEntry>*)
       (*self)->env.taskScheduler().rescheduleDelayedTask((*self)->delayed_keep_task,15000000,
-                                                         Destroy,self);
+                                                         KeepTaskHelper,self);
   }
   if (old_ptr) {
-    (*self)->env << "StreamMapEntry::ScheduleKeepTaskHelper(" << (*self)->id << "," << (*self)->name.c_str() << "): "
+    (*self)->env << "StreamMapEntry(" << (*self)->id << "," << (*self)->name.c_str() << ")::ScheduleKeepTaskHelper: "
                     "releasing old shared_ptr, old use_count: " << old_ptr->use_count() << "\n";
     delete old_ptr;
   }
@@ -1420,7 +1421,7 @@ void MediaServerPluginRTSPServer
         env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") begin: "
                "no such stream in stream_map, delegating completionFunc to stream_factory->GetStream\n";
         LookupCompletionFuncData *context = new LookupCompletionFuncData(this,env,streamName,completionFunc,completionClientData);
-        streamManager->GetStream(streamName, context, false, &MediaServerPluginRTSPServer::GetStreamCb);
+        streamManager->GetStream(streamName, context, &MediaServerPluginRTSPServer::GetStreamCb);
         env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") end, expecting getStreamCb\n";
         return;
       }
