@@ -19,7 +19,6 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // Implementation
 
 #include "RTSPServer.hh"
-#include "RTSPCommon.hh"
 #include "RTSPRegisterSender.hh"
 #include "Base64.hh"
 #include <GroupsockHelper.hh>
@@ -401,7 +400,9 @@ void RTSPServer::RTSPClientConnection
   RTSPServer::RTSPClientConnection *const connection
     = static_cast<RTSPServer::RTSPClientConnection*>(context->server.getClientConnection(context->connection_id));
   if (connection) {
+    connection->envir().taskScheduler().assertSameThread();
     connection->handleCmd_DESCRIBE_afterLookup(sessionLookedUp);
+    connection->handleRequestBytesResume();
   } else {
     context->server.envir() << "RTSPServer::RTSPClientConnection::DESCRIBELookupCompletionFunction: "
                                "client connection " << context->connection_id << " has been closed during lookup\n";
@@ -694,9 +695,13 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
   envir().taskScheduler().assertSameThread();
 //  envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << ") begin\n";
 //  fprintf(stderr,"RTSPServer::RTSPClientConnection(%p)::handleRequestBytes(%d) start, recursion: %d\n", this, newBytesRead, fRecursionCount);
-  int numBytesRemaining = 0;
+  RTSPClientConnection::newBytesRead = newBytesRead;
+  numBytesRemaining = 0;
   ++fRecursionCount;
+  handleRequestBytesBody();
+}
 
+void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
   do {
     RTSPServer::RTSPClientSession* clientSession = NULL;
 
@@ -791,16 +796,15 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
     char cmdName[RTSP_PARAM_STRING_MAX];
     char urlPreSuffix[RTSP_PARAM_STRING_MAX];
     char urlSuffix[RTSP_PARAM_STRING_MAX];
-    char cseq[RTSP_PARAM_STRING_MAX];
     char sessionIdStr[RTSP_PARAM_STRING_MAX];
-    unsigned contentLength = 0;
+    contentLength = 0;
     Boolean playAfterSetup = False;
     fLastCRLF[2] = '\0'; // temporarily, for parsing
     Boolean parseSucceeded = parseRTSPRequestString((char*)fRequestBuffer, fLastCRLF+2 - fRequestBuffer,
 						    cmdName, sizeof cmdName,
 						    urlPreSuffix, sizeof urlPreSuffix,
 						    urlSuffix, sizeof urlSuffix,
-						    cseq, sizeof cseq,
+						    fCurrentCSeq, sizeof fCurrentCSeq,
 						    sessionIdStr, sizeof sessionIdStr,
 						    contentLength);
     fLastCRLF[2] = '\r'; // restore its value
@@ -814,7 +818,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
     }
     if (parseSucceeded) {
 #ifdef DEBUG
-      fprintf(stderr, "parseRTSPRequestString() succeeded, returning cmdName \"%s\", urlPreSuffix \"%s\", urlSuffix \"%s\", CSeq \"%s\", Content-Length %u, with %d bytes following the message.\n", cmdName, urlPreSuffix, urlSuffix, cseq, contentLength, ptr + newBytesRead - (tmpPtr + 2));
+      fprintf(stderr, "parseRTSPRequestString() succeeded, returning cmdName \"%s\", urlPreSuffix \"%s\", urlSuffix \"%s\", CSeq \"%s\", Content-Length %u, with %d bytes following the message.\n", cmdName, urlPreSuffix, urlSuffix, fCurrentCSeq, contentLength, ptr + newBytesRead - (tmpPtr + 2));
 #endif
       // If there was a "Content-Length:" header, then make sure we've received all of the data that it specified:
       if (ptr + newBytesRead < tmpPtr + 2 + contentLength) break; // we still need more data; subsequent reads will give it to us 
@@ -830,7 +834,6 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
     
       // We now have a complete RTSP request.
       // Handle the specified command (beginning with commands that are session-independent):
-      fCurrentCSeq = cseq;
       if (strcmp(cmdName, "OPTIONS") == 0) {
 	// If the "OPTIONS" command included a "Session:" id for a session that doesn't exist,
 	// then treat this as an error:
@@ -854,6 +857,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
 	}
       } else if (strcmp(cmdName, "DESCRIBE") == 0) {
 	handleCmd_DESCRIBE(urlPreSuffix, urlSuffix, (char const*)fRequestBuffer);
+	return;
       } else if (strcmp(cmdName, "SETUP") == 0) {
 	Boolean areAuthenticated = True;
 
@@ -974,6 +978,13 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
       }
     }
     
+    handleRequestBytesEndOfLoop(playAfterSetup,clientSession,urlPreSuffix,urlSuffix);
+  } while (numBytesRemaining > 0);
+  handleRequestBytesFinish();
+}
+
+void RTSPServer::RTSPClientConnection::handleRequestBytesEndOfLoop(Boolean playAfterSetup,RTSPServer::RTSPClientSession *clientSession,
+                                                                   const char *urlPreSuffix,const char *urlSuffix) {
 #ifdef DEBUG
     fprintf(stderr, "sending response: %s", fResponseBuffer);
 #endif
@@ -995,8 +1006,9 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
       memmove(fRequestBuffer, &fRequestBuffer[requestSize], numBytesRemaining);
       newBytesRead = numBytesRemaining;
     }
-  } while (numBytesRemaining > 0);
-  
+}
+
+void RTSPServer::RTSPClientConnection::handleRequestBytesFinish(void) {
   --fRecursionCount;
 //  envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: fIsActive: " << (int)fIsActive << "\n";
   if (!fIsActive) {
@@ -1007,6 +1019,21 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
   }
 //  fprintf(stderr,"RTSPServer::RTSPClientConnection(%p)::handleRequestBytes(%d) end\n", this, newBytesRead);
 }
+
+void RTSPServer::RTSPClientConnection::handleRequestBytesResume(void) {
+  envir().taskScheduler().assertSameThread();
+  handleRequestBytesEndOfLoop(False,nullptr,nullptr,nullptr);
+  if (numBytesRemaining > 0) {
+    handleRequestBytesBody();
+  } else {
+    handleRequestBytesFinish();
+  }
+}
+
+
+
+
+
 
 #define SKIP_WHITESPACE while (*fields != '\0' && (*fields == ' ' || *fields == '\t')) ++fields
 
@@ -1404,8 +1431,9 @@ void RTSPServer::RTSPClientSession
 
   // Begin by checking whether the specified stream name exists:
   char const* streamName = urlPreSuffix; // in the normal case
-  fOurServer.lookupServerMediaSession(envir(), streamName, SETUPLookupCompletionFunction1, this,
-				      fOurServerMediaSession == NULL);
+    // call the nonvirtual base implementation that just looks for existing sms and returns immediately
+  fOurServer.GenericMediaServer::lookupServerMediaSession(envir(), streamName, SETUPLookupCompletionFunction1, this,
+				                          fOurServerMediaSession == NULL);
 }
 
 void RTSPServer::RTSPClientSession
@@ -1437,8 +1465,9 @@ void RTSPServer::RTSPClientSession
   fTrackId = NULL;
       
   // Check again:
-  fOurServer.lookupServerMediaSession(envir(), streamName, SETUPLookupCompletionFunction2, this,
-				      fOurServerMediaSession == NULL);
+    // call the nonvirtual base implementation that just looks for existing sms and returns immediately
+  fOurServer.GenericMediaServer::lookupServerMediaSession(envir(), streamName, SETUPLookupCompletionFunction2, this,
+				                          fOurServerMediaSession == NULL);
   delete[] concatenatedStreamName;
 }
 

@@ -28,6 +28,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "DigestAuthentication.hh"
 #endif
 
+#include "RTSPCommon.hh"
+
 class RTSPServer: public GenericMediaServer {
 public:
   static RTSPServer* createNew(UsageEnvironment& env, Port ourPort = 554,
@@ -166,7 +168,14 @@ public: // should be protected, but some old compilers complain otherwise
     };
   protected: // redefined virtual functions:
     virtual void handleRequestBytes(int newBytesRead);
-
+  private:
+    void handleRequestBytesBody(void);
+    void handleRequestBytesEndOfLoop(Boolean playAfterSetup,RTSPServer::RTSPClientSession *clientSession,
+                                     const char *urlPreSuffix,const char *urlSuffix);
+    void handleRequestBytesFinish(void);
+    void handleRequestBytesResume(void);
+    int newBytesRead,numBytesRemaining;
+    unsigned contentLength;
   protected:
     RTSPClientConnection(UsageEnvironment& threaded_env, RTSPServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr);
     virtual ~RTSPClientConnection();
@@ -226,7 +235,7 @@ public: // should be protected, but some old compilers complain otherwise
     Boolean fIsActive;
     unsigned char* fLastCRLF;
     unsigned fRecursionCount;
-    char const* fCurrentCSeq;
+    char fCurrentCSeq[RTSP_PARAM_STRING_MAX];
     Authenticator fCurrentAuthenticator; // used if access control is needed
     char* fOurSessionCookie; // used for optional RTSP-over-HTTP tunneling
     unsigned fBase64RemainderCount; // used for optional RTSP-over-HTTP tunneling (possible values: 0,1,2,3)
