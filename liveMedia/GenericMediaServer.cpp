@@ -329,6 +329,8 @@ void GenericMediaServer::cleanup() {
     // Close all client session objects:
     GenericMediaServer::ClientSession* clientSession;
     while ((clientSession = (GenericMediaServer::ClientSession*)fClientSessions->getFirst()) != NULL) {
+      char sessionIdStr[8 + 1];
+      sprintf(sessionIdStr, "%08X", clientSession->fOurSessionId);
       if (clientSession->envir().taskScheduler().isSameThread()) {
         delete clientSession;
       } else {
@@ -339,6 +341,7 @@ void GenericMediaServer::cleanup() {
             sem.post();
           });
       }
+      fClientSessions->Remove(sessionIdStr);
     }
   }
 
