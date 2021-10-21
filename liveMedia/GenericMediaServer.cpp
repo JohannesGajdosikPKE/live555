@@ -69,8 +69,10 @@ void GenericMediaServer::addServerMediaSession(ServerMediaSession* serverMediaSe
       removeServerMediaSessionImpl(old_sms);
     } else {
       Semaphore sem;
+      old_sms->incrementReferenceCount();
       serverMediaSession->envir().taskScheduler().executeCommand(
         [this,old_sms,&sem](uint64_t) {
+          old_sms->decrementReferenceCount();
           removeServerMediaSessionImpl(old_sms);
           sem.post();
         });
@@ -204,20 +206,18 @@ public:
         scheduler->assert_threads = true;
 //        std::cout << "GenericMediaServer::Worker::mainThread(" << std::this_thread::get_id() << "): scheduler created" << std::endl << std::flush;
         env = server.createNewUsageEnvironment(*scheduler);
-        {
-          std::lock_guard<std::mutex> lck(mtx);
-          watchVariable = 0;
-          cv.notify_one();
-        }
+        watchVariable = 0;
+        sem.post();
         (*env) << "GenericMediaServer::Worker::mainThread: start\n";
         env->taskScheduler().doEventLoop(&watchVariable);
         (*env) << "GenericMediaServer::Worker::mainThread: end\n";
+        sem.post();
+        sem2.wait();
         if (!env->reclaim()) abort();
         env = nullptr;
         delete scheduler; scheduler = nullptr;
       }) {
-    std::unique_lock<std::mutex> lck(mtx);
-    while (watchVariable) cv.wait(lck);
+    sem.wait();
   }
   void joinThread(void) {
     try {
@@ -230,6 +230,10 @@ public:
   void stop(void) {
     scheduler->executeCommand([w=&watchVariable](uint64_t){*w=1;});
   }
+  void waitUnitStopped(void) {
+    sem.wait();
+    sem2.post();
+  }
   UsageEnvironment& getEnv(void) const {return *env;}
   int getLoad(void) const {return scheduler->addNrOfUsers(0);}
 private:
@@ -237,9 +241,7 @@ private:
   UsageEnvironment *env = nullptr;
   char volatile watchVariable = 1;
   std::thread worker_thread;
-    // mutex and contition variable only to be able to wait for thread to start:
-  std::mutex mtx;
-  std::condition_variable cv;
+  GenericMediaServer::Semaphore sem,sem2;
 };
 
 static inline unsigned int GetNrOfCores(void) {
@@ -369,8 +371,10 @@ void GenericMediaServer::cleanup() {
         if (e.first->taskScheduler().isSameThread()) {
           removeServerMediaSessionImpl(serverMediaSession);
         } else {
+          serverMediaSession->incrementReferenceCount();
           e.first->taskScheduler().executeCommand(
             [this,serverMediaSession,&sem,&post_count](uint64_t) {
+              serverMediaSession->decrementReferenceCount();
               removeServerMediaSessionImpl(serverMediaSession);
               post_count++;
               sem.post();
@@ -386,6 +390,7 @@ void GenericMediaServer::cleanup() {
 
 
   for (unsigned int i = 0; i < nr_of_workers; i++) if (workers[i]) workers[i]->stop();
+  for (unsigned int i = 0; i < nr_of_workers; i++) if (workers[i]) workers[i]->waitUnitStopped();
   for (unsigned int i = 0; i < nr_of_workers; i++) if (workers[i]) workers[i]->joinThread();
   delete fClientSessions; fClientSessions = nullptr;
 //  envir() << "GenericMediaServer::cleanup: end\n";
