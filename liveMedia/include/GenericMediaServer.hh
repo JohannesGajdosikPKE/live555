@@ -230,6 +230,7 @@ protected:
   UsageEnvironment& getBestThreadedUsageEnvironment(void);
 
 private:
+  void removeServerMediaSessionImpl(ServerMediaSession* serverMediaSession);
   virtual UsageEnvironment *createNewUsageEnvironment(TaskScheduler &scheduler);
   void addClientConnection(ClientConnection *c) {
     std::lock_guard<std::recursive_mutex> guard(fClientConnections_mutex);

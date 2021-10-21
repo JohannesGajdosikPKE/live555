@@ -35,12 +35,13 @@ public:
                                                 const RTSPParameters &params,
                                                 IMStreamFactory *streamManager);
   class StreamMapEntry;
+  bool destructorStarted(void) const {return destructor_started;}
 protected:
   MediaServerPluginRTSPServer(UsageEnvironment &env, int ourSocketIPv4, int ourSocketIPv6,
                               int m_HTTPServerSocket, int m_HTTPsServerSocket, 
                               const RTSPParameters &params, IMStreamFactory* streamManager);
   // called only by createNew();
-  ~MediaServerPluginRTSPServer() override;
+  ~MediaServerPluginRTSPServer(void) override;
 
 protected:
   struct LookupCompletionFuncData;
@@ -78,11 +79,12 @@ protected:
 
   int m_HTTPServerSocket,m_HTTPsServerSocket;
   const RTSPParameters params;
-  IMStreamFactory *const streamManager;
+  IMStreamFactory *const stream_factory;
   std::map<std::string,std::weak_ptr<StreamMapEntry> > stream_map;
   mutable std::recursive_mutex stream_map_mutex;
   const std::unique_ptr<const char[]> m_urlPrefix;
   TaskToken generate_info_string_task;
+  bool destructor_started = false;
 };
 
 #endif
