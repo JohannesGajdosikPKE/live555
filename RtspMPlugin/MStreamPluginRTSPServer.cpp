@@ -35,7 +35,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <iomanip>
 #include <atomic>
 
-#define PLUGIN_VERSION "1.0"
+#define PLUGIN_VERSION "1.01"
 
 //#define ALLOC_STATS
 #ifdef ALLOC_STATS
@@ -560,46 +560,63 @@ int CreateAcceptSocket(UsageEnvironment& env, Port ourPort, unsigned int bind_to
 
 MediaServerPluginRTSPServer*
 MediaServerPluginRTSPServer::createNew(UsageEnvironment &env, const RTSPParameters &params, IMStreamFactory* stream_factory) {
+  int m_HTTPServerSocket = -1;
+  int m_HTTPsServerSocket = -1;
+  int ourSocketIPv6 = -1;
+  if (params.use_ipv6) {
+    ourSocketIPv6 = setUpOurSocket(env, Port(params.port), AF_INET6);
+    if (ourSocketIPv6 < 0) {
+      env << "MediaServerPluginRTSPServer::createNew: opening IPV6 rtsp port " << params.port << " failed\n";
+      if (!params.ports_are_optional) return nullptr;
+    } else {
+      env << "MediaServerPluginRTSPServer::createNew: setUpOurSocket(" << params.port << ",IPV6) ok: "
+          << ourSocketIPv6 << "\n";
+    }
+  }
   const int ourSocketIPv4 = CreateAcceptSocket(env, Port(params.port), params.bind_to_interface);
   if (ourSocketIPv4 < 0) {
     env << "MediaServerPluginRTSPServer::createNew: opening rtsp port " << params.port << " failed\n";
-    return nullptr;
-  }
-  env << "MediaServerPluginRTSPServer::createNew: CreateAcceptSocket(" << params.port << ") returned "
-      << ourSocketIPv4 << "\n";
-  const int ourSocketIPv6 = setUpOurSocket(env, Port(params.port), AF_INET6);
-  if (ourSocketIPv6 < 0) {
-    env << "MediaServerPluginRTSPServer::createNew: opening IPV6 rtsp port " << params.port << " failed\n";
-  } else {
-    env << "MediaServerPluginRTSPServer::createNew: setUpOurSocket(" << params.port << ",IPV6) returned "
-        << ourSocketIPv6 << "\n";
-  }
-  int m_HTTPServerSocket = -1;
-  int m_HTTPsServerSocket = -1;
-  if (params.httpPort) {
-    m_HTTPServerSocket = CreateAcceptSocket(env, params.httpPort, params.bind_to_interface);
-    if (m_HTTPServerSocket < 0) {
-      env << "MediaServerPluginRTSPServer::createNew: opening http port " << params.httpPort << " failed\n";
+    if (!params.ports_are_optional) {
       if (ourSocketIPv6 >= 0) ::closeSocket(ourSocketIPv6);
-      ::closeSocket(ourSocketIPv4);
       return nullptr;
     }
-    env << "MediaServerPluginRTSPServer::createNew: CreateAcceptSocket(" << params.httpPort << ") returned "
-        << m_HTTPServerSocket << "\n";
-    if (params.httpsPort) {
-      m_HTTPsServerSocket = CreateAcceptSocket(env, params.httpsPort, params.bind_to_interface);
-      if (m_HTTPsServerSocket < 0) {
-        env << "MediaServerPluginRTSPServer::createNew: opening https port " << params.httpsPort << " failed\n";
-        ::closeSocket(m_HTTPServerSocket);
-        if (ourSocketIPv6 >= 0) ::closeSocket(ourSocketIPv6);
-        ::closeSocket(ourSocketIPv4);
-        return nullptr;
+  } else {
+    env << "MediaServerPluginRTSPServer::createNew: CreateAcceptSocket(" << params.port << ") ok: "
+        << ourSocketIPv4 << "\n";
+    if (params.httpPort) {
+      m_HTTPServerSocket = CreateAcceptSocket(env, params.httpPort, params.bind_to_interface);
+      if (m_HTTPServerSocket < 0) {
+        env << "MediaServerPluginRTSPServer::createNew: opening http port " << params.httpPort << " failed\n";
+        if (!params.ports_are_optional) {
+          if (ourSocketIPv6 >= 0) ::closeSocket(ourSocketIPv6);
+          ::closeSocket(ourSocketIPv4);
+          return nullptr;
+        }
+      } else {
+        env << "MediaServerPluginRTSPServer::createNew: CreateAcceptSocket(" << params.httpPort << ") ok: "
+            << m_HTTPServerSocket << "\n";
+        if (params.httpsPort) {
+          m_HTTPsServerSocket = CreateAcceptSocket(env, params.httpsPort, params.bind_to_interface);
+          if (m_HTTPsServerSocket < 0) {
+            env << "MediaServerPluginRTSPServer::createNew: opening https port " << params.httpsPort << " failed\n";
+            if (!params.ports_are_optional) {
+              ::closeSocket(m_HTTPServerSocket);
+              if (ourSocketIPv6 >= 0) ::closeSocket(ourSocketIPv6);
+              ::closeSocket(ourSocketIPv4);
+              return nullptr;
+            }
+          } else {
+            env << "MediaServerPluginRTSPServer::createNew: CreateAcceptSocket(" << params.httpsPort << ") ok: "
+                << m_HTTPsServerSocket << "\n";
+          }
+        }
       }
-      env << "MediaServerPluginRTSPServer::createNew: CreateAcceptSocket(" << params.httpsPort << ") returned "
-          << m_HTTPsServerSocket << "\n";
     }
   }
-  return new MediaServerPluginRTSPServer(env, ourSocketIPv4, ourSocketIPv6, m_HTTPServerSocket, m_HTTPsServerSocket, params, stream_factory);
+  if (ourSocketIPv4 >= 0 || ourSocketIPv6 >= 0) {
+    return new MediaServerPluginRTSPServer(env, ourSocketIPv4, ourSocketIPv6, m_HTTPServerSocket, m_HTTPsServerSocket, params, stream_factory);
+  }
+  return nullptr;
 }
 
 MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(UsageEnvironment &env, int ourSocketIPv4, int ourSocketIPv6,
@@ -1614,15 +1631,26 @@ void MediaServerPluginRTSPServer::generateInfoString(void)
 {
   unsigned int connections = 0;
   std::stringstream ss;
-  ss << "---- RtspMStreamPlugin(" PLUGIN_VERSION ", api:" RTCMEDIALIB_API_VERSION  "): url: " << m_urlPrefix.get() << "stream_name";
-  if (params.httpPort)
-    ss << " | RTSP-over-HTTP tunnel (Port " << params.httpPort << ")";
-  else
-    ss << " | no RTSP-over-HTTP tunnel";
-  if (params.httpsPort)
-    ss << " | RTSP-over-HTTP-over-SSL tunnel (Port " << params.httpsPort << ")";
-  else
-    ss << " | no RTSP-over-HTTP-over-SSL tunnel";
+  ss << "---- RtspMStreamPlugin(" PLUGIN_VERSION "(" __DATE__ " " __TIME__ "), api:" RTCMEDIALIB_API_VERSION "): url: "
+     << m_urlPrefix.get() << "stream_name";
+  if (params.httpPort) {
+    if (m_HTTPServerSocket >= 0) {
+      ss << " | RTSP-over-HTTP tunnel (Port " << params.httpPort << ")";
+    } else {
+      ss << " | RTSP-over-HTTP tunnel (opening Port " << params.httpPort << " failed)";
+    }
+  } else {
+    ss << " | no RTSP-over-HTTP tunnel configured";
+  }
+  if (params.httpsPort) {
+    if (m_HTTPsServerSocket >= 0) {
+      ss << " | RTSP-over-HTTP-over-SSL tunnel (Port " << params.httpsPort << ")";
+    } else {
+      ss << " | RTSP-over-HTTP-over-SSL tunnel (opening Port " << params.httpsPort << " failed)";
+    }
+  } else {
+    ss << " | no RTSP-over-HTTP-over-SSL tunnel configured";
+  }
   ss << "\n";
   {
     std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);

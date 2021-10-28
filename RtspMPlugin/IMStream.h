@@ -92,10 +92,12 @@ public:
   RTSPParameters(LogCallbackPtr log_cb,void *log_cb_context,
                  StatusCallbackPtr status_cb,void *status_cb_context,
                  uint16_t port,uint16_t httpPort,uint16_t httpsPort,uint32_t bind_to_interface,
+                 bool use_ipv6,bool ports_are_optional,
                  const std::string &https_cert_file,const std::string &https_key_path,
                  const std::string &user,const std::string &pass)
     : MPluginParams(log_cb,log_cb_context,status_cb,status_cb_context),
       port(port),httpPort(httpPort),httpsPort(httpsPort),bind_to_interface(bind_to_interface),
+      use_ipv6(use_ipv6),ports_are_optional(ports_are_optional),
       https_cert_file(https_cert_file),https_key_path(https_key_path),user(user),pass(pass) {}
   const std::string &getHttpCertFile(void) const {return https_cert_file;}
   const std::string &getHttpKeyPath(void) const {return https_key_path;}
@@ -105,6 +107,8 @@ public:
   uint16_t httpPort = 0;
   uint16_t httpsPort = 0;
   uint32_t bind_to_interface = 0;
+  bool use_ipv6 = false;
+  bool ports_are_optional = false;
 private:
   const std::string https_cert_file;
   const std::string https_key_path;
@@ -128,7 +132,7 @@ typedef const char *(InitializeMPluginFunc)(
                     IMStreamFactory *streamManager,
                     const MPluginParams &params);
 
-#define RTCMEDIALIB_API_VERSION "0.8"
+#define RTCMEDIALIB_API_VERSION "0.9"
     // will return the API version of the Library.
     // when the interface_api_version_of_caller does not match,
     // the library will not call the stream_factory.

@@ -316,6 +316,7 @@ int main(int argc,char *argv[]) {
     RTSPParameters params(&OnLog,nullptr,
                           &OnStatusInfo,nullptr,
                           2554,8880,8881,0,
+                          false,true,
                           "C:\\Users\\01jga728\\zertifikat-pub.pem",
                           "C:\\Users\\01jga728\\zertifikat-key.pem",
                           "","");
