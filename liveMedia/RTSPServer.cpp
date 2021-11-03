@@ -384,7 +384,10 @@ void RTSPServer::RTSPClientConnection
   }
   strcat(urlTotalSuffix, urlSuffix);
     
-  if (!authenticationOK("DESCRIBE", urlTotalSuffix, fullRequestStr)) return;
+  if (!authenticationOK("DESCRIBE", urlTotalSuffix, fullRequestStr)) {
+    handleRequestBytesResume();
+    return;
+  }
     
   // We should really check that the request contains an "Accept:" #####
   // for "application/sdp", because that's what we're sending back #####
