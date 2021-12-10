@@ -2079,8 +2079,11 @@ RTSPClient::RequestRecord* RTSPClient::RequestQueue::findByCSeq(unsigned cseq) {
 }
 
 void RTSPClient::RequestQueue::reset() {
-  delete fHead;
-  fHead = fTail = NULL;
+    // avoid recursive deleting because of stack overflow:
+  RequestRecord* request;
+  while ((request = dequeue()) != NULL) {
+    delete request;
+  }
 }
 
 
