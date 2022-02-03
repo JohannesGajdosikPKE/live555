@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "groupsock"
-// Copyright (c) 1996-2021 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2022 Live Networks, Inc.  All rights reserved.
 // Helper routines to implement 'group sockets'
 // Implementation
 
@@ -180,7 +180,7 @@ int setupDatagramSocket(UsageEnvironment& env, Port port, int domain) {
       // For IPv6 sockets, we need the IPV6_V6ONLY flag set to 1, otherwise we would not
       // be able to have an IPv4 socket and an IPv6 socket bound to the same port:
       int const one = 1;
-      (void)setsockopt(newSocket, IPPROTO_IPV6, IPV6_V6ONLY, &one, sizeof one);
+      (void)setsockopt(newSocket, IPPROTO_IPV6, IPV6_V6ONLY, (const char*)&one, sizeof one);
 
       MAKE_SOCKADDR_IN6(name, port.num());
       if (bind(newSocket, (struct sockaddr*)&name, sizeof name) != 0) {
@@ -351,7 +351,7 @@ int setupStreamSocket(UsageEnvironment& env, Port port, int domain,
       // For IPv6 sockets, we need the IPV6_V6ONLY flag set to 1, otherwise we would not
       // be able to have an IPv4 socket and an IPv6 socket bound to the same port:
       int const one = 1;
-      (void)setsockopt(newSocket, IPPROTO_IPV6, IPV6_V6ONLY, &one, sizeof one);
+      (void)setsockopt(newSocket, IPPROTO_IPV6, IPV6_V6ONLY, (const char*)&one, sizeof one);
 
       MAKE_SOCKADDR_IN6(name, port.num());
       if (bind(newSocket, (struct sockaddr*)&name, sizeof name) != 0) {
@@ -408,16 +408,6 @@ int readSocket(UsageEnvironment& env,
 	|| err == EAGAIN
 #endif
 	|| err == 113 /*EHOSTUNREACH (Linux)*/) { // Why does Linux return this for datagram sock?
-      switch (fromAddress.ss_family) {
-	case AF_INET: {
-	  ((sockaddr_in&)fromAddress).sin_addr.s_addr = 0;
-	  break;
-	}
-        case AF_INET6: {
-	  for (unsigned i = 0; i < 16; ++i) ((sockaddr_in6&)fromAddress).sin6_addr.s6_addr[i] = 0;
-	  break;
-	}
-      }
       return 0;
     }
     //##### END HACK
@@ -597,7 +587,7 @@ Boolean socketJoinGroup(UsageEnvironment& env, int socket,
       return False;
     }
   }
-  if (setsockopt(socket, level, option_name, option_value, option_len) < 0) {
+  if (setsockopt(socket, level, option_name, (const char*)option_value, option_len) < 0) {
 #if defined(__WIN32__) || defined(_WIN32)
     if (env.getErrno() != 0) {
       // That piece-of-shit toy operating system (Windows) sometimes lies
@@ -650,7 +640,7 @@ Boolean socketLeaveGroup(UsageEnvironment&, int socket,
       return False;
     }
   }
-  if (setsockopt(socket, level, option_name, option_value, option_len) < 0) {
+  if (setsockopt(socket, level, option_name, (const char*)option_value, option_len) < 0) {
     return False;
   }
 
@@ -907,7 +897,7 @@ void getOurIPAddresses(UsageEnvironment& env) {
       if ((p->ifa_flags&IFF_UP) == 0 || (p->ifa_flags&IFF_LOOPBACK) != 0) continue;
 
       // Also ignore the interface if the address is considered 'bad' for us:
-      if (isBadAddressForUs(*p->ifa_addr)) continue;
+      if (p->ifa_addr == NULL || isBadAddressForUs(*p->ifa_addr)) continue;
       
       // We take the first IPv4 and first IPv6 addresses:
       if (p->ifa_addr->sa_family == AF_INET && addressIsNull(foundIPv4Address)) {
