@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2021 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2022 Live Networks, Inc.  All rights reserved.
 // A simple UDP source, where every UDP payload is a complete frame
 // Implementation
 
@@ -40,6 +40,10 @@ BasicUDPSource::BasicUDPSource(UsageEnvironment& env, Groupsock* inputGS)
 
 BasicUDPSource::~BasicUDPSource(){
   envir().taskScheduler().turnOffBackgroundReadHandling(fInputGS->socketNum());
+}
+
+unsigned BasicUDPSource::maxFrameSize() const {
+  return 0xFFFF; // maximum size of a UDP payload
 }
 
 void BasicUDPSource::doGetNextFrame() {

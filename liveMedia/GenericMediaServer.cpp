@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2021 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2022 Live Networks, Inc.  All rights reserved.
 // A generic media server class, used to implement a RTSP server, and any other server that uses
 //  "ServerMediaSession" objects to describe media to be served.
 // Implementation
@@ -260,8 +260,8 @@ GenericMediaServer
     fClientSessions(HashTable::create(STRING_HASH_KEYS)),
     fPreviousClientSessionId(0),
     nr_of_workers(GetNrOfCores()),
-    workers(new std::unique_ptr<Worker>[nr_of_workers])
-{
+    workers(new std::unique_ptr<Worker>[nr_of_workers]),
+    fTLSCertificateFileName(NULL), fTLSPrivateKeyFileName(NULL) {
 //fprintf(stderr,"GenericMediaServer::GenericMediaServer: %u workers\n", nr_of_workers);
   ignoreSigPipeOnSocket(fServerSocketIPv4); // so that clients on the same host that are killed don't also kill us
   ignoreSigPipeOnSocket(fServerSocketIPv6); // ditto
@@ -278,6 +278,8 @@ GenericMediaServer::~GenericMediaServer() {
   ::closeSocket(fServerSocketIPv4);
   envir().taskScheduler().turnOffBackgroundReadHandling(fServerSocketIPv6);
   ::closeSocket(fServerSocketIPv6);
+
+  delete[] fTLSCertificateFileName; delete[] fTLSPrivateKeyFileName;
 }
 
 UsageEnvironment *GenericMediaServer::createNewUsageEnvironment(TaskScheduler &scheduler) {
@@ -474,6 +476,12 @@ envir() << "GenericMediaServer::incomingConnectionHandlerOnSocket: accept(" << s
   (void)createNewClientConnection(clientSocket, clientAddr);
 }
 
+void GenericMediaServer
+::setTLSFileNames(char const* certFileName, char const* privKeyFileName) {
+  delete[] fTLSCertificateFileName; fTLSCertificateFileName = strDup(certFileName);
+  delete[] fTLSPrivateKeyFileName; fTLSPrivateKeyFileName = strDup(privKeyFileName);
+}
+
 
 ////////// GenericMediaServer::ClientConnection implementation //////////
 
@@ -485,10 +493,18 @@ static GenericMediaServer::ClientConnection::IdType GenerateId(void) {
 }
 
 GenericMediaServer::ClientConnection
-::ClientConnection(UsageEnvironment &threaded_env, GenericMediaServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr)
-  : threaded_env(threaded_env), fOurServer(ourServer), id(GenerateId()), init_command(0), fOurSocket(clientSocket), fClientAddr(clientAddr) {
+::ClientConnection(UsageEnvironment &threaded_env, GenericMediaServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr, Boolean useTLS)
+  : threaded_env(threaded_env), fOurServer(ourServer), id(GenerateId()), init_command(0), fOurSocket(clientSocket), fClientAddr(clientAddr), fTLS(threaded_env) {
     envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::ClientConnection(" << clientSocket << ")\n";
     envir().taskScheduler().addNrOfUsers(1);
+  if (useTLS) {
+    // Perform extra processing to handle a TLS connection:
+    fTLS.setCertificateAndPrivateKeyFileNames(ourServer.fTLSCertificateFileName,
+					      ourServer.fTLSPrivateKeyFileName);
+    fTLS.isNeeded = True;
+
+    fTLS.tlsAcceptIsNeeded = True; // call fTLS.accept() the next time the socket is readable
+  }
 }
 
 void GenericMediaServer::ClientConnection::afterConstruction(void) {
@@ -541,9 +557,21 @@ void GenericMediaServer::ClientConnection::incomingRequestHandler(void* instance
 void GenericMediaServer::ClientConnection::incomingRequestHandler() {
     // this is called from the tasksceduler, asserting does not hurt:
   envir().taskScheduler().assertSameThread();
-  struct sockaddr_storage dummy; // 'from' address, meaningless in this case
+  if (fTLS.tlsAcceptIsNeeded) { // we need to successfully call fTLS.accept() first:
+    if (fTLS.accept(fOurSocket) <= 0) return; // either an error, or we need to try again later
+
+    fTLS.tlsAcceptIsNeeded = False;
+    // We can now read data, as usual:
+  }
+
+  int bytesRead;
+  if (fTLS.isNeeded) {
+    bytesRead = fTLS.read(&fRequestBuffer[fRequestBytesAlreadySeen], fRequestBufferBytesLeft);
+  } else {
+    struct sockaddr_storage dummy; // 'from' address, meaningless in this case
   
-  int bytesRead = readSocket(envir(), fOurSocket, &fRequestBuffer[fRequestBytesAlreadySeen], fRequestBufferBytesLeft, dummy);
+    bytesRead = readSocket(envir(), fOurSocket, &fRequestBuffer[fRequestBytesAlreadySeen], fRequestBufferBytesLeft, dummy);
+  }
   if (bytesRead < 0) {
     if (bytesRead == -1) {
       envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::incomingRequestHandler: "

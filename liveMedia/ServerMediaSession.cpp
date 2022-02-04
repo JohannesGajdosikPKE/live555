@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2021 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2022 Live Networks, Inc.  All rights reserved.
 // A data structure that represents a session that consists of
 // potentially multiple (audio and/or video) sub-sessions
 // (This data structure is used for media *streamers* - i.e., servers.
@@ -63,7 +63,8 @@ ServerMediaSession::ServerMediaSession(UsageEnvironment& env,
 				       char const* info,
 				       char const* description,
 				       Boolean isSSM, char const* miscSDPLines)
-  : Medium(env), fIsSSM(isSSM), fSubsessionsHead(NULL),
+  : Medium(env), streamingUsesSRTP(False), streamingIsEncrypted(False),
+    fIsSSM(isSSM), fSubsessionsHead(NULL),
     fSubsessionsTail(NULL), fSubsessionCounter(0),
     fReferenceCount(0), fDeleteWhenUnreferenced(False) {
   fStreamName = strDup(streamName == NULL ? "" : streamName);
@@ -260,7 +261,7 @@ char* ServerMediaSession::generateSDPDescription(int addressFamily) {
     // Unless subsessions have differing durations, we also have a "a=range:" line:
     float dur = duration();
     if (dur == 0.0) {
-      rangeLine = strDup("a=range:npt=0-\r\n");
+      rangeLine = strDup("a=range:npt=now-\r\n");
     } else if (dur > 0.0) {
       char buf[100];
       sprintf(buf, "a=range:npt=0-%.3f\r\n", dur);
@@ -455,7 +456,7 @@ ServerMediaSubsession::rangeSDPLine() const {
   // Use our own duration for a "a=range:" line:
   float ourDuration = duration();
   if (ourDuration == 0.0) {
-    return strDup("a=range:npt=0-\r\n");
+    return strDup("a=range:npt=now-\r\n");
   } else {
     char buf[100];
     sprintf(buf, "a=range:npt=0-%.3f\r\n", ourDuration);
