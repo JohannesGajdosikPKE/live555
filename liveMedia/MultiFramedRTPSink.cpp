@@ -374,12 +374,13 @@ void MultiFramedRTPSink::sendPacketIfNecessary() {
 	// overwrite any following (still to be sent) frame data, we can't encrypt/tag
 	// the packet in place.  Instead, we have to make a copy (on the stack) of
 	// the packet, before encrypting/tagging/sending it:
-	u_int8_t packet[fOutBuf->curPacketSize() + SRTP_MKI_LENGTH + SRTP_AUTH_TAG_LENGTH];
-	memcpy(packet, fOutBuf->packet(), fOutBuf->curPacketSize());
+	// Johannes Gajdosik: dynamic allocation on the stack does not compile with VS
+	std::unique_ptr<u_int8_t[]> packet(std::make_unique<u_int8_t[]>(fOutBuf->curPacketSize() + SRTP_MKI_LENGTH + SRTP_AUTH_TAG_LENGTH));
+	memcpy(packet.get(), fOutBuf->packet(), fOutBuf->curPacketSize());
 	unsigned newPacketSize;
 	
-	if (fCrypto->processOutgoingSRTPPacket(packet, fOutBuf->curPacketSize(), newPacketSize)) {
-	  if (!fRTPInterface.sendPacket(packet, newPacketSize)) {
+	if (fCrypto->processOutgoingSRTPPacket(packet.get(), fOutBuf->curPacketSize(), newPacketSize)) {
+	  if (!fRTPInterface.sendPacket(packet.get(), newPacketSize)) {
 	    // if failure handler has been specified, call it
 	    if (fOnSendErrorFunc != NULL) (*fOnSendErrorFunc)(fOnSendErrorData);
 	  }

@@ -238,7 +238,7 @@ target_include_directories(${PLUGIN} PRIVATE ${OPENSSL_INCLUDE_PATH})
 set(CMAKE_CXX_STANDARD 11)
 
 target_compile_options(${PLUGIN} PRIVATE -DLIVE555_FORCE_BOOLEAN_TYPE=char)
-target_compile_options(${PLUGIN} PRIVATE -DNO_OPENSSL)
+#target_compile_options(${PLUGIN} PRIVATE -DNO_OPENSSL)
 target_compile_options(${PLUGIN} PRIVATE -D__STDC_LIMIT_MACROS)
 target_compile_options(${PLUGIN} PRIVATE -DNOMINMAX)
 
