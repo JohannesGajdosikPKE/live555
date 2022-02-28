@@ -27,7 +27,11 @@ Boolean UsageEnvironment::reclaim() {
     delete this;
     return True;
   }
-
+  (*this) << "UsageEnvironment(" << this << ")::reclaim: cannot delete this, because "
+          << (liveMediaPriv?"liveMediaPriv":"")
+          << ((liveMediaPriv&&groupsockPriv)?",":"")
+          << (groupsockPriv?"groupsockPriv":"")
+          << " is/are still used\n";
   return False;
 }
 

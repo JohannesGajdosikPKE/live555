@@ -213,7 +213,10 @@ public:
         (*env) << "GenericMediaServer::Worker::mainThread: end\n";
         sem.post();
         sem2.wait();
-        if (!env->reclaim()) abort();
+        if (!env->reclaim()) {
+          *env << "GenericMediaServer::Worker::mainThread: env->reclaim failed"
+                  " and destruction in live555 is a mess. Prefer memleak over crash/abort\n";
+        }
         env = nullptr;
         delete scheduler; scheduler = nullptr;
       }) {

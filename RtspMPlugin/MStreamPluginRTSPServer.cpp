@@ -1725,7 +1725,10 @@ private:
           *env << "PluginInstance::PluginInstance::l: server creation failed\n";
         }
         *env << "PluginInstance::PluginInstance::l: end\n";
-        if (!env->reclaim()) abort();
+        if (!env->reclaim()) {
+          *env << "PluginInstance::PluginInstance::l: env->reclaim failed"
+                  " and destruction in live555 is a mess. Prefer memleak over crash/abort\n";
+        }
         env = nullptr;
         delete scheduler; scheduler = nullptr;
         if (!server) {
