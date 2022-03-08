@@ -61,6 +61,9 @@ protected:
   static void incomingConnectionHandlerHTTP(void* instance, int /*mask*/);
   void incomingConnectionHandlerHTTP(void);
 
+  class MyRTSPClientSession;
+  ClientSession *createNewClientSession(UsageEnvironment &env, u_int32_t sessionId) override;
+
   class RTSPClientConnectionSSL : public RTSPServer::RTSPClientConnection, public SSLSocketServerPipe
   {
     RTSPClientConnectionSSL(UsageEnvironment &env, RTSPServer& ourServer, int clientSocket, struct sockaddr_storage clientAddr, const char* certpath, const char* keypath);

@@ -166,6 +166,30 @@ void PrintBytes(const uint8_t *data, int size, int64_t time) {
   std::cout << std::dec << std::endl;
 }
 
+class MediaServerPluginRTSPServer::MyRTSPClientSession : public RTSPServer::RTSPClientSession {
+public:
+  MyRTSPClientSession(UsageEnvironment& env, RTSPServer& ourServer, u_int32_t sessionId)
+    : RTSPClientSession(env, ourServer, sessionId) {}
+  int getSocket(void) const { return socket; }
+  using RTSPClientSession::fOurServerMediaSession;
+protected:
+  ~MyRTSPClientSession(void) {}
+  void handleCmd_SETUP(RTSPClientConnection* ourClientConnection,
+    char const* urlPreSuffix, char const* urlSuffix, char const* fullRequestStr) override {
+    const int s = ourClientConnection ? ourClientConnection->getSocket() : 0;
+    if (socket && socket != s) {
+      envir() << "MyRTSPClientSession::handleCmd_SETUP: STRANGE: changing socket from " << socket << " to " << s << "\n";
+    }
+    socket = s;
+    RTSPClientSession::handleCmd_SETUP(ourClientConnection, urlPreSuffix, urlSuffix, fullRequestStr);
+  }
+  int socket = 0;
+};
+
+GenericMediaServer::ClientSession *MediaServerPluginRTSPServer::createNewClientSession(UsageEnvironment& env, u_int32_t sessionId) {
+  return new MyRTSPClientSession(env, *this, sessionId);
+}
+
 struct KeepTaskHelper;
 
 class MediaServerPluginRTSPServer::StreamMapEntry : public std::enable_shared_from_this<MediaServerPluginRTSPServer::StreamMapEntry>, public IdContainer {
@@ -179,7 +203,7 @@ public:
   typedef std::function<void(const Frame&)> FrameFunction;
   class Registration;
   std::unique_ptr<Registration> connect(const SubsessionInfo *info,FrameFunction &&f);
-  unsigned int printConnections(const std::string &url,std::ostream &o) const;
+  unsigned int printRegistrations(const std::string &url,std::ostream &o) const;
   void keepAlive(void);
   MediaServerPluginRTSPServer &server;
   UsageEnvironment &env(void) const {return server.envir();}
@@ -433,7 +457,7 @@ void MediaServerPluginRTSPServer::StreamMapEntry::onClose(void) {
   env() << "StreamMapEntry(" << id << "," << name_for_logging.c_str() << ")::onClose: end\n";
 }
 
-unsigned int MediaServerPluginRTSPServer::StreamMapEntry::printConnections(const std::string &url,std::ostream &o) const {
+unsigned int MediaServerPluginRTSPServer::StreamMapEntry::printRegistrations(const std::string &url,std::ostream &o) const {
   unsigned int rval = 0;
   std::lock_guard<std::recursive_mutex> lock(registration_mutex);
   for (auto &it : registration_map) {
@@ -445,10 +469,9 @@ unsigned int MediaServerPluginRTSPServer::StreamMapEntry::printConnections(const
     int track_id = 0;
     for (auto &it : registration_map) {
       const unsigned int c = it.second.size();
-      o << ", " << SubsessionInfoToString(*it.first) << "(" << track_id << "): " << c << " connection(s)" ;
+      o << ", " << SubsessionInfoToString(*it.first) << "(" << track_id << "): " << c << " registrations(s)" ;
       track_id++;
     }
-    o << "\n";
   }
   return rval;
 }
@@ -1427,7 +1450,7 @@ MediaServerPluginRTSPServer::getStreamMapEntry(const std::string &stream_name) c
 void MediaServerPluginRTSPServer
 ::lookupServerMediaSession(UsageEnvironment &env, char const *streamName,
                            lookupServerMediaSessionCompletionFunc *completionFunc,
-                           void *completionClientData,
+                           void *completionClientData, // actually RTSPServer::RTSPClientSession
                            Boolean isFirstLookupInSession) {
   if (!completionFunc) abort();
   if (!streamName) abort();
@@ -1627,12 +1650,46 @@ void MediaServerPluginRTSPServer::GenerateInfoString(void *context) {
   reinterpret_cast<MediaServerPluginRTSPServer*>(context)->generateInfoString();
 }
 
+
+static std::string SocketToString(const int s) {
+  struct sockaddr_storage sock_addr;
+  socklen_t sock_addrlen = sizeof(sock_addr);
+  char peer_host_str[INET6_ADDRSTRLEN + 1];
+  char peer_port_str[7 + 1];
+  if (getpeername(s, (struct sockaddr*)&sock_addr, &sock_addrlen) ||
+      getnameinfo((struct sockaddr*)&sock_addr, sock_addrlen,
+                  peer_host_str, sizeof(peer_host_str), peer_port_str, sizeof(peer_port_str),
+                  NI_NUMERICHOST | NI_NUMERICSERV)) {
+    strcpy(peer_host_str, "unknown");
+    strcpy(peer_port_str, "unknown");
+  }
+  char sock_host_str[INET6_ADDRSTRLEN + 1];
+  char sock_port_str[7 + 1];
+  sock_addrlen = sizeof(sock_addr);
+  if (getsockname(s, (struct sockaddr*)&sock_addr, &sock_addrlen) ||
+      getnameinfo((struct sockaddr*)&sock_addr, sock_addrlen,
+                  sock_host_str, sizeof(sock_host_str), sock_port_str, sizeof(sock_port_str),
+                  NI_NUMERICHOST | NI_NUMERICSERV)) {
+    strcpy(sock_host_str, "unknown");
+    strcpy(sock_port_str, "unknown");
+  }
+  return std::string(peer_host_str) + ":" + peer_port_str + "->" + sock_host_str + ":" + sock_port_str;
+}
+
 void MediaServerPluginRTSPServer::generateInfoString(void)
 {
-  unsigned int connections = 0;
   std::stringstream ss;
-  ss << "---- RtspMStreamPlugin(" PLUGIN_VERSION "(" __DATE__ " " __TIME__ "), api:" RTCMEDIALIB_API_VERSION "): url: "
-     << m_urlPrefix.get() << "stream_name";
+  ss << "---- RtspMStreamPlugin(" PLUGIN_VERSION "(" __DATE__ " " __TIME__ "), api:" RTCMEDIALIB_API_VERSION "): "
+        "bound to ";
+  if (params.bind_to_interface) {
+    ss << "interface " << (params.bind_to_interface & 0xFF)
+       << '.' << ((params.bind_to_interface >> 8) & 0xFF)
+       << '.' << ((params.bind_to_interface >> 16) & 0xFF)
+       << '.' << (params.bind_to_interface >> 24);
+  } else {
+    ss << "all interfaces";
+  }
+  ss << ", example url: " << m_urlPrefix.get() << "stream_name";
   if (params.httpPort) {
     if (m_HTTPServerSocket >= 0) {
       ss << " | RTSP-over-HTTP tunnel (Port " << params.httpPort << ")";
@@ -1652,14 +1709,46 @@ void MediaServerPluginRTSPServer::generateInfoString(void)
     ss << " | no RTSP-over-HTTP-over-SSL tunnel configured";
   }
   ss << "\n";
+
+
+  std::map<std::string,std::multiset<std::string> > connection_info,stream_info;
+  {
+    std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
+    HashTable::Iterator* iter = HashTable::Iterator::create(*fClientSessions);
+    GenericMediaServer::ClientSession *clientSession;
+    char const *key;
+    while ((clientSession = (GenericMediaServer::ClientSession*)(iter->next(key))) != NULL) {
+      MyRTSPClientSession *const session(dynamic_cast<MyRTSPClientSession*>(clientSession));
+      if (session && session->getSocket()) {
+        const std::string s(SocketToString(session->getSocket()));
+        connection_info[s].insert(session->fOurServerMediaSession->streamName());
+        stream_info[session->fOurServerMediaSession->streamName()].insert(s);
+      }
+    }
+    delete iter;
+  }
+
+  ss << "RtspMStreamPlugin: " << connection_info.size() << " connections:\n";
+  for (auto &it : connection_info) {
+    ss << it.first;
+    for (auto &it2 : it.second) ss << ' ' << it2;
+    ss << '\n';
+  }
+  ss << "\nRtspMStreamPlugin: " << stream_info.size() << " streams:\n";
+  unsigned int registrations = 0;
   {
     std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
     for (auto &it : stream_map) {
       auto s(it.second.lock());
-      if (s) connections += s->printConnections(m_urlPrefix.get()+it.first,ss);
+      if (s) {
+        registrations += s->printRegistrations(m_urlPrefix.get()+it.first,ss);
+        auto &m(stream_info[it.first]);
+        for (auto& it2 : m) ss << ' ' << it2;
+        ss << '\n';
+      }
     }
   }
-  ss << "RtspMStreamPlugin Connections: " << connections << "\n";
+  ss << "RtspMStreamPlugin Registrations: " << registrations << "\n";
 #ifdef ALLOC_STATS
   MemAccounter::Singleton().print(ss);
   PrintAllocInfos(ss);

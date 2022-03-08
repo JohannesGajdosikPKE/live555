@@ -138,6 +138,7 @@ public: // should be protected, but some old compilers complain otherwise
     UsageEnvironment& envir() { return threaded_env; }
     typedef void *IdType;
     IdType getId(void) const {return id;}
+    int getSocket(void) const {return fOurSocket;}
   protected:
     void closeSockets();
 
@@ -175,23 +176,29 @@ public: // should be protected, but some old compilers complain otherwise
 
   // The state of an individual client session (using one or more sequential TCP connections) handled by a server:
   class ClientSession {
+  public:
+    void deleteThis(void);
+    u_int32_t getOurSessionId(void) const {return fOurSessionId;}
+    ServerMediaSession *getOurServerMediaSession(void) const {return fOurServerMediaSession;}
   protected:
     ClientSession(UsageEnvironment& threaded_env, GenericMediaServer& ourServer, u_int32_t sessionId);
     virtual ~ClientSession();
 
+  public:
     UsageEnvironment &envir() {return threaded_env;}
     void noteLiveness();
+  protected:
     static void noteClientLiveness(ClientSession* clientSession);
     static void livenessTimeoutTask(ClientSession* clientSession);
 
   protected:
-    friend class GenericMediaServer;
-    friend class ClientConnection;
     UsageEnvironment &threaded_env;
     GenericMediaServer& fOurServer;
     const u_int32_t fOurSessionId;
     ServerMediaSession* fOurServerMediaSession;
     TaskToken fLivenessCheckTask;
+      // prevent recursive destruction:
+    bool destructor_in_progress = false;
   };
 
 protected:
@@ -252,7 +259,7 @@ private:
     fClientConnections.erase(c->getId());
   }
   
-private:
+protected:
   typedef std::map<std::string,ServerMediaSession*> ServerMediaSessionMap;
   typedef std::map<UsageEnvironment*,ServerMediaSessionMap> ServerMediaSessionEnvMap;
   ServerMediaSessionEnvMap fServerMediaSessions; // maps 'stream name' strings to "ServerMediaSession" objects

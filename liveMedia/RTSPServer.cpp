@@ -24,6 +24,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "Base64.hh"
 #include <GroupsockHelper.hh>
 
+#include <list>
 #include <iostream>
 
 ////////// RTSPServer implementation //////////
@@ -264,7 +265,7 @@ void RTSPServer
   streamingOverTCPRecord* sotcpCur
     = (streamingOverTCPRecord*)fTCPStreamingDatabase->Lookup((char const*)socketNum);
   streamingOverTCPRecord* sotcpNew
-    = new streamingOverTCPRecord(clientSession->fOurSessionId, trackNum, sotcpCur);
+    = new streamingOverTCPRecord(clientSession->getOurSessionId(), trackNum, sotcpCur);
   fTCPStreamingDatabase->Add((char const*)socketNum, sotcpNew);
 }
 
@@ -280,7 +281,7 @@ void RTSPServer
   streamingOverTCPRecord* sotcp = sotcpHead;
   streamingOverTCPRecord* sotcpPrev = sotcpHead;
   do {
-    if (sotcp->fSessionId == clientSession->fOurSessionId && sotcp->fTrackNum == trackNum) break;
+    if (sotcp->fSessionId == clientSession->getOurSessionId() && sotcp->fTrackNum == trackNum) break;
     sotcpPrev = sotcp;
     sotcp = sotcp->fNext;
   } while (sotcp != NULL);
@@ -308,6 +309,11 @@ void RTSPServer
 }
 
 void RTSPServer::stopTCPStreamingOnSocket(int socketNum) {
+//  envir() << "RTSPServer::stopTCPStreamingOnSocket(" << socketNum << ") start\n";
+
+  std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
+  std::list<std::pair<RTSPClientSession*,unsigned int> > sessions;
+  {
   std::lock_guard<std::recursive_mutex> guard(fTCPStreamingDatabase_mutex);
   // Close any stream that is streaming over "socketNum" (using RTP/RTCP-over-TCP streaming):
   streamingOverTCPRecord* sotcp
@@ -317,7 +323,9 @@ void RTSPServer::stopTCPStreamingOnSocket(int socketNum) {
       RTSPClientSession* clientSession
 	= (RTSPServer::RTSPClientSession*)lookupClientSession(sotcp->fSessionId);
       if (clientSession != NULL) {
-	clientSession->deleteStreamByTrack(sotcp->fTrackNum);
+        sessions.push_back(std::pair<RTSPClientSession*, unsigned int>(clientSession, sotcp->fTrackNum));
+//        envir() << "RTSPServer::stopTCPStreamingOnSocket(" << socketNum << "): "
+//                   "found ClientSession(" << clientSession << ") with id " << sotcp->fSessionId << "\n";
       }
 
       streamingOverTCPRecord* sotcpNext = sotcp->fNext;
@@ -327,6 +335,11 @@ void RTSPServer::stopTCPStreamingOnSocket(int socketNum) {
     } while (sotcp != NULL);
     fTCPStreamingDatabase->Remove((char const*)socketNum);
   }
+  }
+  for (auto &it : sessions) {
+    it.first->deleteStreamByTrack(it.second);
+  }
+//  envir() << "RTSPServer::stopTCPStreamingOnSocket(" << socketNum << ") end\n";
 }
 
 
@@ -352,7 +365,7 @@ RTSPServer::RTSPClientConnection
 }
 
 RTSPServer::RTSPClientConnection::~RTSPClientConnection() {
-  envir() << "RTSPServer::RTSPClientConnection(" << getId() << ")::~RTSPClientConnection\n";
+  envir() << "RTSPServer::RTSPClientConnection(" << getId() << ")::~RTSPClientConnection start\n";
   envir().taskScheduler().assertSameThread();
   if (fOurSessionCookie != NULL) {
     // We were being used for RTSP-over-HTTP tunneling. Also remove ourselves from the 'session cookie' hash table before we go:
@@ -361,6 +374,7 @@ RTSPServer::RTSPClientConnection::~RTSPClientConnection() {
   }
   
   closeSocketsRTSP();
+  envir() << "RTSPServer::RTSPClientConnection(" << getId() << ")::~RTSPClientConnection end\n";
 }
 
 // Handler routines for specific RTSP commands:
@@ -932,7 +946,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
 	}
 	if (clientSession != NULL) {
 	  clientSession->handleCmd_SETUP(this, urlPreSuffix, urlSuffix, (char const*)fRequestBuffer);
-	  playAfterSetup = clientSession->fStreamAfterSETUP;
+	  playAfterSetup = clientSession->getStreamAfterSETUP();
 	} else if (areAuthenticated) {
 #ifdef DEBUG
 	  fprintf(stderr, "Calling handleCmd_sessionNotFound() (case 2)\n");
@@ -1375,7 +1389,7 @@ void RTSPServer::RTSPClientSession::deleteStreamByTrack(unsigned trackNum) {
       break;
     }
   }
-  if (noSubsessionsRemain) delete this;
+  if (noSubsessionsRemain) deleteThis();
 }
 
 void RTSPServer::RTSPClientSession::reclaimStreamStates() {
@@ -1880,7 +1894,7 @@ void RTSPServer::RTSPClientSession
       break;
     }
   }
-  if (noSubsessionsRemain) delete this;
+  if (noSubsessionsRemain) deleteThis();
 }
 
 void RTSPServer::RTSPClientSession

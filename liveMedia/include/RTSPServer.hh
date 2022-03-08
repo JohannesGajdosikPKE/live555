@@ -251,23 +251,26 @@ public: // should be protected, but some old compilers complain otherwise
 
   // The state of an individual client session (using one or more sequential TCP connections) handled by a RTSP server:
   class RTSPClientSession: public GenericMediaServer::ClientSession {
-  protected:
+  public:
     RTSPClientSession(UsageEnvironment& env, RTSPServer& ourServer, u_int32_t sessionId);
-    virtual ~RTSPClientSession();
+  protected:
+      virtual ~RTSPClientSession();
 
-    friend class RTSPServer;
-    friend class RTSPClientConnection;
     // Make the handler functions for each command virtual, to allow subclasses to redefine them:
+  public:
     virtual void handleCmd_SETUP(RTSPClientConnection* ourClientConnection,
 				 char const* urlPreSuffix, char const* urlSuffix, char const* fullRequestStr);
+  protected:
     static void SETUPLookupCompletionFunction1(void* clientData, ServerMediaSession* sessionLookedUp);
     virtual void handleCmd_SETUP_afterLookup1(ServerMediaSession* sms);
     static void SETUPLookupCompletionFunction2(void* clientData, ServerMediaSession* sessionLookedUp);
     virtual void handleCmd_SETUP_afterLookup2(ServerMediaSession* sms);
+  public:
     virtual void handleCmd_withinSession(RTSPClientConnection* ourClientConnection,
 					 char const* cmdName,
 					 char const* urlPreSuffix, char const* urlSuffix,
 					 char const* fullRequestStr);
+  protected:
     virtual void handleCmd_TEARDOWN(RTSPClientConnection* ourClientConnection,
 				    ServerMediaSubsession* subsession);
     virtual void handleCmd_PLAY(RTSPClientConnection* ourClientConnection,
@@ -278,8 +281,10 @@ public: // should be protected, but some old compilers complain otherwise
 					 ServerMediaSubsession* subsession, char const* fullRequestStr);
     virtual void handleCmd_SET_PARAMETER(RTSPClientConnection* ourClientConnection,
 					 ServerMediaSubsession* subsession, char const* fullRequestStr);
-  protected:
+  public:
     void deleteStreamByTrack(unsigned trackNum);
+    Boolean getStreamAfterSETUP (void) const {return fStreamAfterSETUP;}
+  protected:
     void reclaimStreamStates();
     Boolean isMulticast() const { return fIsMulticast; }
 
