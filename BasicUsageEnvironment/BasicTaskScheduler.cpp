@@ -29,6 +29,9 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #if defined(__WIN32__) || defined(_WIN32)
 extern "C" int initializeWinsockIfNecessary();
+#else
+  #include <fcntl.h>
+  #include <unistd.h>
 #endif
 
 ////////// BasicTaskScheduler //////////
@@ -96,7 +99,11 @@ uint64_t BasicTaskScheduler::executeCommand(std::function<void(uint64_t task_nr)
 #endif
     if (rc > 0) break;
     if (rc != 0) {
+#if defined(__WIN32__) || defined(_WIN32)
       printf("send failed: %d\n", WSAGetLastError());
+#else
+      printf("send failed: %d\n", errno);
+#endif
       abort();
     }
   }
@@ -141,8 +148,11 @@ void BasicTaskScheduler::commandRequestHandler(void) {
     if (rc < 0) {
 #if defined(__WIN32__) || defined(_WIN32)
       if (WSAGetLastError() == WSAEWOULDBLOCK) break;
-#endif
       printf("recv failed: %d\n", WSAGetLastError());
+#else
+      if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+      printf("recv failed: %d\n", errno);
+#endif
       abort();
     }
     std::function<void(uint64_t task_nr)> f;

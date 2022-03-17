@@ -19,8 +19,10 @@
 static inline
 unsigned int CurrentThreadId(void) {return GetCurrentThreadId();}
 #else
+#include <unistd.h>
+#include <sys/syscall.h>
 static inline
-unsigned int CurrentThreadId(void) {return gettid();}
+unsigned int CurrentThreadId(void) {return syscall(SYS_gettid);}
 #endif
 
 
@@ -146,7 +148,7 @@ public:
   ~AvasysMetadataSubsessionInfo(void) {}
 private:
   int generateFrame(int64_t frameTime, uint8_t *buffer,int buffer_size) {
-    sprintf((char*)buffer,"Avasys Metadata %lld",frameTime);
+    sprintf((char*)buffer,"Avasys Metadata %ld",frameTime);
     return strlen((const char*)buffer);
   }
   uint32_t getEstBitrate(void) const override {return 64;}
@@ -248,11 +250,11 @@ private:
 };
 
 class MyIMStreamFactory : public IMStreamFactory {
-  std::atomic<bool> continue_loop = true;
+  std::atomic<bool> continue_loop;
   std::set<MyTestIMStream*> stream_set;
   std::mutex stream_set_mutex;
 public:
-  MyIMStreamFactory(void) {}
+  MyIMStreamFactory(void) : continue_loop(true) {}
   void run(void) {
     std::cout << "Press Enter to quit..." << std::endl;
     std::thread th([this]() {

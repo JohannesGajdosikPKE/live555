@@ -152,11 +152,12 @@ static const char *SubsessionInfoToString(const SubsessionInfo &ssi) {
 
 
 struct Frame {
-  Frame(void) : size(0), time(0) {}
   Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t *data,int32_t size,int64_t time);
+  const uint8_t *getData(void) const {return data.get();}
   const uint32_t size;
   const int64_t time;
-  std::shared_ptr<const uint8_t[]> data;
+private:
+  std::shared_ptr<uint8_t> data; // actually contains an array and a custom deleter
 };
 
 static inline
@@ -230,15 +231,16 @@ private:
   const SubsessionInfo *const *subsession_info_list;
 };
 
-Frame::Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t *data,int32_t size,int64_t time)
-      :size((data && size>0)?size:0),time(time) {
-  if (Frame::size) {
+static
+std::shared_ptr<uint8_t> CreateSharedArray(const uint8_t *const data,const int32_t size) {
+  std::shared_ptr<uint8_t> rval;
+  if (size > 0) {
 #ifdef ALLOC_STATS
     AllocStatEntry &ae(GetAllocEntry(e.name));
 #endif
-    Frame::data = std::shared_ptr<const uint8_t[]>(
-      new uint8_t[Frame::size],
-      [s=Frame::size
+    rval = std::shared_ptr<uint8_t>(
+      new uint8_t[size],
+      [s=size
 #ifdef ALLOC_STATS
         ,&ae
 #endif
@@ -249,12 +251,17 @@ Frame::Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t 
 #endif
         delete[] d;
       });
-    memcpy(const_cast<uint8_t*>(Frame::data.get()),data,Frame::size);
+    memcpy(rval.get(),data,size);
 #ifdef ALLOC_STATS
     ae.alloc_count++;
-    ae.alloc_size += Frame::size;
+    ae.alloc_size += size;
 #endif
   }
+  return rval;
+}
+
+Frame::Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t *data,int32_t size,int64_t time)
+      :size((data && size>0)?size:0),time(time),data(CreateSharedArray(data,Frame::size)) {
 }
 
 class MediaServerPluginRTSPServer::StreamMapEntry::Registration : public IdContainer {
@@ -262,7 +269,7 @@ class MediaServerPluginRTSPServer::StreamMapEntry::Registration : public IdConta
                const SubsessionInfo *info,FrameFunction &&f)
     : map_entry(map_entry),env(map_entry->env()),info(info),f(std::move(f)) {
     map_entry->remember(this);
-    env << "StreamMapEntry::Registration(" << id << ")::Registration(" << map_entry->name.c_str() << "), use_count: " << map_entry.use_count() << "\n";
+    env << "StreamMapEntry::Registration(" << id << ")::Registration(" << map_entry->name.c_str() << "), use_count: " << (int)(map_entry.use_count()) << "\n";
   }
   const std::shared_ptr<StreamMapEntry> map_entry;
 public:
@@ -278,7 +285,7 @@ public:
   ~Registration(void) {
     env << "StreamMapEntry::Registration(" << id << "," << map_entry->name.c_str() << ")::~Registration start\n";
     map_entry->forget(this);
-    env << "StreamMapEntry::Registration(" << id << "," << map_entry->name.c_str() << ")::~Registration end, use_count:" << (map_entry.use_count()-1) << "\n";
+    env << "StreamMapEntry::Registration(" << id << "," << map_entry->name.c_str() << ")::~Registration end, use_count:" << (int)(map_entry.use_count()-1) << "\n";
   }
 public:
   UsageEnvironment &env;
@@ -379,13 +386,13 @@ struct KeepTaskHelper : public std::shared_ptr<MediaServerPluginRTSPServer::Stre
   KeepTaskHelper(std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> &&p)
     : std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry>(std::move(p)) {
     get()->env() << "KeepTaskHelper::KeepTaskHelper(" << get()->id << "," << get()->name.c_str() << "): "
-                    "keeping shared_ptr, use_count: " << use_count() << "\n";
+                    "keeping shared_ptr, use_count: " << (int)(use_count()) << "\n";
   }
   ~KeepTaskHelper(void) {
     UsageEnvironment &env(get()->env());
     const unsigned int id(get()->id);
     const std::string name(get()->name);
-    const auto uc(use_count()-1);
+    const int uc(use_count()-1);
     reset();
     env << "KeepTaskHelper::~KeepTaskHelper(" << id << "," << name.c_str() << "): "
            "shared_ptr released, use_count: " << uc << "\n";
@@ -555,12 +562,14 @@ int CreateAcceptSocket(UsageEnvironment& env, Port ourPort, unsigned int bind_to
     env << "MStreamPluginRtspServer CreateAcceptSocket: socket() failed: " << env.getErrno() << "\n";
     return -1;
   }
+#if defined(__WIN32__) || defined(_WIN32)
   const int yes = -1; // all bits set to 1
   if (0 != ::setsockopt(accept_fd,SOL_SOCKET,SO_EXCLUSIVEADDRUSE,(const char*)(&yes),sizeof(yes))) {
     env << "MStreamPluginRtspServer CreateAcceptSocket: setsockopt(SO_EXCLUSIVEADDRUSE) failed: " << env.getErrno() << "\n";
     ::closeSocket(accept_fd);
     return -1;
   }
+#endif
   struct sockaddr_in sock_addr;
   sock_addr.sin_family = AF_INET;
   sock_addr.sin_addr.s_addr = htonl(bind_to_interface);
@@ -587,7 +596,8 @@ MediaServerPluginRTSPServer::createNew(UsageEnvironment &env, const RTSPParamete
   int m_HTTPsServerSocket = -1;
   int ourSocketIPv6 = -1;
   if (params.use_ipv6) {
-    ourSocketIPv6 = setUpOurSocket(env, Port(params.port), AF_INET6);
+    Port p(params.port);
+    ourSocketIPv6 = setUpOurSocket(env, p, AF_INET6);
     if (ourSocketIPv6 < 0) {
       env << "MediaServerPluginRTSPServer::createNew: opening IPV6 rtsp port " << params.port << " failed\n";
       if (!params.ports_are_optional) return nullptr;
@@ -869,7 +879,7 @@ private:
     if (!isCurrentlyAwaitingData()) return; // we're not ready for the data yet
     if (my_frame_queue.empty()) return;
     Frame &f(my_frame_queue.front());
-    const u_int8_t *const frame_data = f.data.get();
+    const u_int8_t *const frame_data = f.getData();
     const unsigned int frame_size = f.size;
     if (frame_size <= 0) {
       envir() << "MyFrameSource(" << id << "," << name.c_str() << ")::deliverFrame: handleClosure\n";
@@ -1440,7 +1450,7 @@ MediaServerPluginRTSPServer::getStreamMapEntry(const std::string &stream_name) c
   if (it != stream_map.end()) {
     const std::shared_ptr<StreamMapEntry> rval(it->second.lock());
     if (rval) {
-      rval->env() << "MediaServerPluginRTSPServer::getStreamMapEntry(" << stream_name.c_str() << "): id: " << rval->id << ", use_count: " << rval.use_count() << "\n";
+      rval->env() << "MediaServerPluginRTSPServer::getStreamMapEntry(" << stream_name.c_str() << "): id: " << rval->id << ", use_count: " << (int)(rval.use_count()) << "\n";
     }
     return rval;
   }
@@ -1478,7 +1488,7 @@ void MediaServerPluginRTSPServer
         return;
       }
       env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << "): "
-             "creating new ServerMediaSession with existing StreamMap entry, use_count: " << e.use_count() << "\n";
+             "creating new ServerMediaSession with existing StreamMap entry, use_count: " << (int)(e.use_count()) << "\n";
       sms = createServerMediaSession(env,e);
       env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << "): "
            "new ServerMediaSession " << sms << " with existing StreamMap entry created\n";
@@ -1551,7 +1561,7 @@ void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer:
 }
 
 ServerMediaSession *MediaServerPluginRTSPServer::createServerMediaSession(UsageEnvironment &env, const std::shared_ptr<StreamMapEntry> &e) {
-  envir() << "MediaServerPluginRTSPServer::createServerMediaSession(" << e->name.c_str() << "): start, use_count: " << e.use_count() << "\n";
+  envir() << "MediaServerPluginRTSPServer::createServerMediaSession(" << e->name.c_str() << "): start, use_count: " << (int)(e.use_count()) << "\n";
   ServerMediaSession *sms = nullptr;
   if (!e) abort();
   const SubsessionInfo *const *sl(e->getSubsessionInfoList());

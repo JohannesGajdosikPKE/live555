@@ -2,18 +2,32 @@
 // https://stackoverflow.com/questions/23394188/writing-client-and-server-udp
 // https://docs.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-ioctlsocket
 
-#include <winsock2.h>
 #include "SocketCommunication.h"
+#include "GroupsockHelper.hh"
+
+#if defined(__WIN32__) || defined(_WIN32)
+  #include <winsock2.h>
+  extern "C" int initializeWinsockIfNecessary();
+#else
+  #define INVALID_SOCKET -1
+  #define SOCKET_ERROR -1
+  #define SOCKET int
+  #define SOCKADDR sockaddr
+  #define closesocket ::close
+  #include <sys/types.h>          /* See NOTES */
+  #include <sys/socket.h>
+  #include <netinet/in.h>
+  #include <arpa/inet.h>
+#endif
 
 #include <iostream>
 
-#if defined(__WIN32__) || defined(_WIN32)
-extern "C" int initializeWinsockIfNecessary();
-#endif
-
 std::mutex g_lock;
 
-extern int sockPipePort = getSocketPipeDefaultPort();
+
+int getSocketPipeDefaultPort();
+
+int sockPipePort = getSocketPipeDefaultPort();
 
 int getSocketPipeDefaultPort()
 {
@@ -30,16 +44,17 @@ bool createSocketPipe(SOCKET &receiver, SOCKET &sender, int serverPort)
     serverPort = sockPipePort;
   }
 
+#if defined(__WIN32__) || defined(_WIN32)
   if (!initializeWinsockIfNecessary())
   {
     std::cout << "createSocketPipe(): Failed to initialize 'winsock' " << std::endl;
     return false;
   }
+#endif
 
   std::lock_guard<std::mutex> lock(g_lock);
 
   SOCKET serverSocket = INVALID_SOCKET, clientSocket = INVALID_SOCKET, connectedSock = INVALID_SOCKET;
-  WSADATA wsaData = { 0 };
   int rc = SOCKET_ERROR;
 
   do
@@ -52,6 +67,7 @@ bool createSocketPipe(SOCKET &receiver, SOCKET &sender, int serverPort)
       break;
     }
 
+#if defined(__WIN32__) || defined(_WIN32)
     // Set the exclusive address option
     int iOptval = 1;
     int iResult = setsockopt(serverSocket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
@@ -62,6 +78,7 @@ bool createSocketPipe(SOCKET &receiver, SOCKET &sender, int serverPort)
       std::cout << "createSocketPipe(): Unable to set exclusive property on socket! " << std::endl;
       break;
     }
+#endif
 
     // The socket address to be passed to bind
     sockaddr_in service;
@@ -109,15 +126,7 @@ bool createSocketPipe(SOCKET &receiver, SOCKET &sender, int serverPort)
       break;
     }
 
-    //-------------------------
-    // Set the socket I/O mode: In this case FIONBIO
-    // enables or disables the blocking mode for the 
-    // socket based on the numerical value of iMode.
-    // If iMode = 0, blocking is enabled; 
-    // If iMode != 0, non-blocking mode is enabled.
-    u_long iMode = 0;
-    iResult = ioctlsocket(clientSocket, FIONBIO, &iMode);
-    if (iResult != NO_ERROR)
+    if (!makeSocketBlocking(clientSocket))
     {
       std::cout << "createSocketPipe(): Unable to set blocking propery on socket! " << std::endl;
       break;
@@ -138,9 +147,7 @@ bool createSocketPipe(SOCKET &receiver, SOCKET &sender, int serverPort)
       break;
     }
 
-     iMode = 1;
-     iResult = ioctlsocket(connectedSock, FIONBIO, &iMode);
-     if (iResult != NO_ERROR)
+     if (!makeSocketNonBlocking(clientSocket))
      {
        std::cout << "createSocketPipe(): Unable to set non-blocking property to socket! " << std::endl;
        break;
@@ -200,11 +207,12 @@ void ConnectionPipe::ThreadFunc1()
   {
     m_threadRunning = true;
 
+#if defined(__WIN32__) || defined(_WIN32)
     // serverSocketInitialization
     if (!initializeWinsockIfNecessary())
       break;
+#endif
 
-    WSADATA wsaData = { 0 };
     int rc = SOCKET_ERROR;
 
     serverSocket = socket(AF_INET, SOCK_STREAM, 0);
@@ -226,9 +234,7 @@ void ConnectionPipe::ThreadFunc1()
     if (rc == SOCKET_ERROR)
       break;
 
-    u_long iMode = 0;
-    int iResult = ioctlsocket(serverSocket, FIONBIO, &iMode);
-    if (iResult != NO_ERROR)
+    if (!makeSocketBlocking(serverSocket))
       break;
 
   } while (false);

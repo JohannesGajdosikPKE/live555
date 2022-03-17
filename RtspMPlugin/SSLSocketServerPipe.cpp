@@ -7,6 +7,10 @@
 #include "UsageEnvironment.hh"
 #include "SocketCommunication.h"
 
+#if defined(__WIN32__) || defined(_WIN32)
+#else
+  #define INVALID_SOCKET -1
+#endif
 
 
 SSLSocketServerPipe::SSLSocketServerPipe(UsageEnvironment& env) : SSLSocketPipeBase(env)

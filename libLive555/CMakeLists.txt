@@ -1,11 +1,32 @@
+# 32-bit build:
+# cmake -A Win32 -D OPENSSL_INCLUDE_PATH=C:/tfs/VSLibs/include -D OPENSSL_LIBRARY_PATH=C:/tfs/VSLibs/lib/VC14 ..
+
+cmake_minimum_required(VERSION 3.0)
+
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 #https://blog.kitware.com/create-dlls-on-windows-without-declspec-using-new-cmake-export-all-feature/
 
-set (TARGET Live555)
+set(OPENSSL_INCLUDE_PATH "/usr/include" CACHE PATH "path where openssl/ssl.h lives")
+if (EXISTS "${OPENSSL_INCLUDE_PATH}/openssl/ssl.h")
+  message("openssl include files found at ${OPENSSL_INCLUDE_PATH}")
+else()
+  message(FATAL_ERROR "openssl include files not found at ${OPENSSL_INCLUDE_PATH}."
+          " Use cmake -D OPENSSL_INCLUDE_PATH=<path_where_openssl/ssl.h_lives" )
+endif()
 
-project (${TARGET} DESCRIPTION "Live555 multithreaded")
+if (WIN32)
+set(OPENSSL_LIBRARY_PATH "/usr/include" CACHE PATH "path where x64/MT/libssl_static.lib lives")
+if (EXISTS "${OPENSSL_LIBRARY_PATH}/x64/MT/libssl_static.lib")
+  message("openssl library files found at ${OPENSSL_LIBRARY_PATH}")
+else()
+  message(FATAL_ERROR "openssl library files not found at ${OPENSSL_LIBRARY_PATH}."
+          " Use cmake -D OPENSSL_LIBRARY_PATH=<path_where/x64/MT/libssl_static.lib_lives" )
+endif()
+endif()
 
-add_library(${TARGET} SHARED
+set(CMAKE_CXX_STANDARD 14)
+
+set(SOURCES
   ../groupsock/GroupEId.cpp
   ../groupsock/Groupsock.cpp
   ../groupsock/GroupsockHelper.cpp
@@ -205,23 +226,53 @@ add_library(${TARGET} SHARED
   ../liveMedia/uLawAudioFilter.cpp
 )
 
-target_compile_options (${TARGET} PUBLIC -DLIVE555_FORCE_BOOLEAN_TYPE=char)
-target_compile_options(${TARGET} PUBLIC -DNO_OPENSSL)
+set(CMAKE_DEBUG_POSTFIX "d")
+
+set(LIVE555_LIBRARY Live555)
+
+project(${LIVE555_LIBRARY})
+
+
+macro(DefineLibrary MTMD STATICSHARED)
+  if ("${STATICSHARED}" STREQUAL "STATIC")
+    if (WIN32)
+      set (LIBNAME ${LIVE555_LIBRARY}${MTMD})
+    else ()
+      set (LIBNAME ${LIVE555_LIBRARY}_static)
+    endif ()
+    add_library(${LIBNAME} STATIC ${SOURCES})
+  else ()
+    set (LIBNAME ${LIVE555_LIBRARY})
+    if (${MTMD} STREQUAL "MD")
+      add_library(${LIBNAME} SHARED ${SOURCES})
+    endif ()
+  endif ()
+  target_include_directories(${LIBNAME} PUBLIC ../groupsock/include)
+  target_include_directories(${LIBNAME} PUBLIC ../UsageEnvironment/include)
+  target_include_directories(${LIBNAME} PUBLIC ../BasicUsageEnvironment/include)
+  target_include_directories(${LIBNAME} PUBLIC ../liveMedia/include)
+  target_include_directories(${LIBNAME} PUBLIC ${OPENSSL_INCLUDE_PATH})
+
+  target_compile_options(${LIBNAME} PUBLIC -D__STDC_LIMIT_MACROS)
+  target_compile_options(${LIBNAME} PUBLIC -DNOMINMAX)
+
+#  set_target_properties(${LIBNAME} PROPERTIES SOVERSION 1)
+
+  if (WIN32)
+    target_compile_options(${LIBNAME} PUBLIC -DLIVE555_FORCE_BOOLEAN_TYPE=char)
+    target_compile_options(${LIBNAME} PRIVATE -DNO_GETIFADDRS)
+    target_compile_options(${LIBNAME} PUBLIC -${MTMD}$<$<CONFIG:Debug>:d>)
+    target_link_libraries(${LIBNAME} ws2_32)
+    target_link_libraries(${LIBNAME} ${OPENSSL_LIBRARY_PATH}/$(PlatformShortName)/${MTMD}$<$<CONFIG:Debug>:d>/libssl_static$<$<CONFIG:Debug>:d>.lib)
+    target_link_libraries(${LIBNAME} ${OPENSSL_LIBRARY_PATH}/$(PlatformShortName)/${MTMD}$<$<CONFIG:Debug>:d>/libcrypto_static$<$<CONFIG:Debug>:d>.lib)
+  else ()
+    target_compile_options(${LIBNAME} PUBLIC -DSOCKLEN_T=socklen_t)
+  endif ()
+endmacro()
 
 if (WIN32)
-  target_compile_options(${TARGET} PRIVATE -DLIVE555_EXPORT=__declspec\(dllexport\))
-  target_compile_options(${TARGET} PRIVATE -DNO_GETIFADDRS)
-  target_compile_options(${TARGET} PUBLIC $<$<NOT:$<CONFIG:Debug>>:-MD>)
-  target_compile_options(${TARGET} PUBLIC $<$<CONFIG:Debug>:-MDd>)
-  target_link_libraries(${TARGET} ws2_32)
-else ()
-  target_compile_options (${TARGET} PUBLIC -std=c++-11)
+  DefineLibrary("MT" "STATIC")
 endif ()
 
-set_target_properties(${TARGET} PROPERTIES SOVERSION 1)
-
-target_include_directories(${TARGET} PUBLIC ../groupsock/include)
-target_include_directories(${TARGET} PUBLIC ../UsageEnvironment/include)
-target_include_directories(${TARGET} PUBLIC ../BasicUsageEnvironment/include)
-target_include_directories(${TARGET} PUBLIC ../liveMedia/include)
-
+DefineLibrary("MD" "STATIC")
+DefineLibrary("MD" "SHARED")

@@ -100,7 +100,7 @@ private:
   };
   std::deque<Command> command_queue;
   std::mutex command_queue_mutex;
-  static void BasicTaskScheduler::CommandRequestHandler(void* instance, int /*mask*/);
+  static void CommandRequestHandler(void* instance, int /*mask*/);
   void commandRequestHandler(void);
 #if defined(__WIN32__) || defined(_WIN32)
   // Hack to work around a bug in Windows' "select()" implementation:

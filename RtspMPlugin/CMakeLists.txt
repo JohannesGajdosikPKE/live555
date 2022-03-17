@@ -8,6 +8,7 @@ else()
           " Use cmake -D OPENSSL_INCLUDE_PATH=<path_where_openssl/ssl.h_lives" )
 endif()
 
+if (WIN32)
 set(OPENSSL_LIBRARY_PATH "/usr/include" CACHE PATH "path where MT/libssl_static.lib lives")
 if (EXISTS "${OPENSSL_LIBRARY_PATH}/MT/libssl_static.lib")
   message("openssl library files found at ${OPENSSL_LIBRARY_PATH}")
@@ -15,15 +16,19 @@ else()
   message(FATAL_ERROR "openssl library files not found at ${OPENSSL_LIBRARY_PATH}."
           " Use cmake -D OPENSSL_LIBRARY_PATH=<path_where_MT/libssl_static.lib_lives" )
 endif()
+else()
+endif()
 
-project(RtspMStreamPluginProject DESCRIPTION "RtspMStream Plugin")
+set(CMAKE_CXX_STANDARD 14)
+
+project(RtspMStreamPluginProject)
 
 set(CMAKE_DEBUG_POSTFIX "d")
 
 set(PLUGIN RtspMStreamPlugin)
 set(TESTPROG RtspMStreamPluginTest)
 
-add_library(${PLUGIN} SHARED
+set(PLUGIN_SOURCES
   ../groupsock/GroupEId.cpp
   ../groupsock/Groupsock.cpp
   ../groupsock/GroupsockHelper.cpp
@@ -227,6 +232,7 @@ add_library(${PLUGIN} SHARED
   SocketCommunication.cpp
 )
 
+add_library(${PLUGIN} SHARED ${PLUGIN_SOURCES})
 
 target_include_directories(${PLUGIN} PUBLIC .)
 target_include_directories(${PLUGIN} PRIVATE ../groupsock/include)
@@ -235,24 +241,24 @@ target_include_directories(${PLUGIN} PRIVATE ../BasicUsageEnvironment/include)
 target_include_directories(${PLUGIN} PRIVATE ../liveMedia/include)
 target_include_directories(${PLUGIN} PRIVATE ${OPENSSL_INCLUDE_PATH})
 
-set(CMAKE_CXX_STANDARD 11)
-
-target_compile_options(${PLUGIN} PRIVATE -DLIVE555_FORCE_BOOLEAN_TYPE=char)
-#target_compile_options(${PLUGIN} PRIVATE -DNO_OPENSSL)
-target_compile_options(${PLUGIN} PRIVATE -D__STDC_LIMIT_MACROS)
-target_compile_options(${PLUGIN} PRIVATE -DNOMINMAX)
 
 add_executable(${TESTPROG} RtspMStreamPluginTestMain.cpp)
 target_link_libraries(${TESTPROG} ${PLUGIN})
 
 if (WIN32)
+  target_compile_options(${PLUGIN} PRIVATE -DLIVE555_FORCE_BOOLEAN_TYPE=char)
+  target_compile_options(${PLUGIN} PRIVATE -D__STDC_LIMIT_MACROS)
+  target_compile_options(${PLUGIN} PRIVATE -DNOMINMAX)
   target_compile_options(${PLUGIN} PRIVATE -DNO_GETIFADDRS)
   target_compile_options(${PLUGIN} PRIVATE -DRTCMEDIALIB_EXPORTS)
-  target_compile_options(${PLUGIN} PUBLIC $<$<NOT:$<CONFIG:Debug>>:-MT>)
-  target_compile_options(${PLUGIN} PUBLIC $<$<CONFIG:Debug>:-MTd>)
+  target_compile_options(${PLUGIN} PUBLIC -MT$<$<CONFIG:Debug>:d>)
   target_link_libraries(${PLUGIN} ws2_32)
-  target_link_libraries(${PLUGIN} ${OPENSSL_LIBRARY_PATH}/$<$<NOT:$<CONFIG:Debug>>:MT>$<$<CONFIG:Debug>:MTd>/libssl_static$<$<CONFIG:Debug>:d>.lib)
-  target_link_libraries(${PLUGIN} ${OPENSSL_LIBRARY_PATH}/$<$<NOT:$<CONFIG:Debug>>:MT>$<$<CONFIG:Debug>:MTd>/libcrypto_static$<$<CONFIG:Debug>:d>.lib)
-  target_compile_options(${TESTPROG} PUBLIC $<$<NOT:$<CONFIG:Debug>>:-MT>)
-  target_compile_options(${TESTPROG} PUBLIC $<$<CONFIG:Debug>:-MTd>)
+  target_link_libraries(${PLUGIN} ${OPENSSL_LIBRARY_PATH}/MT$<$<CONFIG:Debug>:d>/libssl_static$<$<CONFIG:Debug>:d>.lib)
+  target_link_libraries(${PLUGIN} ${OPENSSL_LIBRARY_PATH}/MT$<$<CONFIG:Debug>:d>/libcrypto_static$<$<CONFIG:Debug>:d>.lib)
+  target_compile_options(${TESTPROG} PUBLIC -MT$<$<CONFIG:Debug>:d>)
+else ()
+  target_compile_options(${PLUGIN} PUBLIC -DSOCKLEN_T=socklen_t)
+  target_link_libraries(${PLUGIN} pthread)
+  target_link_libraries(${PLUGIN} ssl)
 endif ()
+

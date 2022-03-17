@@ -4,9 +4,15 @@
 #include "SSLSocketBase.h"
 #include "UsageEnvironment.hh"
 #include "GroupsockHelper.hh"
-#include "openssl\ssl.h"
+#include "openssl/ssl.h"
 
 #include <iostream>
+
+#if defined(__WIN32__) || defined(_WIN32)
+#else
+  #define INVALID_SOCKET -1
+  #define closesocket ::close
+#endif
 
 static bool g_SSL_initialized = false;
 
@@ -473,7 +479,9 @@ void SSLSocketPipeBase::copyDataToSocketPipe()
       return;
     }
 
+#if defined(__WIN32__) || defined(_WIN32)
     _ASSERTE(bytesRead == bytesWritten);
+#endif
 
   } while (SSL_pending(m_ssl));
 

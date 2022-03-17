@@ -4,6 +4,11 @@
 #include <mutex>
 #include <condition_variable>
 
+#if defined(__WIN32__) || defined(_WIN32)
+#else
+  #define SOCKET int
+#endif
+
 typedef void ConnectionReadyFunc(void* clientData, int sock);
 
 class ConnectionPipe
@@ -43,7 +48,3 @@ private:
   std::condition_variable m_threadFinished;
 };
 
-extern int sockPipePort;
-
-bool createSocketPipe(SOCKET &receiver, SOCKET &sender, int serverPort = 0);
-int  getSocketPipeDefaultPort();

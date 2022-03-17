@@ -37,6 +37,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #endif
 
 #include <mutex>
+#include <condition_variable>
 #include <memory>
 #include <map>
 #include <atomic>
