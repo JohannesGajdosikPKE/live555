@@ -47,8 +47,19 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #endif
 
 #include <functional>
-#include <thread>
 #include <atomic>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <processthreadsapi.h>
+static inline
+unsigned int Live555CurrentThreadId(void) {return GetCurrentThreadId();}
+#else
+#include <unistd.h>
+#include <sys/syscall.h>
+static inline
+unsigned int Live555CurrentThreadId(void) {return syscall(SYS_gettid);}
+#endif
 
 class TaskScheduler; // forward
 
@@ -171,11 +182,12 @@ public:
 
   virtual void internalError(); // used to 'handle' a 'should not occur'-type error condition within the library.
 
-  const std::thread::id my_thread_id;
-  bool isSameThread(void) const {return (my_thread_id == std::this_thread::get_id());}
+  const unsigned int my_thread_id;
+  bool isSameThread(void) const {return (my_thread_id == Live555CurrentThreadId());}
   void assertSameThread(void) const;
   bool assert_threads;
   int addNrOfUsers(int x) {return (nr_of_users += x);}
+  int passAndAssert(int x) {assertSameThread();return x;}
 private:
   std::atomic<int> nr_of_users;
 protected:
