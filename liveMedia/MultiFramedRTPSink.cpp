@@ -22,6 +22,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "MultiFramedRTPSink.hh"
 #include "GroupsockHelper.hh"
 
+#include <memory>
+
 ////////// MultiFramedRTPSink //////////
 
 void MultiFramedRTPSink::setPacketSizes(unsigned preferredPacketSize,
