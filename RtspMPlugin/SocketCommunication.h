@@ -5,6 +5,7 @@
 #include <condition_variable>
 
 #if defined(__WIN32__) || defined(_WIN32)
+  #include <winsock2.h>
 #else
   #define SOCKET int
 #endif
