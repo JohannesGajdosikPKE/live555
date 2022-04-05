@@ -34,6 +34,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <sstream>
 #include <iomanip>
 #include <atomic>
+#include <thread>
 
 #define PLUGIN_VERSION "1.01"
 
@@ -596,28 +597,28 @@ MediaServerPluginRTSPServer::createNew(UsageEnvironment &env, const RTSPParamete
   int m_HTTPsServerSocket = -1;
   int ourSocketIPv6 = -1;
   if (params.use_ipv6) {
-    Port p(params.port);
+    Port p(params.rtspPort);
     ourSocketIPv6 = setUpOurSocket(env, p, AF_INET6);
     if (ourSocketIPv6 < 0) {
-      env << "MediaServerPluginRTSPServer::createNew: opening IPV6 rtsp port " << params.port << " failed\n";
+      env << "MediaServerPluginRTSPServer::createNew: opening IPV6 rtsp port " << params.rtspPort << " failed\n";
       if (!params.ports_are_optional) return nullptr;
     } else {
-      env << "MediaServerPluginRTSPServer::createNew: setUpOurSocket(" << params.port << ",IPV6) ok: "
+      env << "MediaServerPluginRTSPServer::createNew: setUpOurSocket(" << params.rtspPort << ",IPV6) ok: "
           << ourSocketIPv6 << "\n";
     }
   }
-  const int ourSocketIPv4 = CreateAcceptSocket(env, Port(params.port), params.bind_to_interface);
+  const int ourSocketIPv4 = CreateAcceptSocket(env, Port(params.rtspPort), params.bind_to_interface_rtsp);
   if (ourSocketIPv4 < 0) {
-    env << "MediaServerPluginRTSPServer::createNew: opening rtsp port " << params.port << " failed\n";
+    env << "MediaServerPluginRTSPServer::createNew: opening rtsp port " << params.rtspPort << " failed\n";
     if (!params.ports_are_optional) {
       if (ourSocketIPv6 >= 0) ::closeSocket(ourSocketIPv6);
       return nullptr;
     }
   } else {
-    env << "MediaServerPluginRTSPServer::createNew: CreateAcceptSocket(" << params.port << ") ok: "
+    env << "MediaServerPluginRTSPServer::createNew: CreateAcceptSocket(" << params.rtspPort << ") ok: "
         << ourSocketIPv4 << "\n";
     if (params.httpPort) {
-      m_HTTPServerSocket = CreateAcceptSocket(env, params.httpPort, params.bind_to_interface);
+      m_HTTPServerSocket = CreateAcceptSocket(env, params.httpPort, params.bind_to_interface_http);
       if (m_HTTPServerSocket < 0) {
         env << "MediaServerPluginRTSPServer::createNew: opening http port " << params.httpPort << " failed\n";
         if (!params.ports_are_optional) {
@@ -629,7 +630,7 @@ MediaServerPluginRTSPServer::createNew(UsageEnvironment &env, const RTSPParamete
         env << "MediaServerPluginRTSPServer::createNew: CreateAcceptSocket(" << params.httpPort << ") ok: "
             << m_HTTPServerSocket << "\n";
         if (params.httpsPort) {
-          m_HTTPsServerSocket = CreateAcceptSocket(env, params.httpsPort, params.bind_to_interface);
+          m_HTTPsServerSocket = CreateAcceptSocket(env, params.httpsPort, params.bind_to_interface_https);
           if (m_HTTPsServerSocket < 0) {
             env << "MediaServerPluginRTSPServer::createNew: opening https port " << params.httpsPort << " failed\n";
             if (!params.ports_are_optional) {
@@ -655,15 +656,39 @@ MediaServerPluginRTSPServer::createNew(UsageEnvironment &env, const RTSPParamete
 MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(UsageEnvironment &env, int ourSocketIPv4, int ourSocketIPv6,
                                                          int m_HTTPServerSocket, int m_HTTPsServerSocket,
                                                          const RTSPParameters &params, IMStreamFactory *stream_factory)
-                            :RTSPServer(env, ourSocketIPv4, ourSocketIPv6, Port(params.port), NULL, 65),
+                            :RTSPServer(env, ourSocketIPv4, ourSocketIPv6, Port(params.rtspPort), NULL, 65),
                              m_HTTPServerSocket(m_HTTPServerSocket),m_HTTPsServerSocket(m_HTTPsServerSocket),
                              params(params), stream_factory(stream_factory),
-                             m_urlPrefix(rtspURLPrefix(params.bind_to_interface ? ourSocketIPv4 : -1)) // allocated with strDup, not strdup. free with delete[]
- {
-   if (!params.getUser().empty()) {
+                             m_urlPrefix(rtspURLPrefix(params.bind_to_interface_rtsp ? ourSocketIPv4 : -1)) // allocated with strDup, not strdup. free with delete[]
+{
+  env << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer: start\n";
+  RTSPParameters::UserPassIterator it(params.getUserPass());
+  if (it) {
+    env << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer: preparing auth_db\n";
     UserAuthenticationDatabase *auth_db = new UserAuthenticationDatabase;
-    auth_db->addUserRecord(params.getUser().c_str(), params.getPass().c_str());
-    setAuthenticationDatabase(auth_db);
+    bool use_auth_db = false;
+    do {
+      const char *const user = it.getUser().c_str();
+      const char *const pass = it.getPass().c_str();
+      if (*user && *pass) {
+        env << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer: "
+               "addUserRecord"
+                 // log user/pass only while debugging:
+               //"(" << user << "," << pass << ")"
+               "\n";
+        auth_db->addUserRecord(user,pass);
+        use_auth_db = true;
+      }
+    } while (++it);
+    if (use_auth_db) {
+      env << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer: setting auth_db\n";
+      setAuthenticationDatabase(auth_db);
+    } else {
+      env << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer: discarding auth_db\n";
+      delete auth_db;
+    }
+  } else {
+    env << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer: no auth_db\n";
   }
   if (m_HTTPServerSocket >= 0) {
     env.taskScheduler().turnOnBackgroundReadHandling(m_HTTPServerSocket,
@@ -675,11 +700,12 @@ MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(UsageEnvironment &env, 
   }
     // Schedule status info task (run periodically)
   generate_info_string_task = env.taskScheduler().scheduleDelayedTask(1000000, GenerateInfoString, this);
+  env << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer: end\n";
 }
 
 MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer() {
   destructor_started = true;
-  envir() << "MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer start\n";
+  envir() << "MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer: start\n";
   envir().taskScheduler().unscheduleDelayedTask(generate_info_string_task);
 
   if (m_HTTPsServerSocket >= 0) {
@@ -690,7 +716,7 @@ MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer() {
     envir().taskScheduler().turnOffBackgroundReadHandling(m_HTTPServerSocket);
     ::closeSocket(m_HTTPServerSocket);
   }
-  envir() << "MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer calling cleanup()\n";
+  envir() << "MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer: calling cleanup()\n";
   RTSPServer::cleanup();
       // This member function must be called in the destructor of any subclass of
       // "GenericMediaServer".  (We don't call this in the destructor of "GenericMediaServer" itself,
@@ -698,10 +724,12 @@ MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer() {
       // affect (break) the destruction of the "ClientSession" and "ClientConnection" objects, which
       // themselves will have been subclassed.)
 
-  envir() << "MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer deleting auth_db()\n";
   UserAuthenticationDatabase *auth_db = setAuthenticationDatabase(nullptr);
-  if (auth_db) delete auth_db;
-  envir() << "MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer end\n";
+  if (auth_db) {
+    envir() << "MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer: deleting auth_db\n";
+    delete auth_db;
+  }
+  envir() << "MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer: end\n";
 }
 
 void MediaServerPluginRTSPServer::incomingConnectionHandlerHTTPoverSSL(void* instance, int /*mask*/) {
@@ -729,7 +757,7 @@ void MediaServerPluginRTSPServer::incomingConnectionHandlerHTTPoverSSL()
 #endif
 
   // Create a new object for handling this connection:
-  createNewClientConnectionSSL(clientSocket, clientAddr, params.getHttpCertFile().c_str(), params.getHttpKeyPath().c_str());
+  createNewClientConnectionSSL(clientSocket, clientAddr, params.getTlsCertFile().c_str(), params.getTlsKeyFile().c_str());
 }
 
 void MediaServerPluginRTSPServer::incomingConnectionHandlerHTTP(void* instance, int /*mask*/) {
@@ -1644,11 +1672,11 @@ private:
     }
   };
   void log(std::string &&msg) {
-    std::unique_ptr<ThreadLogger> &l(loggers[std::this_thread::get_id()]);
+    std::unique_ptr<ThreadLogger> &l(loggers[Live555CurrentThreadId()]);
     if (!l) l = std::make_unique<ThreadLogger>(params);
     l->log(std::move(msg));
   }
-  std::map<std::thread::id,std::unique_ptr<ThreadLogger> > loggers;
+  std::map<unsigned int,std::unique_ptr<ThreadLogger> > loggers;
 };
 
 UsageEnvironment *MediaServerPluginRTSPServer::createNewUsageEnvironment(TaskScheduler &scheduler) {
@@ -1691,29 +1719,61 @@ void MediaServerPluginRTSPServer::generateInfoString(void)
   std::stringstream ss;
   ss << "---- RtspMStreamPlugin(" PLUGIN_VERSION "(" __DATE__ " " __TIME__ "), api:" RTCMEDIALIB_API_VERSION "): "
         "bound to ";
-  if (params.bind_to_interface) {
-    ss << "interface " << (params.bind_to_interface & 0xFF)
-       << '.' << ((params.bind_to_interface >> 8) & 0xFF)
-       << '.' << ((params.bind_to_interface >> 16) & 0xFF)
-       << '.' << (params.bind_to_interface >> 24);
+  if (params.bind_to_interface_rtsp) {
+    ss << "interface " << (params.bind_to_interface_rtsp & 0xFF)
+       << '.' << ((params.bind_to_interface_rtsp >> 8) & 0xFF)
+       << '.' << ((params.bind_to_interface_rtsp >> 16) & 0xFF)
+       << '.' << (params.bind_to_interface_rtsp >> 24);
   } else {
     ss << "all interfaces";
   }
   ss << ", example url: " << m_urlPrefix.get() << "stream_name";
   if (params.httpPort) {
     if (m_HTTPServerSocket >= 0) {
-      ss << " | RTSP-over-HTTP tunnel (Port " << params.httpPort << ")";
+      ss << " | RTSP-over-HTTP tunnel (Port ";
+      if (params.bind_to_interface_http) {
+        ss << "interface " << (params.bind_to_interface_http & 0xFF)
+           << '.' << ((params.bind_to_interface_http >> 8) & 0xFF)
+           << '.' << ((params.bind_to_interface_http >> 16) & 0xFF)
+           << '.' << (params.bind_to_interface_http >> 24)
+           << ':';
+      }
+      ss << params.httpPort << ")";
     } else {
-      ss << " | RTSP-over-HTTP tunnel (opening Port " << params.httpPort << " failed)";
+      ss << " | RTSP-over-HTTP tunnel (opening Port ";
+      if (params.bind_to_interface_http) {
+        ss << "interface " << (params.bind_to_interface_http & 0xFF)
+           << '.' << ((params.bind_to_interface_http >> 8) & 0xFF)
+           << '.' << ((params.bind_to_interface_http >> 16) & 0xFF)
+           << '.' << (params.bind_to_interface_http >> 24)
+           << ':';
+      }
+      ss << params.httpPort << " failed)";
     }
   } else {
     ss << " | no RTSP-over-HTTP tunnel configured";
   }
   if (params.httpsPort) {
     if (m_HTTPsServerSocket >= 0) {
-      ss << " | RTSP-over-HTTP-over-SSL tunnel (Port " << params.httpsPort << ")";
+      ss << " | RTSP-over-HTTP-over-SSL tunnel (Port ";
+      if (params.bind_to_interface_https) {
+        ss << "interface " << (params.bind_to_interface_https & 0xFF)
+           << '.' << ((params.bind_to_interface_https >> 8) & 0xFF)
+           << '.' << ((params.bind_to_interface_https >> 16) & 0xFF)
+           << '.' << (params.bind_to_interface_https >> 24)
+           << ':';
+      }
+      ss << params.httpsPort << ")";
     } else {
-      ss << " | RTSP-over-HTTP-over-SSL tunnel (opening Port " << params.httpsPort << " failed)";
+      ss << " | RTSP-over-HTTP-over-SSL tunnel (opening Port ";
+      if (params.bind_to_interface_https) {
+        ss << "interface " << (params.bind_to_interface_https & 0xFF)
+           << '.' << ((params.bind_to_interface_https >> 8) & 0xFF)
+           << '.' << ((params.bind_to_interface_https >> 16) & 0xFF)
+           << '.' << (params.bind_to_interface_https >> 24)
+           << ':';
+      }
+      ss << params.httpsPort << " failed)";
     }
   } else {
     ss << " | no RTSP-over-HTTP-over-SSL tunnel configured";

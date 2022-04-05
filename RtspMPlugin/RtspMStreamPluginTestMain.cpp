@@ -19,11 +19,43 @@
 static inline
 unsigned int CurrentThreadId(void) {return GetCurrentThreadId();}
 #else
+#include <dlfcn.h>
 #include <unistd.h>
 #include <sys/syscall.h>
 static inline
 unsigned int CurrentThreadId(void) {return syscall(SYS_gettid);}
 #endif
+
+class DynamicLibrary {
+public:
+  DynamicLibrary(const char *filename) {
+    handle =
+#ifdef _WIN32
+      (void*)LoadLibraryA(filename);
+#else
+      dlopen(filename,RTLD_NOW|RTLD_GLOBAL);
+#endif
+  }
+  ~DynamicLibrary(void) {
+    if (handle)
+#ifdef _WIN32
+      FreeLibrary((HMODULE)handle);
+#else
+      dlclose(handle);
+#endif
+  }
+  void *getAddr(const char *symbol) {
+    return
+#ifdef _WIN32
+      (void*)GetProcAddress((HMODULE)handle,symbol);
+#else
+      dlsym(handle,symbol);
+#endif
+  }
+  bool isInitialized(void) const {return handle;}
+private:
+  void *handle;
+};
 
 
 static FILE *log_file = nullptr;
@@ -310,28 +342,58 @@ private:
 
 static const char *const exe_api_version = RTCMEDIALIB_API_VERSION;
 
+static const char *const plugin_name =
+#ifdef _WIN32
+  "RtspMStreamPlugin"
+  #ifdef _DEBUG
+    "d"
+  #endif
+  ".dll"
+#else
+  "./libRtspMStreamPlugin.so"
+#endif
+;
+static const char *const init_function_name = "InitializeMPlugin";
+
+
+
+
 
 int main(int argc,char *argv[]) {
   log_file = fopen((std::string(argv[0])+".log").c_str(),"w");
   {
-    MyIMStreamFactory factory;
-    RTSPParameters params(&OnLog,nullptr,
-                          &OnStatusInfo,nullptr,
-                          2554,8880,8881,0,
-                          false,true,
-                          "C:\\Users\\01jga728\\zertifikat-pub.pem",
-                          "C:\\Users\\01jga728\\zertifikat-key.pem",
-                          "","");
-    const char *const lib_api_version
-      = InitializeMPlugin(exe_api_version,&factory,params);
-    std::cout << "my api version: " << exe_api_version
-              << ", plugin api version: " << lib_api_version << std::endl;
-    if (0 == strcmp(exe_api_version,lib_api_version)) {
-      factory.run();
+    DynamicLibrary plugin(plugin_name);
+    if (!plugin.isInitialized()) {
+      std::cout << "Could not load plugin " << plugin_name << std::endl;
+    } else {
+      MyIMStreamFactory factory;
+      InitializeMPluginFunc *const init_function
+        = (InitializeMPluginFunc*)plugin.getAddr(init_function_name);
+      if (!init_function) {
+        std::cout << "Could not get symbol \"" << init_function_name
+                  << "\" from plugin " << plugin_name << std::endl;
+      } else {
+        RTSPParameters params(&OnLog,nullptr,
+                              &OnStatusInfo,nullptr,
+                              2554,8880,8881,322,
+                              0,0,0,0,
+                              false,true,
+                              "C:\\Users\\01jga728\\zertifikat-pub.pem",
+                              "C:\\Users\\01jga728\\zertifikat-key.pem");
+//        params.setUserPass("User1","Pass1");
+//        params.setUserPass("User2","Pass2");
+        const char *const lib_api_version
+          = (*init_function)(exe_api_version,&factory,params);
+        std::cout << "my api version: " << exe_api_version
+                  << ", plugin api version: " << lib_api_version << std::endl;
+        if (0 == strcmp(exe_api_version,lib_api_version)) {
+          factory.run();
+          std::cout << "deinitializing plugin" << std::endl;
+          (*init_function)(exe_api_version,nullptr,params);
+        }
+      }
+      std::cout << "destroying factory" << std::endl;
     }
-    std::cout << "deinitializing plugin" << std::endl;
-    InitializeMPlugin(exe_api_version,nullptr,params);
-    std::cout << "destroing factory" << std::endl;
   }
   std::cout << "closing logfile" << std::endl;
   fclose(log_file);

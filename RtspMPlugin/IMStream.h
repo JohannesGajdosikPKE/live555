@@ -89,31 +89,77 @@ public:
 
 class RTSPParameters : public MPluginParams {
 public:
+  RTSPParameters(void) {}
   RTSPParameters(LogCallbackPtr log_cb,void *log_cb_context,
                  StatusCallbackPtr status_cb,void *status_cb_context,
-                 uint16_t port,uint16_t httpPort,uint16_t httpsPort,uint32_t bind_to_interface,
+                 uint16_t rtspPort,uint16_t httpPort,
+                 uint16_t httpsPort,uint16_t rtspsPort,
+                 uint32_t bind_to_interface_rtsp,uint32_t bind_to_interface_http,
+                 uint32_t bind_to_interface_https,uint32_t bind_to_interface_rtsps,
                  bool use_ipv6,bool ports_are_optional,
-                 const std::string &https_cert_file,const std::string &https_key_path,
-                 const std::string &user,const std::string &pass)
+                 const std::string &tls_cert_file,const std::string &tls_key_file)
     : MPluginParams(log_cb,log_cb_context,status_cb,status_cb_context),
-      port(port),httpPort(httpPort),httpsPort(httpsPort),bind_to_interface(bind_to_interface),
+      rtspPort(rtspPort),httpPort(httpPort),httpsPort(httpsPort),rtspsPort(rtspsPort),
+      bind_to_interface_rtsp(bind_to_interface_rtsp),
+      bind_to_interface_http(bind_to_interface_http),
+      bind_to_interface_https(bind_to_interface_https),
+      bind_to_interface_rtsps(bind_to_interface_rtsps),
       use_ipv6(use_ipv6),ports_are_optional(ports_are_optional),
-      https_cert_file(https_cert_file),https_key_path(https_key_path),user(user),pass(pass) {}
-  const std::string &getHttpCertFile(void) const {return https_cert_file;}
-  const std::string &getHttpKeyPath(void) const {return https_key_path;}
-  const std::string &getUser(void) const {return user;}
-  const std::string &getPass(void) const {return pass;}
-  uint16_t port = 0;
+      tls_cert_file(tls_cert_file),tls_key_file(tls_key_file) {}
+  const std::string &getTlsCertFile(void) const {return tls_cert_file;}
+  const std::string &getTlsKeyFile(void) const {return tls_key_file;}
+  class UserPassIterator {
+  public:
+    UserPassIterator(const std::string *user_pass) : user_pass(user_pass),i(0) {}
+    operator bool(void) const {
+      return (i<user_pass_size && !user_pass[i].empty());
+    }
+    bool full(void) const {return i>=user_pass_size;}
+    bool operator++(void) {
+      if (!operator bool()) return false;
+      i += 2;
+      return operator bool();
+    }
+    const std::string &getUser(void) const {return user_pass[i  ];}
+    const std::string &getPass(void) const {return user_pass[i+1];}
+  private:
+    const std::string *const user_pass;
+    int i;
+  };
+  UserPassIterator getUserPass(void) const {
+    return UserPassIterator(user_pass);
+  }
+  void clearUserPass(void) {
+    for (int i=0;i<user_pass_size;i++) user_pass[i].clear();
+  }
+  bool setUserPass(const std::string &user,const std::string &pass) {
+    if (!user.empty() && !pass.empty()) {
+      for (int i=0;i<user_pass_size;i+=2) {
+        if (user_pass[i].empty() || user_pass[i] == user) {
+          user_pass[i  ] = user;
+          user_pass[i+1] = pass;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  uint16_t rtspPort = 0;
   uint16_t httpPort = 0;
   uint16_t httpsPort = 0;
-  uint32_t bind_to_interface = 0;
+  uint16_t rtspsPort = 0;
+  uint32_t bind_to_interface_rtsp = 0;
+  uint32_t bind_to_interface_http = 0;
+  uint32_t bind_to_interface_https = 0;
+  uint32_t bind_to_interface_rtsps = 0;
   bool use_ipv6 = false;
   bool ports_are_optional = false;
+  std::string tls_cert_file;
+  std::string tls_key_file;
 private:
-  const std::string https_cert_file;
-  const std::string https_key_path;
-  const std::string user;
-  const std::string pass;
+    // std::map would crash for unknown reason in RTSPParameters constructor
+  enum {user_pass_size = 20};
+  std::string user_pass[user_pass_size];
 };
 
 
@@ -132,7 +178,7 @@ typedef const char *(InitializeMPluginFunc)(
                     IMStreamFactory *streamManager,
                     const MPluginParams &params);
 
-#define RTCMEDIALIB_API_VERSION "0.9"
+#define RTCMEDIALIB_API_VERSION "0.10"
     // will return the API version of the Library.
     // when the interface_api_version_of_caller does not match,
     // the library will not call the stream_factory.
