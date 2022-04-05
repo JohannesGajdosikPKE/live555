@@ -261,5 +261,6 @@ else ()
   target_compile_options(${PLUGIN} PUBLIC -g)
   target_link_libraries(${PLUGIN} pthread)
   target_link_libraries(${PLUGIN} ssl)
+  target_link_libraries(${PLUGIN} dl)
 endif ()
 
