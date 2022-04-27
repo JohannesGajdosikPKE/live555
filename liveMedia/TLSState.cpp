@@ -103,6 +103,40 @@ int ClientTLSState::connect(int socketNum) {
   int sslGetErrorResult = SSL_get_error(fCon, sslConnectResult);
 
   if (sslConnectResult > 0) {
+    if (!fClient.verifyServerCertificate(fCon)) {
+      fClient.envir() << "ClientTLSState::connect: Error: Certificate not accepted\n";
+      return -1;
+    }
+/*
+    X509* cert = SSL_get_peer_certificate(fCon);
+    if (!cert) {
+      fClient.envir() << "ClientTLSState::connect: Error: No certificate\n";
+      return -1;
+    }
+    X509_NAME *issuerName = X509_get_issuer_name(cert);
+    if (!issuerName) {
+      fClient.envir() << "ClientTLSState::connect: Error: No issuer of the certificate -> is that a root certificate?\n";
+      return -1;
+    }
+    const char *issuer = X509_NAME_oneline(issuerName, 0, 0);
+    const int idx = X509_NAME_get_index_by_NID(issuerName, NID_commonName, -1);
+    if (idx < 0) {
+      fClient.envir() << "ClientTLSState::connect: Error: ClientTLSState::connect: Error: No CN in the certificate " << issuer << "\n";
+      return -1;
+    }
+    X509_NAME_ENTRY *e = X509_NAME_get_entry(issuerName, idx);
+    if (!e) {
+      fClient.envir() << "ClientTLSState::connect: Error: No X509_NAME_ENTRY in the certificate " << issuer << "\n";
+      return -1;
+    }
+    ASN1_STRING *as = X509_NAME_ENTRY_get_data(e);
+    if (!as) {
+      fClient.envir() << "ClientTLSState::connect: Error: No X509_NAME_ENTRY data in the certificate " << issuer << "\n";
+      return -1;
+    }
+    const char *cn = (const char*)(as->data);
+    fClient.envir() << "ClientTLSState::connect: Certificate "  << issuer << " accepted: " << cn << "s\n";
+*/
     return sslConnectResult; // connection has completed
   } else if (sslConnectResult < 0
 	      && (sslGetErrorResult == SSL_ERROR_WANT_READ ||

@@ -192,6 +192,8 @@ public:
 
   void useTLS() { fTLS.isNeeded = True; }
 
+  virtual bool verifyServerCertificate(const SSL *ssl) {return true;}
+
   static unsigned responseBufferSize;
 
 public: // Some compilers complain if this is "private:"
