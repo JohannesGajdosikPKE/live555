@@ -194,8 +194,8 @@ target_include_directories (${TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../Usag
 target_include_directories (${TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../BasicUsageEnvironment/include)
 
 if (WIN32)
-  target_compile_options (${TARGET} PUBLIC $<$<NOT:$<CONFIG:Debug>>:-MT>)
-  target_compile_options (${TARGET} PUBLIC $<$<CONFIG:Debug>:-MTd>)
+  target_compile_options (${TARGET} PUBLIC -DFD_SETSIZE=1024)
+  target_compile_options (${TARGET} PUBLIC -MT$<$<CONFIG:Debug>:d>)
 else ()
   target_compile_options (${TARGET} PUBLIC -std=c++-11)
 endif ()
