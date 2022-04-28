@@ -205,7 +205,7 @@ public:
   typedef std::function<void(const Frame&)> FrameFunction;
   class Registration;
   std::unique_ptr<Registration> connect(const SubsessionInfo *info,FrameFunction &&f);
-  unsigned int printRegistrations(const std::string &url,std::ostream &o) const;
+  void printRegistrations(const std::string &url,std::ostream &o) const;
   void keepAlive(void);
   MediaServerPluginRTSPServer &server;
   UsageEnvironment &env(void) const {return server.envir();}
@@ -465,23 +465,14 @@ void MediaServerPluginRTSPServer::StreamMapEntry::onClose(void) {
   env() << "StreamMapEntry(" << id << "," << name_for_logging.c_str() << ")::onClose: end\n";
 }
 
-unsigned int MediaServerPluginRTSPServer::StreamMapEntry::printRegistrations(const std::string &url,std::ostream &o) const {
-  unsigned int rval = 0;
+void MediaServerPluginRTSPServer::StreamMapEntry::printRegistrations(const std::string &url,std::ostream &o) const {
   std::lock_guard<std::recursive_mutex> lock(registration_mutex);
-  for (auto &it : registration_map) {
-    const unsigned int c = it.second.size();
-    rval += c;
-  }
-  if (rval > 0) {
+  if (!registration_map.empty()) {
     o << "Stream url: " << url;
-    int track_id = 0;
     for (auto &it : registration_map) {
-      const unsigned int c = it.second.size();
-      o << ", " << SubsessionInfoToString(*it.first) << "(" << track_id << "): " << c << " registrations(s)" ;
-      track_id++;
+      o << ", " << SubsessionInfoToString(*it.first);
     }
   }
-  return rval;
 }
 
 
@@ -1805,20 +1796,19 @@ void MediaServerPluginRTSPServer::generateInfoString(void)
     ss << '\n';
   }
   ss << "\nRtspMStreamPlugin: " << stream_info.size() << " streams:\n";
-  unsigned int registrations = 0;
   {
     std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
     for (auto &it : stream_map) {
       auto s(it.second.lock());
       if (s) {
-        registrations += s->printRegistrations(m_urlPrefix.get()+it.first,ss);
+        s->printRegistrations(m_urlPrefix.get()+it.first,ss);
+        ss << ':';
         auto &m(stream_info[it.first]);
         for (auto& it2 : m) ss << ' ' << it2;
         ss << '\n';
       }
     }
   }
-  ss << "RtspMStreamPlugin Registrations: " << registrations << "\n";
 #ifdef ALLOC_STATS
   MemAccounter::Singleton().print(ss);
   PrintAllocInfos(ss);
