@@ -337,7 +337,17 @@ void RTSPServer::stopTCPStreamingOnSocket(int socketNum) {
   }
   }
   for (auto &it : sessions) {
-    it.first->deleteStreamByTrack(it.second);
+      // call deleteStreamByTrack in the proper thread
+    if (it.first->envir().taskScheduler().isSameThread()) {
+      it.first->deleteStreamByTrack(it.second);
+    } else {
+      Semaphore sem;
+      it.first->envir().taskScheduler().executeCommand(
+        [s=it.first,t=it.second,&sem](uint64_t) {
+          s->deleteStreamByTrack(t);
+        });
+      sem.wait();
+    }
   }
 //  envir() << "RTSPServer::stopTCPStreamingOnSocket(" << socketNum << ") end\n";
 }
