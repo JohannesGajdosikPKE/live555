@@ -1780,10 +1780,11 @@ void MediaServerPluginRTSPServer::generateInfoString(void)
     char const *key;
     while ((clientSession = (GenericMediaServer::ClientSession*)(iter->next(key))) != NULL) {
       MyRTSPClientSession *const session(dynamic_cast<MyRTSPClientSession*>(clientSession));
-      if (session && session->getSocket()) {
-        const std::string s(SocketToString(session->getSocket()));
-        connection_info[s].insert(session->fOurServerMediaSession->streamName());
-        stream_info[session->fOurServerMediaSession->streamName()].insert(s);
+      if (session && session->fOurServerMediaSession && session->getSocket()) {
+        const std::string socket_string(SocketToString(session->getSocket()));
+        const std::string stream_name(session->fOurServerMediaSession->streamName());
+        connection_info[socket_string].insert(stream_name);
+        stream_info[stream_name].insert(socket_string);
       }
     }
     delete iter;
