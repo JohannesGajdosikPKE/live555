@@ -216,6 +216,9 @@ private:
   std::mutex delayed_keep_task_mutex;
   TaskToken delayed_keep_task = nullptr; // protected by delayed_keep_task_mutex
   bool i_want_to_die = false;            // protected by delayed_keep_task_mutex
+  bool must_deregister = true;
+  bool prevent_reentrant_onClose = false;
+  void dontDeregister(void) {must_deregister = false;}
   void onClose(void);
   static void ScheduleKeepTaskHelper(KeepTaskHelper *ptr);
   void scheduleCancelTaskHelper(void);
@@ -324,8 +327,12 @@ MediaServerPluginRTSPServer::StreamMapEntry::StreamMapEntry(MediaServerPluginRTS
 }
 
 MediaServerPluginRTSPServer::StreamMapEntry::~StreamMapEntry(void) {
-  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry start, calling RegisterOnFrame(" << this << ",NULL)\n";
-  stream->RegisterOnFrame(this,nullptr);
+  if (must_deregister) {
+    env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry start, calling RegisterOnFrame(" << this << ",NULL)\n";
+    stream->RegisterOnFrame(this,nullptr);
+  } else {
+    env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry start, no deregistration necessary\n";
+  }
   env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry: calling onClose\n";
   onClose();
   {
@@ -454,6 +461,8 @@ void MediaServerPluginRTSPServer::StreamMapEntry::cancelKeepAlive(void) {
 }
 
 void MediaServerPluginRTSPServer::StreamMapEntry::onClose(void) {
+  if (prevent_reentrant_onClose) return;
+  prevent_reentrant_onClose = true;
   env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::onClose: start\n";
   cancelKeepAlive();
   const std::string name_for_logging(name);
@@ -463,6 +472,7 @@ void MediaServerPluginRTSPServer::StreamMapEntry::onClose(void) {
   }
     // StreamMapEntry may have been deleted, do not use it for logging
   env() << "StreamMapEntry(" << id << "," << name_for_logging.c_str() << ")::onClose: end\n";
+  prevent_reentrant_onClose = false;
 }
 
 void MediaServerPluginRTSPServer::StreamMapEntry::printRegistrations(const std::string &url,std::ostream &o) const {
@@ -527,6 +537,7 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void *callerId
   if (!info || !buffer || bufferSize == 0) {
     e.env() << "StreamMapEntry(" << e.id << "," << e.name.c_str() << ")::OnFrameCallback: "
                "empty frame received, calling onClose\n";
+    e.dontDeregister();
     e.onClose();
     return;
   }
