@@ -92,7 +92,7 @@ const DelayInterval ETERNITY(INT_MAX, MILLION-1);
 
 ///// DelayQueueEntry /////
 
-intptr_t DelayQueueEntry::tokenCounter = 0;
+std::atomic<intptr_t> DelayQueueEntry::tokenCounter(0);
 
 DelayQueueEntry::DelayQueueEntry(DelayInterval delay)
   : fDeltaTimeRemaining(delay) {

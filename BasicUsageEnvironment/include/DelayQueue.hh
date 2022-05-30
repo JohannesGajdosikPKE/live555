@@ -25,6 +25,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #endif
 
 #include <mutex>
+#include <atomic>
 
 #ifdef TIME_BASE
 typedef TIME_BASE time_base_seconds;
@@ -154,7 +155,7 @@ private:
   DelayInterval fDeltaTimeRemaining;
 
   intptr_t fToken;
-  static intptr_t tokenCounter;
+  static std::atomic<intptr_t> tokenCounter;
 };
 
 ///// DelayQueue /////
