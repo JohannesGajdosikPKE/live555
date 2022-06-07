@@ -205,7 +205,7 @@ public:
   typedef std::function<void(const Frame&)> FrameFunction;
   class Registration;
   std::unique_ptr<Registration> connect(const SubsessionInfo *info,FrameFunction &&f);
-  void printRegistrations(const std::string &url,std::ostream &o) const;
+  void printSubsessions(const std::string &url,std::ostream &o) const;
   void keepAlive(void);
   MediaServerPluginRTSPServer &server;
   UsageEnvironment &env(void) const {return server.envir();}
@@ -475,12 +475,12 @@ void MediaServerPluginRTSPServer::StreamMapEntry::onClose(void) {
   prevent_reentrant_onClose = false;
 }
 
-void MediaServerPluginRTSPServer::StreamMapEntry::printRegistrations(const std::string &url,std::ostream &o) const {
+void MediaServerPluginRTSPServer::StreamMapEntry::printSubsessions(const std::string &url,std::ostream &o) const {
   std::lock_guard<std::recursive_mutex> lock(registration_mutex);
   if (!registration_map.empty()) {
     o << "Stream url: " << url;
-    for (auto &it : registration_map) {
-      o << ", " << SubsessionInfoToString(*it.first);
+    for (const SubsessionInfo *const*s=subsession_info_list;*s;s++) {
+      o << ", " << SubsessionInfoToString(**s);
     }
   }
 }
@@ -1813,7 +1813,7 @@ void MediaServerPluginRTSPServer::generateInfoString(void)
     for (auto &it : stream_map) {
       auto s(it.second.lock());
       if (s) {
-        s->printRegistrations(m_urlPrefix.get()+it.first,ss);
+        s->printSubsessions(m_urlPrefix.get()+it.first,ss);
         ss << ':';
         auto &m(stream_info[it.first]);
         for (auto& it2 : m) ss << ' ' << it2;
