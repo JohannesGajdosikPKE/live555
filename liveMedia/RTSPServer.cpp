@@ -310,45 +310,57 @@ void RTSPServer
 
 void RTSPServer::stopTCPStreamingOnSocket(int socketNum) {
 //  envir() << "RTSPServer::stopTCPStreamingOnSocket(" << socketNum << ") start\n";
-
-  std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
-  std::list<std::pair<RTSPClientSession*,unsigned int> > sessions;
+  Semaphore sem;
+  unsigned int post_count = 0;
   {
-  std::lock_guard<std::recursive_mutex> guard(fTCPStreamingDatabase_mutex);
-  // Close any stream that is streaming over "socketNum" (using RTP/RTCP-over-TCP streaming):
-  streamingOverTCPRecord* sotcp
-    = (streamingOverTCPRecord*)fTCPStreamingDatabase->Lookup((char const*)socketNum);
-  if (sotcp != NULL) {
-    do {
-      RTSPClientSession* clientSession
-	= (RTSPServer::RTSPClientSession*)lookupClientSession(sotcp->fSessionId);
-      if (clientSession != NULL) {
-        sessions.push_back(std::pair<RTSPClientSession*, unsigned int>(clientSession, sotcp->fTrackNum));
-//        envir() << "RTSPServer::stopTCPStreamingOnSocket(" << socketNum << "): "
-//                   "found ClientSession(" << clientSession << ") with id " << sotcp->fSessionId << "\n";
+    std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
+    std::list<std::pair<RTSPClientSession*,unsigned int> > sessions;
+    {
+      std::lock_guard<std::recursive_mutex> guard(fTCPStreamingDatabase_mutex);
+      // Close any stream that is streaming over "socketNum" (using RTP/RTCP-over-TCP streaming):
+      streamingOverTCPRecord* sotcp
+        = (streamingOverTCPRecord*)fTCPStreamingDatabase->Lookup((char const*)socketNum);
+      if (sotcp != NULL) {
+        do {
+          RTSPClientSession* clientSession
+            = (RTSPServer::RTSPClientSession*)lookupClientSession(sotcp->fSessionId);
+          if (clientSession != NULL) {
+            sessions.push_back(std::pair<RTSPClientSession*, unsigned int>(clientSession, sotcp->fTrackNum));
+//            envir() << "RTSPServer::stopTCPStreamingOnSocket(" << socketNum << "): "
+//                       "found ClientSession(" << clientSession << ") with id " << sotcp->fSessionId << "\n";
+          }
+          streamingOverTCPRecord* sotcpNext = sotcp->fNext;
+          sotcp->fNext = NULL;
+          delete sotcp;
+          sotcp = sotcpNext;
+        } while (sotcp != NULL);
+        fTCPStreamingDatabase->Remove((char const*)socketNum);
       }
-
-      streamingOverTCPRecord* sotcpNext = sotcp->fNext;
-      sotcp->fNext = NULL;
-      delete sotcp;
-      sotcp = sotcpNext;
-    } while (sotcp != NULL);
-    fTCPStreamingDatabase->Remove((char const*)socketNum);
-  }
-  }
-  for (auto &it : sessions) {
-      // call deleteStreamByTrack in the proper thread
-    if (it.first->envir().taskScheduler().isSameThread()) {
-      it.first->deleteStreamByTrack(it.second);
-    } else {
-      Semaphore sem;
-      it.first->envir().taskScheduler().executeCommand(
-        [s=it.first,t=it.second,&sem](uint64_t) {
-          s->deleteStreamByTrack(t);
-        });
-      sem.wait();
     }
-  }
+    for (auto &it : sessions) {
+        // call deleteStreamByTrack in the proper thread
+      if (it.first->envir().taskScheduler().isSameThread()) {
+        it.first->deleteStreamByTrack(it.second);
+      } else {
+          // 'it' is protected by fClientSessions_mutex.
+          // Queue lambdas with only the client_session_id inside.
+          // The lambdas will want do lock fClientSessions_mutex and they
+          // will finish only after fClientSessions_mutex is unlocked below.
+          // Before returning I must wait for all lambdas to complete.
+        it.first->envir().taskScheduler().executeCommand(
+          [this,id=it.first->getOurSessionId(),track_nr=it.second,&sem](uint64_t) {
+            RTSPClientSession* clientSession
+              = (RTSPServer::RTSPClientSession*)lookupClientSession(id);
+            if (clientSession != NULL) {
+              clientSession->deleteStreamByTrack(track_nr);
+            }
+            sem.post();
+          });
+        post_count++;
+      }
+    }
+  } // fClientSessions_mutex is unlocked here
+  while (post_count-- > 0) sem.wait();
 //  envir() << "RTSPServer::stopTCPStreamingOnSocket(" << socketNum << ") end\n";
 }
 
