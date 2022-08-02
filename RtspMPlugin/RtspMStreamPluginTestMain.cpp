@@ -350,7 +350,11 @@ static const char *const plugin_name =
   #endif
   ".dll"
 #else
-  "./libRtspMStreamPlugin.so"
+  "./libRtspMStreamPlugin"
+  #ifdef _DEBUG
+    "d"
+  #endif
+  ".so"
 #endif
 ;
 static const char *const init_function_name = "InitializeMPlugin";
