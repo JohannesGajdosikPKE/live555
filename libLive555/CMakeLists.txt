@@ -226,11 +226,33 @@ set(SOURCES
   ../liveMedia/uLawAudioFilter.cpp
 )
 
-set(CMAKE_DEBUG_POSTFIX "d")
-
 set(LIVE555_LIBRARY Live555)
 
 project(${LIVE555_LIBRARY})
+
+if (NOT CMAKE_CONFIGURATION_TYPES)
+    # no multi configuration generator like Visual Studio
+  if (NOT DEFINED CMAKE_BUILD_TYPE OR NOT CMAKE_BUILD_TYPE)
+    message("CMAKE_BUILD_TYPE not defined, setting to Debug")
+    set(CMAKE_BUILD_TYPE "Debug")
+  else()
+    if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug" OR
+        "${CMAKE_BUILD_TYPE}" STREQUAL "Release" OR
+        "${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo" OR
+        "${CMAKE_BUILD_TYPE}" STREQUAL "MinSizeRel")
+      message("CMAKE_BUILD_TYPE is ${CMAKE_BUILD_TYPE}")
+    else()
+      message(FATAL_ERROR
+       "bad CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
+    endif()
+  endif()
+  set(CMAKE_CXX_FLAGS_DEBUG          "-O0 -g -D_DEBUG ")
+  set(CMAKE_CXX_FLAGS_RELEASE        "-O3 -DNDEBUG")
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 -g -DNDEBUG")
+  set(CMAKE_CXX_FLAGS_MINSIZEREL     "-Os -DNDEBUG")
+endif()
+
+set(CMAKE_DEBUG_POSTFIX "d")
 
 
 macro(DefineLibrary MTMD STATICSHARED)
@@ -253,9 +275,6 @@ macro(DefineLibrary MTMD STATICSHARED)
   target_include_directories(${LIBNAME} PUBLIC ../liveMedia/include)
   target_include_directories(${LIBNAME} PUBLIC ${OPENSSL_INCLUDE_PATH})
 
-  target_compile_options(${LIBNAME} PUBLIC -D__STDC_LIMIT_MACROS)
-  target_compile_options(${LIBNAME} PUBLIC -DNOMINMAX)
-
 #  set_target_properties(${LIBNAME} PROPERTIES SOVERSION 1)
 
   if (WIN32)
@@ -263,6 +282,8 @@ macro(DefineLibrary MTMD STATICSHARED)
     target_compile_options(${LIBNAME} PRIVATE -DNO_GETIFADDRS)
     target_compile_options(${LIBNAME} PUBLIC -DFD_SETSIZE=1024)
     target_compile_options(${LIBNAME} PUBLIC -${MTMD}$<$<CONFIG:Debug>:d>)
+    target_compile_options(${LIBNAME} PUBLIC -D__STDC_LIMIT_MACROS)
+    target_compile_options(${LIBNAME} PUBLIC -DNOMINMAX)
     target_link_libraries(${LIBNAME} ws2_32)
     target_link_libraries(${LIBNAME} ${OPENSSL_LIBRARY_PATH}/$(PlatformShortName)/${MTMD}$<$<CONFIG:Debug>:d>/libssl_static$<$<CONFIG:Debug>:d>.lib)
     target_link_libraries(${LIBNAME} ${OPENSSL_LIBRARY_PATH}/$(PlatformShortName)/${MTMD}$<$<CONFIG:Debug>:d>/libcrypto_static$<$<CONFIG:Debug>:d>.lib)

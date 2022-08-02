@@ -9,19 +9,40 @@ else()
 endif()
 
 if (WIN32)
-set(OPENSSL_LIBRARY_PATH "/usr/include" CACHE PATH "path where MT/libssl_static.lib lives")
-if (EXISTS "${OPENSSL_LIBRARY_PATH}/MT/libssl_static.lib")
-  message("openssl library files found at ${OPENSSL_LIBRARY_PATH}")
-else()
-  message(FATAL_ERROR "openssl library files not found at ${OPENSSL_LIBRARY_PATH}."
-          " Use cmake -D OPENSSL_LIBRARY_PATH=<path_where_MT/libssl_static.lib_lives" )
-endif()
-else()
+  set(OPENSSL_LIBRARY_PATH "/usr/include" CACHE PATH "path where MT/libssl_static.lib lives")
+  if (EXISTS "${OPENSSL_LIBRARY_PATH}/MT/libssl_static.lib")
+    message("openssl library files found at ${OPENSSL_LIBRARY_PATH}")
+  else()
+    message(FATAL_ERROR "openssl library files not found at ${OPENSSL_LIBRARY_PATH}."
+            " Use cmake -D OPENSSL_LIBRARY_PATH=<path_where_MT/libssl_static.lib_lives" )
+  endif()
 endif()
 
 set(CMAKE_CXX_STANDARD 14)
 
 project(RtspMStreamPluginProject)
+
+if (NOT CMAKE_CONFIGURATION_TYPES)
+    # no multi configuration generator like Visual Studio
+  if (NOT DEFINED CMAKE_BUILD_TYPE OR NOT CMAKE_BUILD_TYPE)
+    message("CMAKE_BUILD_TYPE not defined, setting to Debug")
+    set(CMAKE_BUILD_TYPE "Debug")
+  else()
+    if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug" OR
+        "${CMAKE_BUILD_TYPE}" STREQUAL "Release" OR
+        "${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo" OR
+        "${CMAKE_BUILD_TYPE}" STREQUAL "MinSizeRel")
+      message("CMAKE_BUILD_TYPE is ${CMAKE_BUILD_TYPE}")
+    else()
+      message(FATAL_ERROR
+       "bad CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
+    endif()
+  endif()
+  set(CMAKE_CXX_FLAGS_DEBUG          "-O0 -g -D_DEBUG")
+  set(CMAKE_CXX_FLAGS_RELEASE        "-O3 -DNDEBUG")
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 -g -DNDEBUG")
+  set(CMAKE_CXX_FLAGS_MINSIZEREL     "-Os -DNDEBUG")
+endif()
 
 set(CMAKE_DEBUG_POSTFIX "d")
 
