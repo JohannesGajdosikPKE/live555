@@ -28,8 +28,10 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 static inline
 unsigned int CurrentThreadId(void) {return GetCurrentThreadId();}
 #else
+#include <unistd.h>
+#include <sys/syscall.h>
 static inline
-unsigned int CurrentThreadId(void) {return gettid();}
+unsigned int CurrentThreadId(void) {return syscall(SYS_gettid);}
 #endif
 #endif
 
