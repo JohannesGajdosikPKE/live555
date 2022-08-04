@@ -192,8 +192,6 @@ GenericMediaServer::ClientSession *MediaServerPluginRTSPServer::createNewClientS
   return new MyRTSPClientSession(env, *this, sessionId);
 }
 
-struct KeepTaskHelper;
-
 class MediaServerPluginRTSPServer::StreamMapEntry : public std::enable_shared_from_this<MediaServerPluginRTSPServer::StreamMapEntry>, public IdContainer {
   StreamMapEntry(MediaServerPluginRTSPServer &server,const std::shared_ptr<IMStream> &stream,const std::string &name,std::function<void(const std::string&)> &&on_close);
 public:
@@ -212,16 +210,13 @@ public:
   const std::string name;
 private:
   const std::shared_ptr<IMStream> stream;
-  const std::function<void(const std::string&)> on_close;
+  std::mutex on_close_mutex;
+  std::function<void(const std::string&)> on_close;
   std::mutex delayed_keep_task_mutex;
   TaskToken delayed_keep_task = nullptr; // protected by delayed_keep_task_mutex
   bool i_want_to_die = false;            // protected by delayed_keep_task_mutex
   bool must_deregister = true;
-  bool prevent_reentrant_onClose = false;
-  void dontDeregister(void) {must_deregister = false;}
-  void onClose(void);
-  static void ScheduleKeepTaskHelper(KeepTaskHelper *ptr);
-  void scheduleCancelTaskHelper(void);
+  void emptyFrameReceived(void);
   void cancelKeepAlive(void);
   friend class Registration;
   void remember(Registration *reg);
@@ -326,6 +321,8 @@ MediaServerPluginRTSPServer::StreamMapEntry::StreamMapEntry(MediaServerPluginRTS
   env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::StreamMapEntry end\n";
 }
 
+  // the last shared_ptr may be released from any thread and therefore
+  // ~StreamMapEntry may be called from any thread:
 MediaServerPluginRTSPServer::StreamMapEntry::~StreamMapEntry(void) {
   if (must_deregister) {
     env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry start, calling RegisterOnFrame(" << this << ",NULL)\n";
@@ -333,8 +330,16 @@ MediaServerPluginRTSPServer::StreamMapEntry::~StreamMapEntry(void) {
   } else {
     env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry start, no deregistration necessary\n";
   }
-  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry: calling onClose\n";
-  onClose();
+    // no more OnFrame callbacks from executable threads
+  std::function<void(const std::string&)> tmp_on_close;
+  {
+    std::lock_guard<std::mutex> lock(on_close_mutex);
+    on_close.swap(tmp_on_close);
+  }
+  if (tmp_on_close) {
+    env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry: calling on_close cb\n";
+    tmp_on_close(name);
+  }
   {
     std::lock_guard<std::recursive_mutex> lock(registration_mutex);
     if (!registration_map.empty()) abort();
@@ -355,15 +360,12 @@ void MediaServerPluginRTSPServer::StreamMapEntry::remember(Registration *reg) {
     // only called from the Registration constructor
   env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::remember(" << SubsessionInfoToString(*reg->info) << "): start\n";
   if (!stream) abort();
-  bool call_register;
   {
     std::lock_guard<std::recursive_mutex> lock(registration_mutex);
-    call_register = registration_map.empty();
     RegistrationSet &rs(registration_map[reg->info]);
     rs.e = this;
     if (!rs.insert(reg).second) abort();
   }
-  if (call_register) 
   env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::remember end\n";
 }
 
@@ -408,45 +410,45 @@ struct KeepTaskHelper : public std::shared_ptr<MediaServerPluginRTSPServer::Stre
 };
 
 static void KeepTaskHelperFunc(void *context) {
-  KeepTaskHelper *k = reinterpret_cast<KeepTaskHelper*>(context);
-  delete k;
-}
-
-void MediaServerPluginRTSPServer::StreamMapEntry::ScheduleKeepTaskHelper(KeepTaskHelper *self) {
-  std::lock_guard<std::mutex> lock((*self)->delayed_keep_task_mutex);
-  KeepTaskHelper *k = nullptr;
-  if ((*self)->i_want_to_die) {
-    if ((*self)->delayed_keep_task) {
-      (*self)->env() << "StreamMapEntry(" << (*self)->id << "," << (*self)->name.c_str() << ")::ScheduleKeepTaskHelperFunc: "
-                      "unsceduling KeepAlive task\n";
-      k = reinterpret_cast<KeepTaskHelper*>(
-        (*self)->env().taskScheduler().unscheduleDelayedTask((*self)->delayed_keep_task));
-    }
-  } else {
-    (*self)->env() << "StreamMapEntry(" << (*self)->id << "," << (*self)->name.c_str() << ")::ScheduleKeepTaskHelperFunc: "
-                    "going to destroy the StreamMapEntry in 15 seconds if no one needs it\n";
-    k = reinterpret_cast<KeepTaskHelper*>(
-      (*self)->env().taskScheduler().rescheduleDelayedTask((*self)->delayed_keep_task,15000000,
-                                                           KeepTaskHelperFunc,self));
-  }
-  if (k) {
-    delete k;
+  if (context) {
+    KeepTaskHelper *old_ptr = reinterpret_cast<KeepTaskHelper*>(context);
+    delete old_ptr;
   }
 }
 
 void MediaServerPluginRTSPServer::StreamMapEntry::keepAlive(void) {
-    // creating shared_from_this() prevents destruction
-  KeepTaskHelper *self = new KeepTaskHelper(shared_from_this());
-  ScheduleKeepTaskHelper(self);
+  KeepTaskHelper *old_ptr = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(delayed_keep_task_mutex);
+    if (i_want_to_die) {
+      if (delayed_keep_task) {
+        env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::ScheduleKeepTaskHelperFunc: "
+                 "unsceduling KeepAlive task\n";
+        old_ptr = reinterpret_cast<KeepTaskHelper*>(
+                    env().taskScheduler().unscheduleDelayedTask(delayed_keep_task));
+      }
+    } else {
+      env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::ScheduleKeepTaskHelperFunc: "
+               "going to destroy the StreamMapEntry in 15 seconds if no one needs it\n";
+        // creating shared_from_this() prevents destruction
+      KeepTaskHelper *self = new KeepTaskHelper(shared_from_this());
+      old_ptr = reinterpret_cast<KeepTaskHelper*>(
+                  env().taskScheduler().rescheduleDelayedTask(delayed_keep_task,15000000,
+                                                              KeepTaskHelperFunc,self));
+    }
+  }
+  if (old_ptr) {
+    delete old_ptr;
+  }
 }
 
-void MediaServerPluginRTSPServer::StreamMapEntry::scheduleCancelTaskHelper(void) {
+void MediaServerPluginRTSPServer::StreamMapEntry::cancelKeepAlive(void) {
   std::lock_guard<std::mutex> lock(delayed_keep_task_mutex);
   i_want_to_die = true;
   if (delayed_keep_task) {
     KeepTaskHelper *const old_ptr = reinterpret_cast<KeepTaskHelper*>(
       env().taskScheduler().unscheduleDelayedTask(delayed_keep_task));
-    env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::scheduleCancelTaskHelper: unscheduled, ";
+    env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::cancelKeepAlive: unscheduled, ";
     if (old_ptr) {
       env() << "releasing old KeepTaskHelper\n";
       delete old_ptr;
@@ -456,23 +458,23 @@ void MediaServerPluginRTSPServer::StreamMapEntry::scheduleCancelTaskHelper(void)
   }
 }
 
-void MediaServerPluginRTSPServer::StreamMapEntry::cancelKeepAlive(void) {
-  scheduleCancelTaskHelper();
-}
-
-void MediaServerPluginRTSPServer::StreamMapEntry::onClose(void) {
-  if (prevent_reentrant_onClose) return;
-  prevent_reentrant_onClose = true;
-  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::onClose: start\n";
+void MediaServerPluginRTSPServer::StreamMapEntry::emptyFrameReceived(void) {
+  std::shared_ptr<StreamMapEntry> do_not_delete_in_this_block(shared_from_this());
+  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::emptyFrameReceived: start\n";
   cancelKeepAlive();
-  const std::string name_for_logging(name);
-  if (on_close) {
-    env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::onClose: calling on_close cb\n";
-    on_close(name);
+  std::function<void(const std::string&)> tmp_on_close;
+  {
+    std::lock_guard<std::mutex> lock(on_close_mutex);
+    on_close.swap(tmp_on_close);
   }
-    // StreamMapEntry may have been deleted, do not use it for logging
-  env() << "StreamMapEntry(" << id << "," << name_for_logging.c_str() << ")::onClose: end\n";
-  prevent_reentrant_onClose = false;
+  if (tmp_on_close) {
+    env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::emptyFrameReceived: calling on_close cb\n";
+    tmp_on_close(name);
+  }
+  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::emptyFrameReceived: end, "
+           "now the destructur should be called, references: "
+        << (unsigned int)do_not_delete_in_this_block.use_count() << "\n";
+  if (do_not_delete_in_this_block.use_count() != 1) abort();
 }
 
 void MediaServerPluginRTSPServer::StreamMapEntry::printSubsessions(const std::string &url,std::ostream &o) const {
@@ -529,16 +531,28 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnH264FrameCallback(const Regi
   }
 }
 
+  // called from some thread in the executeble:
 void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void *callerId, const SubsessionInfo *info, const uint8_t *buffer, int bufferSize, const TimeType &frameTime) {
-    // The executable has called the callback, meaning that the stream is still alive an registered.
+    // The executable has called the callback, meaning that the stream is still alive and registered.
     // This implies that the StreamMapEntry is not yet destructed,
     // and I can get its address from the callerId, which was given to the executable upon registration of OnFrameCallback:
   StreamMapEntry &e(*reinterpret_cast<MediaServerPluginRTSPServer::StreamMapEntry*>(callerId));
   if (!info || !buffer || bufferSize == 0) {
-    e.env() << "StreamMapEntry(" << e.id << "," << e.name.c_str() << ")::OnFrameCallback: "
-               "empty frame received, calling onClose\n";
-    e.dontDeregister();
-    e.onClose();
+        // after this function is completed, no more calls into the executable must be called (RegisterOnFrame).
+    Semaphore sem;
+    e.env().taskScheduler().executeCommand(
+      [&e,&sem](uint64_t) {
+        e.env() << "StreamMapEntry(" << e.id << "," << e.name.c_str() << ")::OnFrameCallback: "
+                   "empty frame received, calling emptyFrameReceived\n";
+        e.must_deregister = false;
+          // emptyFrameReceived is called from the thread of the stream.
+          // This is necessary because inside delete() is called which
+          // must not be don on the heap of the executabe.
+        e.emptyFrameReceived();
+          // now the destructor of this StreamMapEntry should habe been called
+        sem.post();
+      });
+    sem.wait();
     return;
   }
   std::lock_guard<std::recursive_mutex> lock(e.registration_mutex);
@@ -1561,7 +1575,14 @@ void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer:
       } else {
         e = StreamMapEntry::Create(*this,stream,l->streamName,
           [this](const std::string &name) {
-              // may be called from any thread
+              // Called from the executable thread when the executable calls the empty-Framecallback.
+              // Or called from a worker thread when the client closes the connection.
+              // There is also a third possibility:
+              // when the plugin shuts down, but no empty-Framecallback was called.
+	      // This third possibility shall not happen, the executable must send
+	      // empty Frames for all streams before closing the plugin.
+	      // Otherwise the plugin would Deregister() the streams while shutting down,
+	      // wich you probably would not like.
             envir() << "MediaServerPluginRTSPServer::getStreamCb::close-lambda(" << name.c_str() << ") start\n";
             {
                 // It is not strictly necessary to erase the weak_ptr from the map.
