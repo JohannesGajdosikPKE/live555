@@ -19,10 +19,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // Implementation
 
 #include "MStreamPluginRTSPServer.hh"
-#include "H264VideoStreamDiscreteFramer.hh"
 #include "BasicUsageEnvironment.hh"
 #include <liveMedia.hh>
-#include <Base64.hh>
 #include <GroupsockHelper.hh>
 
 #include <string.h>
@@ -222,8 +220,7 @@ private:
   void remember(Registration *reg);
   void forget(Registration *reg);
   struct RegistrationSet;
-  static void OnH264NalCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const int64_t frameTime);
-  static void OnH264FrameCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const int64_t frameTime);
+  static void OnH26xFrameCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const int64_t frameTime);
   static void OnFrameCallback(void *callerId, const SubsessionInfo *info, const uint8_t *buffer, int bufferSize, const TimeType &frameTime);
   mutable std::recursive_mutex registration_mutex;
   std::map<const SubsessionInfo*,RegistrationSet> registration_map;
@@ -293,17 +290,12 @@ public:
 };
 
 struct MediaServerPluginRTSPServer::StreamMapEntry::RegistrationSet : public std::set<Registration*> {
-  RegistrationSet(void) : e(0),h264_profile_level_id(0) {}
+  RegistrationSet(void) : e(0) {}
   void callFunctions(const uint8_t *buffer, int bufferSize, const int64_t frameTime) const {
     const Frame f(*e,buffer,bufferSize,frameTime);
     for (auto &it : *this) it->f(f);
   }
   StreamMapEntry *e;
-  void setH264ProfileLevelId(unsigned int x) {h264_profile_level_id = x;}
-  void setH264Sps64(const std::shared_ptr<const char[]> &x) {h264_sps64 = x;}
-  void setH264Pps64(const std::shared_ptr<const char[]> &x) {h264_pps64 = x;}
-  unsigned int h264_profile_level_id;
-  std::shared_ptr<const char[]> h264_sps64,h264_pps64;
 };
 
 
@@ -488,26 +480,9 @@ void MediaServerPluginRTSPServer::StreamMapEntry::printSubsessions(const std::st
 }
 
 
-void MediaServerPluginRTSPServer::StreamMapEntry::OnH264NalCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const int64_t frameTime) {
-/*
-      maybe this code will be useful later
-    const uint8_t nal_unit_type = (*buffer & 0x1f);
-    if (nal_unit_type == 7) {
-      if (bufferSize >= 4) {
-        rs.setH264ProfileLevelId(
-             (((uint32_t)buffer[1])<<16)|(((uint32_t)buffer[2])<<8)|((uint32_t)buffer[3]));
-      }
-      rs.setH264Sps64(std::shared_ptr<const char[]>(base64Encode((const char*)buffer,bufferSize)));
-    } else if (nal_unit_type == 8) {
-      rs.setH264Pps64(std::shared_ptr<const char[]>(base64Encode((const char*)buffer,bufferSize)));
-    }
-*/
-  rs.callFunctions(buffer,bufferSize,frameTime);
-}
-
-void MediaServerPluginRTSPServer::StreamMapEntry::OnH264FrameCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const int64_t frameTime) {
+void MediaServerPluginRTSPServer::StreamMapEntry::OnH26xFrameCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const int64_t frameTime) {
   if (bufferSize <= 0) return;
-    // extract all nal units, strip h264 bytestream headers:
+    // extract all nal units, strip h26x bytestream headers:
   const uint8_t *p = buffer;
   const uint8_t *const end = buffer+bufferSize;
   const uint8_t *const end3 = end - 3;
@@ -519,13 +494,13 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnH264FrameCallback(const Regi
       }
     }
       // no more 001 until the end:
-    OnH264NalCallback(rs,p,end-p,frameTime);
+    rs.callFunctions(p,end-p,frameTime);
     break;
     nal_start_found:
     const uint8_t *p_next = p0 + 3;
     if (p0 > p) {
       if (p0[-1]==0) p0--;
-      if (p0 > p) OnH264NalCallback(rs,p,p0-p,frameTime);
+      if (p0 > p) rs.callFunctions(p,p0-p,frameTime);
     }
     p = p_next;
   }
@@ -558,8 +533,9 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void *callerId
   std::lock_guard<std::recursive_mutex> lock(e.registration_mutex);
   const auto r(e.registration_map.find(info));
   if (r != e.registration_map.end()) {
-    if (0 == strcmp(info->getRtpPayloadFormatName(),"H264")) {
-      OnH264FrameCallback(r->second,buffer,bufferSize,
+    if (0 == strcmp(info->getRtpPayloadFormatName(),"H264") ||
+        0 == strcmp(info->getRtpPayloadFormatName(),"H265")) {
+      OnH26xFrameCallback(r->second,buffer,bufferSize,
                           std::chrono::duration_cast<std::chrono::microseconds>(
                             frameTime.time_since_epoch()).count());
     } else {
@@ -1043,6 +1019,39 @@ protected:
   }
 };
 
+class MyH265ServerMediaSubsession : public MyServerMediaSubsession {
+public:
+  MyH265ServerMediaSubsession(UsageEnvironment &env,
+                              const std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> &e,
+                              const SubsessionInfo *info)
+    : MyServerMediaSubsession(env,e,info) {
+  }
+protected:
+  const char *getAuxSDPLine(RTPSink*,FramedSource*) override {return info->getExtraInfo();}
+  FramedSource *createNewStreamSource(unsigned clientSessionId,
+                                      unsigned &estBitrate) override {
+    FramedSource *rval = createFrameSource(clientSessionId);
+    if (rval) {
+      estBitrate = info->getEstBitrate(); // kbps, estimate
+      rval = H265VideoStreamDiscreteFramer::createNew(envir(),rval);
+    } else {
+      estBitrate = 0;
+    }
+    return rval;
+  }
+  RTPSink *createNewRTPSink(Groupsock* rtpGroupsock,
+                            unsigned char rtpPayloadTypeIfDynamic,
+                            FramedSource* inputSource) override {
+    RTPSink *rval = nullptr;
+    if (inputSource) {
+      rval = H265VideoRTPSink::createNew(envir(),
+                                         rtpGroupsock,
+                                         rtpPayloadTypeIfDynamic);
+    }
+    return rval;
+  }
+};
+
 class MyMpg4ServerMediaSubsession: public MyServerMediaSubsession {
 public:
   MyMpg4ServerMediaSubsession(UsageEnvironment &env,
@@ -1452,6 +1461,8 @@ MyServerMediaSubsession
   MyServerMediaSubsession *rval = nullptr;
   if (0 == strcmp(info->getRtpPayloadFormatName(),"H264")) {
     rval = new MyH264ServerMediaSubsession(env,e,info);
+  } else if (0 == strcmp(info->getRtpPayloadFormatName(),"H265")) {
+    rval = new MyH265ServerMediaSubsession(env,e,info);
   } else if (0 == strcmp(info->getRtpPayloadFormatName(),"MP4V-ES")) {
     rval = new MyMpg4ServerMediaSubsession(env,e,info);
   } else if (0 == strcmp(info->getRtpPayloadFormatName(),"JPEG")) {
