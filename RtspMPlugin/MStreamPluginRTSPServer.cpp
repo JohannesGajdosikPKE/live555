@@ -562,6 +562,13 @@ int CreateAcceptSocket(UsageEnvironment& env, Port ourPort, unsigned int bind_to
     ::closeSocket(accept_fd);
     return -1;
   }
+#else
+  const int yes = -1; // all bits set to 1
+  if (0 != ::setsockopt(accept_fd,SOL_SOCKET,SO_REUSEADDR,(const char*)(&yes),sizeof(yes))) {
+    env << "MStreamPluginRtspServer CreateAcceptSocket: setsockopt(SO_REUSEADDR) failed: " << env.getErrno() << "\n";
+    ::closeSocket(accept_fd);
+    return -1;
+  }
 #endif
   struct sockaddr_in sock_addr;
   sock_addr.sin_family = AF_INET;
