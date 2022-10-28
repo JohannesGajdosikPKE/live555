@@ -2,6 +2,7 @@
 
 #include <string>
 #include <map>
+#include <list>
 #include <set>
 #include <iostream>
 #include <mutex>
@@ -9,6 +10,8 @@
 #include <atomic>
 #include <chrono>
 #include <thread>
+
+#include <dirent.h>
 
 #include <string.h>
 #include <stdio.h>
@@ -99,26 +102,44 @@ public:
 };
 
 class SingleFilesSubsessionInfo : public MySubsessionInfo {
-  int index = 0;
+  std::list<std::string> file_list;
+  std::list<std::string>::iterator it;
 protected:
-  virtual const char *getFileFormatTemplate(void) const = 0;
+  SingleFilesSubsessionInfo(void) : it(file_list.end()) {}
+  virtual const char *getDirName(void) const = 0;
   int generateFrame(int64_t frameTime, uint8_t *buffer,int buffer_size) override {
-    int rval = 0;
-    for (int retries=0;retries<2;retries++) {
-      char filename[128];
-      sprintf(filename,getFileFormatTemplate(),index);
-      FILE *f=fopen(filename,"rb");
+    if (file_list.empty()) {
+      std::string dir_name(getDirName());
+      if (dir_name.empty()) {
+        return 0;
+      }
+      if (dir_name.back() != '/') dir_name.push_back('/');
+      DIR *dp = opendir(dir_name.c_str());
+      struct dirent *e;
+      if (!dp) {
+        std::cout << "opendir(" << dir_name << ") failed" << std::endl;
+        return 0;
+      }
+      std::cout << "opendir(" << dir_name << ") ok" << std::endl;
+      while ( (e = readdir(dp)) ) {
+        if (e->d_name[0] != '.') file_list.push_back(dir_name + e->d_name);
+      }
+      closedir(dp);
+      if (file_list.empty()) return 0;
+      file_list.sort();
+      std::cout << "opendir(" << dir_name << ") ok, files: " << file_list.size() << std::endl;
+    }
+    for (int retries = file_list.size();retries>0;retries--) {
+      if (it == file_list.end()) {it = file_list.begin();}
+      else {++it;}
+      FILE *f = fopen(it->c_str(),"rb");
       if (f) {
-        rval = fread(buffer,1,buffer_size,f);
+        const int rval = fread(buffer,1,buffer_size,f);
         fclose(f);
-        index++;
-        break;
-      } else {
-        std::cout << "fopen(" << filename << ") failed" << std::endl;
-        index = 0;
+        if (rval > 0) return rval;
       }
     }
-    return rval;
+    return 0;
   }
 };
 
@@ -126,10 +147,21 @@ class H264SubsessionInfo : public SingleFilesSubsessionInfo {
 public:
   H264SubsessionInfo(const char *aux_sdp_line) : aux_sdp_line(aux_sdp_line) {}
 private:
-  const char *getFileFormatTemplate(void) const override {return "../../../h264/out%06d.frame";}
+  const char *getDirName(void) const override {return "h264";}
   const char *getExtraInfo(void) const override {return aux_sdp_line.c_str();}
   uint32_t getEstBitrate(void) const override {return 2000;}
   const char *getRtpPayloadFormatName(void) const override {return "H264";}
+  std::string aux_sdp_line;
+};
+
+class H265SubsessionInfo : public SingleFilesSubsessionInfo {
+public:
+  H265SubsessionInfo(const char *aux_sdp_line) : aux_sdp_line(aux_sdp_line) {}
+private:
+  const char *getDirName(void) const override {return "h265";}
+  const char *getExtraInfo(void) const override {return aux_sdp_line.c_str();}
+  uint32_t getEstBitrate(void) const override {return 2000;}
+  const char *getRtpPayloadFormatName(void) const override {return "H265";}
   std::string aux_sdp_line;
 };
 
@@ -137,7 +169,7 @@ class Mpg4SubsessionInfo : public SingleFilesSubsessionInfo {
 public:
   Mpg4SubsessionInfo(void) {}
 private:
-  const char *getFileFormatTemplate(void) const override {return "../../../mpg4/out%06d.frame";}
+  const char *getDirName(void) const override {return "mpg4";}
   uint32_t getEstBitrate(void) const override {return 2000;}
   const char *getRtpPayloadFormatName(void) const override {return "MP4V-ES";}
 };
@@ -146,7 +178,7 @@ class MJPEGSubsessionInfo : public SingleFilesSubsessionInfo {
 public:
   MJPEGSubsessionInfo(void) {}
 private:
-  const char *getFileFormatTemplate(void) const override {return "../../../jpeg/out%06d.frame";}
+  const char *getDirName(void) const override {return "jpeg";}
   uint32_t getEstBitrate(void) const override {return 2000;}
   const char *getRtpPayloadFormatName(void) const override {return "JPEG";}
 };
@@ -156,7 +188,7 @@ public:
   AacSubsessionInfo(const char *fmtp_config) : fmtp_config(fmtp_config) {}
 private:
   int getFrameDuration(void) const override {return 20000;}
-  const char *getFileFormatTemplate(void) const override {return "../../../aac/out%06d.frame";}
+  const char *getDirName(void) const override {return "../../../aac";}
   int generateFrame(int64_t frameTime, uint8_t *buffer,int buffer_size) override {
     int rc = SingleFilesSubsessionInfo::generateFrame(frameTime,buffer,buffer_size);
     if (rc > 0) {
@@ -210,6 +242,9 @@ public:
 //        new AvasysMetadataSubsessionInfo();
         nullptr;
       subsession_infos[2] = nullptr;
+    } else if (0 == strcmp(url,"h265")) {
+      subsession_infos[0] = new H265SubsessionInfo("");
+      subsession_infos[1] = nullptr;
     } else if (0 == strcmp(url,"mpg4")) {
       subsession_infos[0] = new Mpg4SubsessionInfo();
       subsession_infos[1] = nullptr;
@@ -235,7 +270,7 @@ public:
   int64_t step(int64_t now) {
 //    std::cout << "MyTestIMStream(" << this << ")::step" << std::endl;
     std::lock_guard<std::mutex> lock(internal_mutex);
-    const int buffer_size = 64*1024;
+    const int buffer_size = 1024*1024;
     std::unique_ptr<uint8_t[]> buffer = std::make_unique<uint8_t[]>(buffer_size);
     int wait_duration = 10000000;
     for (MySubsessionInfo *const*s=subsession_infos;*s;s++) {
@@ -296,10 +331,10 @@ public:
       continue_loop = false;
     });
     while (continue_loop) {
-    const unsigned long now = 
-      std::chrono::duration_cast<std::chrono::microseconds>
-        (std::chrono::system_clock::now().time_since_epoch()).count();
-      int64_t wait_duration = 10000000;
+      const unsigned long now = 
+        std::chrono::duration_cast<std::chrono::microseconds>
+          (std::chrono::system_clock::now().time_since_epoch()).count();
+      int64_t wait_duration = 1000000000;
       {
         std::lock_guard<std::mutex> lock(stream_set_mutex);
         for (auto &it : stream_set) {
@@ -307,13 +342,21 @@ public:
           if (wait_duration > rc) wait_duration = rc;
         }
       }
+      if (wait_duration >= 1000000000) wait_duration = 20000;
       std::this_thread::sleep_for(std::chrono::microseconds(wait_duration));
     }
-    {
-      std::lock_guard<std::mutex> lock(stream_set_mutex);
-      for (auto &it : stream_set) it->lastEmptyStep();
-    }
+    std::cout << "joining" << std::endl;
     th.join();
+    {
+      std::cout << "sending last empty frame" << std::endl;
+      std::set<MyTestIMStream*> tmp_set;
+      {
+        std::lock_guard<std::mutex> lock(stream_set_mutex);
+        tmp_set.swap(stream_set);
+      }
+      for (auto &it : tmp_set) it->lastEmptyStep();
+      std::cout << "frame sent" << std::endl;
+    }
   }
   ~MyIMStreamFactory(void) {
   }
