@@ -151,10 +151,11 @@ static const char *SubsessionInfoToString(const SubsessionInfo &ssi) {
 
 
 struct Frame {
-  Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t *data,int32_t size,int64_t time);
+  Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t *data,int32_t size,int64_t time,bool end_of_frame);
   const uint8_t *getData(void) const {return data.get();}
   const uint32_t size;
   const int64_t time;
+  const bool end_of_frame;
 private:
   std::shared_ptr<uint8_t> data; // actually contains an array and a custom deleter
 };
@@ -256,8 +257,8 @@ std::shared_ptr<uint8_t> CreateSharedArray(const uint8_t *const data,const int32
   return rval;
 }
 
-Frame::Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t *data,int32_t size,int64_t time)
-      :size((data && size>0)?size:0),time(time),data(CreateSharedArray(data,Frame::size)) {
+Frame::Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t *data,int32_t size,int64_t time,bool end_of_frame)
+      :size((data && size>0)?size:0),time(time),end_of_frame(end_of_frame),data(CreateSharedArray(data,Frame::size)) {
 }
 
 class MediaServerPluginRTSPServer::StreamMapEntry::Registration : public IdContainer {
@@ -291,8 +292,8 @@ public:
 
 struct MediaServerPluginRTSPServer::StreamMapEntry::RegistrationSet : public std::set<Registration*> {
   RegistrationSet(void) : e(0) {}
-  void callFunctions(const uint8_t *buffer, int bufferSize, const int64_t frameTime) const {
-    const Frame f(*e,buffer,bufferSize,frameTime);
+  void callFunctions(const uint8_t *buffer, int bufferSize, const int64_t frameTime, bool end_of_frame) const {
+    const Frame f(*e,buffer,bufferSize,frameTime,end_of_frame);
     for (auto &it : *this) it->f(f);
   }
   StreamMapEntry *e;
@@ -494,13 +495,13 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnH26xFrameCallback(const Regi
       }
     }
       // no more 001 until the end:
-    rs.callFunctions(p,end-p,frameTime);
+    rs.callFunctions(p,end-p,frameTime,true);
     break;
     nal_start_found:
     const uint8_t *p_next = p0 + 3;
     if (p0 > p) {
       if (p0[-1]==0) p0--;
-      if (p0 > p) rs.callFunctions(p,p0-p,frameTime);
+      if (p0 > p) rs.callFunctions(p,p0-p,frameTime,false);
     }
     p = p_next;
   }
@@ -541,7 +542,8 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void *callerId
     } else {
       r->second.callFunctions(buffer,bufferSize,
                               std::chrono::duration_cast<std::chrono::microseconds>(
-                                frameTime.time_since_epoch()).count());
+                                frameTime.time_since_epoch()).count(),
+                              true);
     }
   }
 }
@@ -815,6 +817,9 @@ public:
     rval->connect(e,info);
     return rval;
   }
+  Boolean nalUnitEndsAccessUnit(u_int8_t nal_unit_type) const {
+    return nal_unit_ends_access_unit;
+  }
 private:
   MyFrameSource(const MyFrameSource&);
   MyFrameSource &operator=(MyFrameSource&);
@@ -924,6 +929,7 @@ private:
     }
     fPresentationTime.tv_sec  = f.time / 1000000LL;
     fPresentationTime.tv_usec = f.time - 1000000LL*fPresentationTime.tv_sec;
+    nal_unit_ends_access_unit = f.end_of_frame;
       // If the device is *not* a 'live source'
       // (e.g., it comes instead from a file or buffer),
       // then set "fDurationInMicroseconds" here.
@@ -950,6 +956,7 @@ private:
   std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry::Registration> frame_registration;
   unsigned int prev_task_queue_size = 0;
   unsigned int prev_frame_queue_size = 0;
+  bool nal_unit_ends_access_unit = true;
 };
 
 
@@ -1034,13 +1041,21 @@ public:
     : MyServerMediaSubsession(env,e,info) {
   }
 protected:
+  class MyH265VideoStreamDiscreteFramer : public H265VideoStreamDiscreteFramer {
+    Boolean nalUnitEndsAccessUnit(u_int8_t nal_unit_type) override {
+      return static_cast<MyFrameSource*>(fInputSource)->nalUnitEndsAccessUnit(nal_unit_type);
+    }
+  public:
+    MyH265VideoStreamDiscreteFramer(UsageEnvironment &env,MyFrameSource *inputSource)
+      : H265VideoStreamDiscreteFramer(env,inputSource,False,False) {}
+  };
   const char *getAuxSDPLine(RTPSink*,FramedSource*) override {return info->getExtraInfo();}
   FramedSource *createNewStreamSource(unsigned clientSessionId,
                                       unsigned &estBitrate) override {
     FramedSource *rval = createFrameSource(clientSessionId);
     if (rval) {
       estBitrate = info->getEstBitrate(); // kbps, estimate
-      rval = H265VideoStreamDiscreteFramer::createNew(envir(),rval);
+      rval = new MyH265VideoStreamDiscreteFramer(envir(),static_cast<MyFrameSource*>(rval));
     } else {
       estBitrate = 0;
     }
