@@ -465,8 +465,9 @@ void MediaServerPluginRTSPServer::StreamMapEntry::emptyFrameReceived(void) {
     tmp_on_close(name);
   }
   env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::emptyFrameReceived: end, "
-           "now the destructur should be called, references: "
-        << (unsigned int)do_not_delete_in_this_block.use_count() << "\n";
+           "now the destructur should be called"
+           ", references: " << (unsigned int)do_not_delete_in_this_block.use_count()
+        << "\n";
   if (do_not_delete_in_this_block.use_count() != 1) abort();
 }
 
@@ -1657,7 +1658,11 @@ ServerMediaSession *MediaServerPluginRTSPServer::createServerMediaSession(UsageE
         sms->addSubsession(s);
       }
       addServerMediaSession(sms);
+    } else {
+      envir() << "MediaServerPluginRTSPServer::createServerMediaSession(" << e->name.c_str() << "): MyServerMediaSubsession::createNew failed" << "\n";
     }
+  } else {
+    envir() << "MediaServerPluginRTSPServer::createServerMediaSession(" << e->name.c_str() << "): no subsessions" << "\n";
   }
   envir() << "MediaServerPluginRTSPServer::createServerMediaSession(" << e->name.c_str() << "): end, returning " << sms << "\n";
   return sms;

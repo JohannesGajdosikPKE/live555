@@ -11,8 +11,6 @@
 #include <chrono>
 #include <thread>
 
-#include <dirent.h>
-
 #include <string.h>
 #include <stdio.h>
 
@@ -22,6 +20,7 @@
 static inline
 unsigned int CurrentThreadId(void) {return GetCurrentThreadId();}
 #else
+#include <dirent.h>
 #include <dlfcn.h>
 #include <unistd.h>
 #include <sys/syscall.h>
@@ -103,9 +102,9 @@ public:
 
 class SingleFilesSubsessionInfo : public MySubsessionInfo {
   std::list<std::string> file_list;
-  std::list<std::string>::iterator it;
+  std::list<std::string>::iterator file_it;
 protected:
-  SingleFilesSubsessionInfo(void) : it(file_list.end()) {}
+  SingleFilesSubsessionInfo(void) : file_it(file_list.end()) {}
   virtual const char *getDirName(void) const = 0;
   int generateFrame(int64_t frameTime, uint8_t *buffer,int buffer_size) override {
     if (file_list.empty()) {
@@ -113,6 +112,21 @@ protected:
       if (dir_name.empty()) {
         return 0;
       }
+#ifdef _WIN32
+      if (dir_name.back() != '\\') dir_name.push_back('\\');
+      HANDLE hFind;
+      WIN32_FIND_DATA FindFileData;
+      if ((hFind = FindFirstFile((dir_name+"*").c_str(), &FindFileData)) == INVALID_HANDLE_VALUE) {
+        std::cout << "FindFirstFile(" << dir_name << "*) failed" << std::endl;
+        return 0;
+      } else {
+        std::cout << "FindFirstFile(" << dir_name << "*) ok" << std::endl;
+        do {
+          if (FindFileData.cFileName[0] != '.') file_list.push_back(dir_name + FindFileData.cFileName);
+        } while (FindNextFile(hFind, &FindFileData));
+        FindClose(hFind);
+      }
+#else
       if (dir_name.back() != '/') dir_name.push_back('/');
       DIR *dp = opendir(dir_name.c_str());
       struct dirent *e;
@@ -125,14 +139,17 @@ protected:
         if (e->d_name[0] != '.') file_list.push_back(dir_name + e->d_name);
       }
       closedir(dp);
+#endif
       if (file_list.empty()) return 0;
       file_list.sort();
+      file_it == file_list.end();
       std::cout << "opendir(" << dir_name << ") ok, files: " << file_list.size() << std::endl;
     }
     for (int retries = file_list.size();retries>0;retries--) {
-      if (it == file_list.end()) {it = file_list.begin();}
-      else {++it;}
-      FILE *f = fopen(it->c_str(),"rb");
+      if (file_it == file_list.end()) {file_it = file_list.begin();}
+      else {++file_it;}
+      if (file_it == file_list.end()) break;
+      FILE *f = fopen(file_it->c_str(),"rb");
       if (f) {
         const int rval = fread(buffer,1,buffer_size,f);
         fclose(f);
@@ -277,14 +294,20 @@ public:
       const int frame_duration = (*s)->getFrameDuration();
       if (wait_duration > frame_duration) wait_duration = frame_duration;
       const int size = (*s)->generateFrame(now,buffer.get(),buffer_size);
-      for (auto &it : frame_cb_map) it.second(it.first,*s,buffer.get(),size,
-                                              TimeType(std::chrono::microseconds(now)));
+      if (size > 0) {
+        for (auto &it : frame_cb_map) it.second(it.first,*s,buffer.get(),size,
+                                                TimeType(std::chrono::microseconds(now)));
+      } 
     }
     return wait_duration;
   }
   void lastEmptyStep(void) {
-    std::lock_guard<std::mutex> lock(internal_mutex);
-    for (auto &it : frame_cb_map) it.second(it.first,nullptr,nullptr,0,TimeType());
+    OnFrameCallbackMap tmp;
+    {
+      std::lock_guard<std::mutex> lock(internal_mutex);
+      tmp.swap(frame_cb_map);
+    }
+    for (auto &it : tmp) it.second(it.first,nullptr,nullptr,0,TimeType());
   }
 private:
     // the SubsessionInfos live on the heap of the executable at the same address
@@ -369,10 +392,10 @@ private:
                                stream_set.erase(self);
                              }));
     if (rval->isInitialized()) {
-      {
-        std::lock_guard<std::mutex> lock(stream_set_mutex);
-        stream_set.insert(rval);
-      }
+      std::lock_guard<std::mutex> lock(stream_set_mutex);
+      stream_set.insert(rval);
+        // no framefallback before (*cb) has been called.
+	// Therefore stream_set_mutex must stay locked.
       (*cb)(context,TStreamPtr(rval));
     } else {
       delete rval;
