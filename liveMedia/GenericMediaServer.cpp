@@ -508,6 +508,7 @@ static GenericMediaServer::ClientConnection::IdType GenerateId(void) {
 GenericMediaServer::ClientConnection
 ::ClientConnection(UsageEnvironment &threaded_env, GenericMediaServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr, Boolean useTLS)
   : threaded_env(threaded_env), fOurServer(ourServer), id(GenerateId()), init_command(0), fOurSocket(clientSocket), fClientAddr(clientAddr), fTLS(threaded_env) {
+  fInputTLS = fOutputTLS = &fTLS;
     char peer_host_str[INET6_ADDRSTRLEN + 1];
     char peer_port_str[7 + 1];
     if (getnameinfo((struct sockaddr*)&clientAddr, sizeof(struct sockaddr_storage),
@@ -594,16 +595,16 @@ void GenericMediaServer::ClientConnection::incomingRequestHandler(void* instance
 void GenericMediaServer::ClientConnection::incomingRequestHandler() {
     // this is called from the tasksceduler, asserting does not hurt:
   envir().taskScheduler().assertSameThread();
-  if (fTLS.tlsAcceptIsNeeded) { // we need to successfully call fTLS.accept() first:
-    if (fTLS.accept(fOurSocket) <= 0) return; // either an error, or we need to try again later
+  if (fInputTLS->tlsAcceptIsNeeded) { // we need to successfully call fInputTLS->accept() first:
+    if (fInputTLS->accept(fOurSocket) <= 0) return; // either an error, or we need to try again later
 
-    fTLS.tlsAcceptIsNeeded = False;
+    fInputTLS->tlsAcceptIsNeeded = False;
     // We can now read data, as usual:
   }
 
   int bytesRead;
-  if (fTLS.isNeeded) {
-    bytesRead = fTLS.read(&fRequestBuffer[fRequestBytesAlreadySeen], fRequestBufferBytesLeft);
+  if (fInputTLS->isNeeded) {
+    bytesRead = fInputTLS->read(&fRequestBuffer[fRequestBytesAlreadySeen], fRequestBufferBytesLeft);
   } else {
     struct sockaddr_storage dummy; // 'from' address, meaningless in this case
   

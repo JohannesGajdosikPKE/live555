@@ -118,6 +118,10 @@ UserAuthenticationDatabase* RTSPServer::setAuthenticationDatabase(UserAuthentica
 }
 
 Boolean RTSPServer::setUpTunnelingOverHTTP(Port httpPort) {
+  if (fWeServeSRTP) return False;
+    // If we've already set up streaming using SRTP, then streaming over HTTPS would make no
+    // sense (as SRTP would add extra overhead for no benefit).
+
   std::lock_guard<std::recursive_mutex> guard(internal_mutex);
   fHTTPServerSocketIPv4 = setUpOurSocket(envir(), httpPort, AF_INET);
   fHTTPServerSocketIPv6 = setUpOurSocket(envir(), httpPort, AF_INET6);
@@ -147,6 +151,10 @@ void RTSPServer
   fOurConnectionsUseTLS = True;
   fWeServeSRTP = weServeSRTP;
   fWeEncryptSRTP = weEncryptSRTP;
+
+  if (fWeServeSRTP) disableStreamingRTPOverTCP();
+    // If you want to stream RTP-over-TCP using a secure TCP connection, then stream over TLS,
+    // but without SRTP (as SRTP would add extra overhead for no benefit).
 }
 
 char const* RTSPServer::allowedCommandNames() {
@@ -159,17 +167,26 @@ UserAuthenticationDatabase* RTSPServer::getAuthenticationDatabaseForCommand(char
   return fAuthDB;
 }
 
-Boolean RTSPServer::specialClientAccessCheck(int /*clientSocket*/, struct sockaddr_storage const& /*clientAddr*/, char const* /*urlSuffix*/) {
+Boolean RTSPServer::specialClientAccessCheck(int /*clientSocket*/,
+					     struct sockaddr_storage const& /*clientAddr*/,
+					     char const* /*urlSuffix*/) {
   // default implementation
   return True;
 }
 
-Boolean RTSPServer::specialClientUserAccessCheck(int /*clientSocket*/, struct sockaddr_storage const& /*clientAddr*/,
+Boolean RTSPServer::specialClientUserAccessCheck(int /*clientSocket*/,
+						 struct sockaddr_storage const& /*clientAddr*/,
 						 char const* /*urlSuffix*/, char const * /*username*/) {
   // default implementation; no further access restrictions:
   return True;
 }
 
+void RTSPServer
+::specialHandlingOfAuthenticationFailure(int /*clientSocket*/,
+					 struct sockaddr_storage const& /*clientAddr*/,
+					 char const* /*urlSuffix*/) {
+  // default implementation: do nothing
+}
 
 RTSPServer::RTSPServer(UsageEnvironment& env,
 		       int ourSocketIPv4, int ourSocketIPv6, Port ourPort,
@@ -183,7 +200,6 @@ RTSPServer::RTSPServer(UsageEnvironment& env,
     fRegisterOrDeregisterRequestCounter(0), fAuthDB(authDatabase),
     fAllowStreamingRTPOverTCP(True),
     fOurConnectionsUseTLS(False), fWeServeSRTP(False) {
-  portNumBits serverPortNumHostOrder = ntohs(fServerPort.num());
 }
 
 // A data structure that is used to implement "fTCPStreamingDatabase"
@@ -380,7 +396,7 @@ RTSPServer::RTSPClientConnection
 		       Boolean useTLS)
   : GenericMediaServer::ClientConnection(threaded_env, ourServer, clientSocket, clientAddr, useTLS),
     fOurRTSPServer(ourServer), fClientInputSocket(fOurSocket), fClientOutputSocket(fOurSocket),
-    fAddressFamily(clientAddr.ss_family),
+    fPOSTSocketTLS(envir()), fAddressFamily(clientAddr.ss_family),
     fIsActive(True), fRecursionCount(0), fOurSessionCookie(NULL), fScheduledDelayedTask(0) {
   envir() << "RTSPServer::RTSPClientConnection(" << getId() << ")::RTSPClientConnection\n";
   resetRequestBuffer();
@@ -712,9 +728,12 @@ Boolean RTSPServer::RTSPClientConnection
   envir() << "RTSPServer::RTSPClientConnection("  << this << ")::handleHTTPCmd_TunnelingPOST: "
              "transfering socket " << fClientInputSocket << " and handling to " << prevClientConnection << "\n";
   // Change the previous "RTSPClientSession" object's input socket to ours.  It will be used for subsequent requests:
-  prevClientConnection->changeClientInputSocket(fClientInputSocket, envir(), extraData, extraDataSize);
+  prevClientConnection->changeClientInputSocket(fClientInputSocket, fInputTLS,
+						envir(), extraData, extraDataSize);
     // revoke ownership of the socket:
   fClientInputSocket = fClientOutputSocket = -1; // so the socket doesn't get closed when we get deleted
+  fInputTLS->nullify(); // so that our destructor doesn't reset the copied TLS state
+
   return True;
 }
 
@@ -1074,8 +1093,8 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesEndOfLoop(Boolean playA
     fprintf(stderr, "sending response: %s", fResponseBuffer);
 #endif
     unsigned const numBytesToWrite = strlen((char*)fResponseBuffer);
-    if (fTLS.isNeeded) {
-        fTLS.write((char const*)fResponseBuffer, numBytesToWrite);
+    if (fOutputTLS->isNeeded) {
+        fOutputTLS->write((char const*)fResponseBuffer, numBytesToWrite);
     } else {
         send(fClientOutputSocket, (char const*)fResponseBuffer, numBytesToWrite, 0);
    }
@@ -1253,6 +1272,7 @@ Boolean RTSPServer::RTSPClientConnection
   
   // If we get here, we failed to authenticate the user.
   // Send back a "401 Unauthorized" response, with a new random nonce:
+  Boolean isInitial401 = fCurrentAuthenticator.nonce() == NULL;
   fCurrentAuthenticator.setRealmAndRandomNonce(authDB->realm());
   snprintf((char*)fResponseBuffer, sizeof fResponseBuffer,
 	   "RTSP/1.0 401 Unauthorized\r\n"
@@ -1262,6 +1282,9 @@ Boolean RTSPServer::RTSPClientConnection
 	   fCurrentCSeq,
 	   dateHeader(),
 	   fCurrentAuthenticator.realm(), fCurrentAuthenticator.nonce());
+  if (!isInitial401) { // this is an actual authentication failure
+    fOurRTSPServer.specialHandlingOfAuthenticationFailure(fClientInputSocket, fClientAddr, urlSuffix);
+  }
   return False;
 }
 
@@ -1332,8 +1355,10 @@ void RTSPServer::RTSPClientConnection
 }
 
 void RTSPServer::RTSPClientConnection
-::changeClientInputSocket(const int newSocketNum, UsageEnvironment &other_env, unsigned char const* extraData, unsigned extraDataSize) {
+::changeClientInputSocket(int newSocketNum, ServerTLSState const* newTLSState,
+			  UsageEnvironment &other_env, unsigned char const* extraData, unsigned extraDataSize) {
   if (&envir() == &other_env) {
+    // Change the socket number:
     other_env << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
                  "disabling handling for " << fClientInputSocket << " in this same thread\n";
     other_env.taskScheduler().disableBackgroundHandling(fClientInputSocket);
@@ -1343,6 +1368,10 @@ void RTSPServer::RTSPClientConnection
     fClientInputSocket = newSocketNum;
     other_env.taskScheduler().setBackgroundHandling(fClientInputSocket, SOCKET_READABLE|SOCKET_EXCEPTION,
                                                     incomingRequestHandler, this);
+    // Change the TLS state:
+    fPOSTSocketTLS.assignStateFrom(*newTLSState);
+    fInputTLS = &fPOSTSocketTLS;
+
     // Also write any extra data to our buffer, and handle it:
     if (extraDataSize > 0 && extraDataSize <= fRequestBufferBytesLeft/*sanity check; should always be true*/) {
       unsigned char* ptr = &fRequestBuffer[fRequestBytesAlreadySeen];
@@ -1354,10 +1383,11 @@ void RTSPServer::RTSPClientConnection
   } else {
     other_env << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
                  "disabling handling for " << newSocketNum << " in the this same thread\n";
+    // Change the socket number:
     other_env.taskScheduler().disableBackgroundHandling(newSocketNum);
     Semaphore sem;
     envir().taskScheduler().executeCommand(
-      [this, &sem, newSocketNum, extraData, extraDataSize](uint64_t) {
+      [this, &sem, newSocketNum, newTLSState, extraData, extraDataSize](uint64_t) {
         envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
                    "disabling handling for " << fClientInputSocket << " in this other thread\n";
         envir().taskScheduler().disableBackgroundHandling(fClientInputSocket);
@@ -1367,6 +1397,10 @@ void RTSPServer::RTSPClientConnection
         fClientInputSocket = newSocketNum;
         envir().taskScheduler().setBackgroundHandling(fClientInputSocket, SOCKET_READABLE|SOCKET_EXCEPTION,
                                                       incomingRequestHandler, this);
+        // Change the TLS state:
+        fPOSTSocketTLS.assignStateFrom(*newTLSState);
+        fInputTLS = &fPOSTSocketTLS;
+
         // Also write any extra data to our buffer, and handle it:
         if (extraDataSize > 0 && extraDataSize <= fRequestBufferBytesLeft/*sanity check; should always be true*/) {
           unsigned char* ptr = &fRequestBuffer[fRequestBytesAlreadySeen];

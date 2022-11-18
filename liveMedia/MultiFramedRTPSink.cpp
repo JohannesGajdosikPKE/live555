@@ -364,6 +364,8 @@ Boolean MultiFramedRTPSink::isTooBigForAPacket(unsigned numBytes) const {
   return fOutBuf->isTooBigForAPacket(numBytes);
 }
 
+#define MAX_UDP_PACKET_SIZE 65536
+
 void MultiFramedRTPSink::sendPacketIfNecessary() {
   if (fNumFramesUsedSoFar > 0) {
     // Send the packet:
@@ -376,13 +378,16 @@ void MultiFramedRTPSink::sendPacketIfNecessary() {
 	// overwrite any following (still to be sent) frame data, we can't encrypt/tag
 	// the packet in place.  Instead, we have to make a copy (on the stack) of
 	// the packet, before encrypting/tagging/sending it:
-	// Johannes Gajdosik: dynamic allocation on the stack does not compile with VS
-	std::unique_ptr<u_int8_t[]> packet(std::make_unique<u_int8_t[]>(fOutBuf->curPacketSize() + SRTP_MKI_LENGTH + SRTP_AUTH_TAG_LENGTH));
-	memcpy(packet.get(), fOutBuf->packet(), fOutBuf->curPacketSize());
+	if (fOutBuf->curPacketSize() + SRTP_MKI_LENGTH + SRTP_AUTH_TAG_LENGTH > MAX_UDP_PACKET_SIZE) {
+	  fprintf(stderr, "MultiFramedRTPSink::sendPacketIfNecessary(): Fatal error: packet size %d is too large for SRTP\n", fOutBuf->curPacketSize());
+	  exit(1);
+	}
+	u_int8_t packet[MAX_UDP_PACKET_SIZE];
+	memcpy(packet, fOutBuf->packet(), fOutBuf->curPacketSize());
 	unsigned newPacketSize;
 	
-	if (fCrypto->processOutgoingSRTPPacket(packet.get(), fOutBuf->curPacketSize(), newPacketSize)) {
-	  if (!fRTPInterface.sendPacket(packet.get(), newPacketSize)) {
+	if (fCrypto->processOutgoingSRTPPacket(packet, fOutBuf->curPacketSize(), newPacketSize)) {
+	  if (!fRTPInterface.sendPacket(packet, newPacketSize)) {
 	    // if failure handler has been specified, call it
 	    if (fOnSendErrorFunc != NULL) (*fOnSendErrorFunc)(fOnSendErrorData);
 	  }
