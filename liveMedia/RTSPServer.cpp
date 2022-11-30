@@ -94,15 +94,15 @@ char* RTSPServer::rtspURLPrefix(int clientSocket, Boolean useIPv6) const {
   char const* addressPrefixInURL = ourAddress.ss_family == AF_INET6 ? "[" : "";
   char const* addressSuffixInURL = ourAddress.ss_family == AF_INET6 ? "]" : "";
 
-  portNumBits defaultPortNum = fWeServeSRTP ? 322 : 554;
+  portNumBits defaultPortNum = fOurConnectionsUseTLS ? 322 : 554;
   portNumBits portNumHostOrder = ntohs(fServerPort.num());
   if (portNumHostOrder == defaultPortNum) {
     sprintf(urlBuffer, "rtsp%s://%s%s%s/",
-	    fWeServeSRTP ? "s" : "",
+	    fOurConnectionsUseTLS ? "s" : "",
 	    addressPrefixInURL, AddressString(ourAddress).val(), addressSuffixInURL);
   } else {
     sprintf(urlBuffer, "rtsp%s://%s%s%s:%hu/",
-	    fWeServeSRTP ? "s" : "",
+	    fOurConnectionsUseTLS ? "s" : "",
 	    addressPrefixInURL, AddressString(ourAddress).val(), addressSuffixInURL, portNumHostOrder);
   }
   
@@ -933,7 +933,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
 
       // If the request specified the wrong type of URL
       // (i.e., "rtsps" instead of "rtsp", or vice versa), then send back a 'redirect':
-      if (urlIsRTSPS != fOurRTSPServer.fWeServeSRTP) {
+      if (urlIsRTSPS != fOurRTSPServer.fOurConnectionsUseTLS) {
 #ifdef DEBUG
 	fprintf(stderr, "Calling handleCmd_redirect()\n");
 #endif
