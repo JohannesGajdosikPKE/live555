@@ -248,9 +248,6 @@ set(PLUGIN_SOURCES
   ../liveMedia/rtcp_from_spec.c
   ../liveMedia/uLawAudioFilter.cpp
   MStreamPluginRTSPServer.cpp
-  SSLSocketBase.cpp
-  SSLSocketServerPipe.cpp
-  SocketCommunication.cpp
 )
 
 add_library(${PLUGIN} SHARED ${PLUGIN_SOURCES})

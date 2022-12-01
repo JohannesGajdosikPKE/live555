@@ -23,22 +23,36 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include "RTSPServer.hh"
 #include "IMStream.h"
-#include "SSLSocketServerPipe.h"
 
 #include <map>
+#include <set>
 #include <memory>
 #include <mutex>
+#include <iostream>
 
 class MediaServerPluginRTSPServer : public RTSPServer {
 public:
-  static MediaServerPluginRTSPServer *createNew(UsageEnvironment &env,
+  enum ServerType {
+    type_rtsp_and_http = 0,
+    type_rtsps_only = 1,
+    type_https_only = 2
+  };
+  static const char *ServerTypeToString(int t);
+  static MediaServerPluginRTSPServer *createNew(ServerType type,bool &success,
+                                                UsageEnvironment &env,
                                                 const RTSPParameters &params,
                                                 IMStreamFactory *streamManager);
   class StreamMapEntry;
   bool destructorStarted(void) const {return destructor_started;}
+
+  void printPortInfo(std::ostream &o) const;
+  typedef std::map<std::string,std::multiset<std::string> > InfoMap;
+  typedef std::map<std::string,std::set<std::string> > SubsessionMap;
+  void generateConnectionStreamInfo(InfoMap &connection_info,InfoMap &stream_info,
+                                    SubsessionMap &subsessions) const;
 protected:
-  MediaServerPluginRTSPServer(UsageEnvironment &env, int ourSocketIPv4, int ourSocketIPv6,
-                              int m_HTTPServerSocket, int m_HTTPsServerSocket, 
+  MediaServerPluginRTSPServer(ServerType type,UsageEnvironment &env, int ourSocketIPv4, int ourSocketIPv6,
+                              int m_HTTPServerSocketIPv4, int m_HTTPServerSocketIPv6,
                               const RTSPParameters &params, IMStreamFactory* streamManager);
   // called only by createNew();
   ~MediaServerPluginRTSPServer(void) override;
@@ -56,37 +70,24 @@ protected:
   ServerMediaSession *createServerMediaSession(UsageEnvironment &env,
                                                const std::shared_ptr<StreamMapEntry> &e);
 
-  static void incomingConnectionHandlerHTTPoverSSL(void* instance, int /*mask*/);
-  void incomingConnectionHandlerHTTPoverSSL(void);
-  static void incomingConnectionHandlerHTTP(void* instance, int /*mask*/);
-  void incomingConnectionHandlerHTTP(void);
+  static void IncomingConnectionHandlerHTTPIPv4(void* instance, int /*mask*/);
+  void incomingConnectionHandlerHTTPIPv4(void);
+  static void IncomingConnectionHandlerHTTPIPv6(void* instance, int /*mask*/);
+  void incomingConnectionHandlerHTTPIPv6(void);
 
   class MyRTSPClientSession;
   ClientSession *createNewClientSession(UsageEnvironment &env, u_int32_t sessionId) override;
 
-  class RTSPClientConnectionSSL : public RTSPServer::RTSPClientConnection, public SSLSocketServerPipe
-  {
-    RTSPClientConnectionSSL(UsageEnvironment &env, RTSPServer& ourServer, int clientSocket, struct sockaddr_storage clientAddr, const char* certpath, const char* keypath);
-  public:
-    static RTSPClientConnectionSSL *create(UsageEnvironment& env, MediaServerPluginRTSPServer& ourServer, int clientSocket, struct sockaddr_storage clientAddr, const char* certpath, const char* keypath);
-    virtual ~RTSPClientConnectionSSL();
-  };
-
-  ClientConnection *createNewClientConnectionSSL(int clientSocket, struct sockaddr_storage clientAddr,
-                                                 const char* certpath, const char* keypath);
-
   UsageEnvironment *createNewUsageEnvironment(TaskScheduler &scheduler) override;
-  static void GenerateInfoString(void *context);
-  void generateInfoString(void);
   std::shared_ptr<StreamMapEntry> getStreamMapEntry(const std::string &stream_name) const;
 
-  int m_HTTPServerSocket,m_HTTPsServerSocket;
+  const ServerType type;
+  int m_HTTPServerSocketIPv4,m_HTTPServerSocketIPv6;
   const RTSPParameters params;
   IMStreamFactory *const stream_factory;
   std::map<std::string,std::weak_ptr<StreamMapEntry> > stream_map;
   mutable std::recursive_mutex stream_map_mutex;
   const std::unique_ptr<const char[]> m_urlPrefix;
-  TaskToken generate_info_string_task;
   bool destructor_started = false;
 };
 

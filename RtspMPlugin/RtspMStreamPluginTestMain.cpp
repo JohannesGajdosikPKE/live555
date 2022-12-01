@@ -59,7 +59,7 @@ private:
   void *handle;
 };
 
-
+static const char *prog_name = nullptr;
 static FILE *log_file = nullptr;
 
 static void OnLog(void *context,const std::string &message) {
@@ -92,6 +92,11 @@ static void OnLog(void *context,const std::string &message) {
 
 static
 void OnStatusInfo(void *context,const std::string &message) {
+  FILE *f = fopen((std::string(prog_name)+".status").c_str(),"w");
+  if (f) {
+    fwrite(message.data(),1,message.size(),f);
+    fclose(f);
+  }
 }
 
 class MySubsessionInfo : public SubsessionInfo {
@@ -427,10 +432,111 @@ static const char *const init_function_name = "InitializeMPlugin";
 
 
 
+static void PrintUsage(void) {
+  std::cout << "Usage: " << prog_name << " [--rtsp <port>] [--rtsps <port>] [--http <port>] [--https <port>]"
+                                         " [--cert_file <cert_file> --key_file <key_file>]"
+            << std::endl;
+}
 
 
-int main(int argc,char *argv[]) {
-  log_file = fopen((std::string(argv[0])+".log").c_str(),"w");
+int main(int argc,char **argv) {
+  prog_name = *argv++;
+  log_file = fopen((std::string(prog_name)+".log").c_str(),"w");
+  const char *cert_file = 0;
+  const char *key_file = 0;
+  int rtsp = 0;
+  int rtsps = 0;
+  int http = 0;
+  int https = 0;
+  while (*argv) {
+    if (0 == strcmp("--help",*argv) || 0 == strcmp("-h",*argv)) {
+      PrintUsage();
+      return 1;
+    } else if (0 == strcmp("--cert_file",*argv)) {
+      if (!*++argv) {
+        std::cout << "cert_file expected" << std::endl;
+        return 1;
+      }
+      if (cert_file) {
+        std::cout << "cert_file given twice" << std::endl;
+        return 1;
+      }
+      cert_file = *argv++;
+    } else if (0 == strcmp("--key_file",*argv)) {
+      if (!*++argv) {
+        std::cout << "key_file expected" << std::endl;
+        return 1;
+      }
+      if (key_file) {
+        std::cout << "key_file given twice" << std::endl;
+        return 1;
+      }
+      key_file = *argv++;
+    } else if (0 == strcmp("--rtsp",*argv)) {
+      if (!*++argv) {
+        std::cout << "rtsp port expected" << std::endl;
+        return 1;
+      }
+      if (rtsp) {
+        std::cout << "rtsp port given twice" << std::endl;
+        return 1;
+      }
+      if (1 != sscanf(*argv,"%d",&rtsp) || rtsp <= 0 || rtsp > 0xFFFF) {
+        std::cout << "bad rtsp port: \"" << *argv << '"' << std::endl;
+        return 1;
+      }
+      argv++;
+    } else if (0 == strcmp("--rtsps",*argv)) {
+      if (!*++argv) {
+        std::cout << "rtsps port expected" << std::endl;
+        return 1;
+      }
+      if (rtsps) {
+        std::cout << "rtsps port given twice" << std::endl;
+        return 1;
+      }
+      if (1 != sscanf(*argv,"%d",&rtsps) || rtsps <= 0 || rtsps > 0xFFFF) {
+        std::cout << "bad rtsps port: \"" << *argv << '"' << std::endl;
+        return 1;
+      }
+      argv++;
+    } else if (0 == strcmp("--http",*argv)) {
+      if (!*++argv) {
+        std::cout << "http port expected" << std::endl;
+        return 1;
+      }
+      if (http) {
+        std::cout << "http port given twice" << std::endl;
+        return 1;
+      }
+      if (1 != sscanf(*argv,"%d",&http) || http <= 0 || http > 0xFFFF) {
+        std::cout << "bad http port: \"" << *argv << '"' << std::endl;
+        return 1;
+      }
+      argv++;
+    } else if (0 == strcmp("--https",*argv)) {
+      if (!*++argv) {
+        std::cout << "https port expected" << std::endl;
+        return 1;
+      }
+      if (https) {
+        std::cout << "https port given twice" << std::endl;
+        return 1;
+      }
+      if (1 != sscanf(*argv,"%d",&https) || https <= 0 || https > 0xFFFF) {
+        std::cout << "bad https port: \"" << *argv << '"' << std::endl;
+        return 1;
+      }
+      argv++;
+    }
+  }
+  if (rtsp == 0 && rtsps == 0 && http == 0 && https == 0) {
+    std::cout << "no ports specified" << std::endl;
+    PrintUsage();
+    return 1;
+  }
+  if (!cert_file) cert_file = "";
+  if (!key_file) key_file = "";
   {
     DynamicLibrary plugin(plugin_name);
     if (!plugin.isInitialized()) {
@@ -445,11 +551,11 @@ int main(int argc,char *argv[]) {
       } else {
         RTSPParameters params(&OnLog,nullptr,
                               &OnStatusInfo,nullptr,
-                              2554,8880,8881,322,
+                              rtsp,http,https,rtsps,
                               0,0,0,0,
-                              false,true,
-                              "C:\\Users\\01jga728\\zertifikat-pub.pem",
-                              "C:\\Users\\01jga728\\zertifikat-key.pem");
+                              false,false,
+                              cert_file,
+                              key_file);
 //        params.setUserPass("User1","Pass1");
 //        params.setUserPass("User2","Pass2");
         const char *const lib_api_version
