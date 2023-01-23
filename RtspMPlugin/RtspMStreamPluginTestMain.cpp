@@ -553,7 +553,8 @@ int main(int argc,char **argv) {
                               &OnStatusInfo,nullptr,
                               rtsp,http,https,rtsps,
                               0,0,0,0,
-                              false,false,
+                              false,false,false,false,
+                              false,false,false,false,
                               cert_file,
                               key_file);
 //        params.setUserPass("User1","Pass1");

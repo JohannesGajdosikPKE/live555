@@ -602,17 +602,17 @@ MediaServerPluginRTSPServer::createNew(ServerType type,bool &success,
         rtspSocket4 = CreateAcceptSocket(env, Port(params.rtspPort), params.bind_to_interface_rtsp);
         if (rtspSocket4 < 0) {
           env << "MediaServerPluginRTSPServer::createNew: opening IPv4 rtsp port " << params.rtspPort << " failed\n";
-          if (!params.ports_are_optional) {success = false;break;}
+          if (!params.rtsp_is_optional) {success = false;break;}
         } else {
           env << "MediaServerPluginRTSPServer::createNew: opening IPv4 rtsp port " << params.rtspPort << " ok: "
               << rtspSocket4 << "\n";
         }
-        if (params.use_ipv6) {
+        if (params.use_ipv6_rtsp) {
           Port p(params.rtspPort);
           rtspSocket6 = setUpOurSocket(env, p, AF_INET6);
           if (rtspSocket6 < 0) {
             env << "MediaServerPluginRTSPServer::createNew: opening IPv6 rtsp port " << params.rtspPort << " failed\n";
-            if (!params.ports_are_optional) {success = false;break;}
+            if (!params.rtsp_is_optional) {success = false;break;}
           } else {
             env << "MediaServerPluginRTSPServer::createNew: opening IPv6 rtsp port " << params.rtspPort << " ok: "
                 << rtspSocket6 << "\n";
@@ -623,17 +623,17 @@ MediaServerPluginRTSPServer::createNew(ServerType type,bool &success,
         httpSocket4 = CreateAcceptSocket(env, Port(params.httpPort), params.bind_to_interface_http);
         if (httpSocket4 < 0) {
           env << "MediaServerPluginRTSPServer::createNew: opening IPv4 http port " << params.httpPort << " failed\n";
-          if (!params.ports_are_optional) {success = false;break;}
+          if (!params.http_is_optional) {success = false;break;}
         } else {
           env << "MediaServerPluginRTSPServer::createNew: opening IPv4 http port " << params.httpPort << " ok: "
               << httpSocket4 << "\n";
         }
-        if (params.use_ipv6) {
+        if (params.use_ipv6_http) {
           Port p(params.httpPort);
           httpSocket6 = setUpOurSocket(env, p, AF_INET6);
           if (httpSocket6 < 0) {
             env << "MediaServerPluginRTSPServer::createNew: opening IPv6 http port " << params.httpPort << " failed\n";
-            if (!params.ports_are_optional) {success = false;break;}
+            if (!params.http_is_optional) {success = false;break;}
           } else {
             env << "MediaServerPluginRTSPServer::createNew: opening IPv6 http port " << params.httpPort << " ok: "
                 << httpSocket6 << "\n";
@@ -656,17 +656,17 @@ MediaServerPluginRTSPServer::createNew(ServerType type,bool &success,
         rtspSocket4 = CreateAcceptSocket(env, Port(params.rtspsPort), params.bind_to_interface_rtsps);
         if (rtspSocket4 < 0) {
           env << "MediaServerPluginRTSPServer::createNew: opening IPv4 rtsps port " << params.rtspsPort << " failed\n";
-          if (!params.ports_are_optional) {success = false;break;}
+          if (!params.rtsps_is_optional) {success = false;break;}
         } else {
           env << "MediaServerPluginRTSPServer::createNew: opening IPv4 rtsps port " << params.rtspsPort << " ok: "
               << rtspSocket4 << "\n";
         }
-        if (params.use_ipv6) {
+        if (params.use_ipv6_rtsps) {
           Port p(params.rtspsPort);
           rtspSocket6 = setUpOurSocket(env, p, AF_INET6);
           if (rtspSocket6 < 0) {
             env << "MediaServerPluginRTSPServer::createNew: opening IPv6 rtsps port " << params.rtspsPort << " failed\n";
-            if (!params.ports_are_optional) {success = false;break;}
+            if (!params.rtsps_is_optional) {success = false;break;}
           } else {
             env << "MediaServerPluginRTSPServer::createNew: opening IPv6 rtsps port " << params.rtspsPort << " ok: "
                 << rtspSocket6 << "\n";
@@ -689,17 +689,17 @@ MediaServerPluginRTSPServer::createNew(ServerType type,bool &success,
         httpSocket4 = CreateAcceptSocket(env, Port(params.httpsPort), params.bind_to_interface_https);
         if (httpSocket4 < 0) {
           env << "MediaServerPluginRTSPServer::createNew: opening IPv4 https port " << params.httpsPort << " failed\n";
-          if (!params.ports_are_optional) {success = false;break;}
+          if (!params.https_is_optional) {success = false;break;}
         } else {
           env << "MediaServerPluginRTSPServer::createNew: opening IPv4 https port " << params.httpsPort << " ok: "
               << httpSocket4 << "\n";
         }
-        if (params.use_ipv6) {
+        if (params.use_ipv6_https) {
           Port p(params.httpsPort);
           httpSocket6 = setUpOurSocket(env, p, AF_INET6);
           if (httpSocket6 < 0) {
             env << "MediaServerPluginRTSPServer::createNew: opening IPv6 https port " << params.httpsPort << " failed\n";
-            if (!params.ports_are_optional) {success = false;break;}
+            if (!params.https_is_optional) {success = false;break;}
           } else {
             env << "MediaServerPluginRTSPServer::createNew: opening IPv6 https port " << params.httpsPort << " ok: "
                 << httpSocket6 << "\n";
@@ -708,7 +708,7 @@ MediaServerPluginRTSPServer::createNew(ServerType type,bool &success,
       }
     } break;
   }
-  if (success && rtspSocket4 >= 0 || rtspSocket6 >= 0 || httpSocket4 >= 0 || httpSocket6 >= 0) {
+  if (success && (rtspSocket4 >= 0 || rtspSocket6 >= 0 || httpSocket4 >= 0 || httpSocket6 >= 0)) {
     return new MediaServerPluginRTSPServer(type, env, rtspSocket4, rtspSocket6, httpSocket4, httpSocket6, params, stream_factory);
   }
   if (rtspSocket4 >= 0) ::closeSocket(rtspSocket4);

@@ -96,7 +96,8 @@ public:
                  uint16_t httpsPort,uint16_t rtspsPort,
                  uint32_t bind_to_interface_rtsp,uint32_t bind_to_interface_http,
                  uint32_t bind_to_interface_https,uint32_t bind_to_interface_rtsps,
-                 bool use_ipv6,bool ports_are_optional,
+                 bool use_ipv6_rtsp,bool use_ipv6_http,bool use_ipv6_https,bool use_ipv6_rtsps,
+                 bool rtsp_is_optional,bool http_is_optional,bool https_is_optional,bool rtsps_is_optional,
                  const std::string &tls_cert_file,const std::string &tls_key_file)
     : MPluginParams(log_cb,log_cb_context,status_cb,status_cb_context),
       rtspPort(rtspPort),httpPort(httpPort),httpsPort(httpsPort),rtspsPort(rtspsPort),
@@ -104,7 +105,14 @@ public:
       bind_to_interface_http(bind_to_interface_http),
       bind_to_interface_https(bind_to_interface_https),
       bind_to_interface_rtsps(bind_to_interface_rtsps),
-      use_ipv6(use_ipv6),ports_are_optional(ports_are_optional),
+      use_ipv6_rtsp(use_ipv6_rtsp),
+      use_ipv6_http(use_ipv6_http),
+      use_ipv6_https(use_ipv6_https),
+      use_ipv6_rtsps(use_ipv6_rtsps),
+      rtsp_is_optional(rtsp_is_optional),
+      http_is_optional(http_is_optional),
+      https_is_optional(https_is_optional),
+      rtsps_is_optional(rtsps_is_optional),
       tls_cert_file(tls_cert_file),tls_key_file(tls_key_file) {}
   const std::string &getTlsCertFile(void) const {return tls_cert_file;}
   const std::string &getTlsKeyFile(void) const {return tls_key_file;}
@@ -152,8 +160,14 @@ public:
   uint32_t bind_to_interface_http = 0;
   uint32_t bind_to_interface_https = 0;
   uint32_t bind_to_interface_rtsps = 0;
-  bool use_ipv6 = false;
-  bool ports_are_optional = false;
+  bool use_ipv6_rtsp = false;
+  bool use_ipv6_http = false;
+  bool use_ipv6_https = false;
+  bool use_ipv6_rtsps = false;
+  bool rtsp_is_optional = false;
+  bool http_is_optional = false;
+  bool https_is_optional = false;
+  bool rtsps_is_optional = false;
   std::string tls_cert_file;
   std::string tls_key_file;
 private:
@@ -178,7 +192,7 @@ typedef const char *(InitializeMPluginFunc)(
                     IMStreamFactory *streamManager,
                     const MPluginParams &params);
 
-#define RTCMEDIALIB_API_VERSION "0.10"
+#define RTCMEDIALIB_API_VERSION "0.11"
     // will return the API version of the Library.
     // when the interface_api_version_of_caller does not match,
     // the library will not call the stream_factory.
