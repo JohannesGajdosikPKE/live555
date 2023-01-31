@@ -933,7 +933,9 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
 
       // If the request specified the wrong type of URL
       // (i.e., "rtsps" instead of "rtsp", or vice versa), then send back a 'redirect':
-      if (urlIsRTSPS != fOurRTSPServer.fOurConnectionsUseTLS) {
+/// gaj: do not be so picky, rtsp or rtsps in the request: who cares.
+/// In fact traditional tunneling of rtsp over https *will* have rtsp in the header.
+      if (urlIsRTSPS && !fOurRTSPServer.fOurConnectionsUseTLS) {
 #ifdef DEBUG
 	fprintf(stderr, "Calling handleCmd_redirect()\n");
 #endif
