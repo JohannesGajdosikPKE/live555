@@ -1794,40 +1794,26 @@ static std::string SocketToString(const int s,bool with_peer = true) {
           + ":" + sock_port_str;
 }
 
-static void PrintAcceptSocketInfo(std::ostream &o,const char *proto,int socket,int bind_to_interface=0,int port=-1) {
+static void PrintAcceptSocketInfo(std::ostream &o,const char *proto,int socket) {
   if (socket >= 0) {
-    o << "  " << proto << "://[user::pass@]";
-    if (port < 0) {
-      o << SocketToString(socket,false);
-    } else {
-      if (bind_to_interface) {
-        o << (bind_to_interface & 0xFF)
-          << '.' << ((bind_to_interface >> 8) & 0xFF)
-          << '.' << ((bind_to_interface >> 16) & 0xFF)
-          << '.' << (bind_to_interface >> 24);
-      } else {
-        o << "server-ip";
-      }
-      o << ':' << port;
-    }
-    o << "/stream-name\n";
+    o << "  " << proto << "://[user:pass@]" << SocketToString(socket,false) << "/stream-name\n";
   }
 }
 
 void MediaServerPluginRTSPServer::printPortInfo(std::ostream &o) const {
   switch (type) {
     case type_rtsp_and_http:
-      PrintAcceptSocketInfo(o,"rtsp",fServerSocketIPv4,params.bind_to_interface_rtsp,params.rtspPort);
+      PrintAcceptSocketInfo(o,"rtsp",fServerSocketIPv4);
       PrintAcceptSocketInfo(o,"rtsp",fServerSocketIPv6);
-      PrintAcceptSocketInfo(o,"http",m_HTTPServerSocketIPv4,params.bind_to_interface_http,params.httpPort);
+      PrintAcceptSocketInfo(o,"http",m_HTTPServerSocketIPv4);
       PrintAcceptSocketInfo(o,"http",m_HTTPServerSocketIPv6);
       break;
     case type_rtsps_only:
-      PrintAcceptSocketInfo(o,"rtsps",fServerSocketIPv4,params.bind_to_interface_rtsps,params.rtspsPort);
+      PrintAcceptSocketInfo(o,"rtsps",fServerSocketIPv4);
       PrintAcceptSocketInfo(o,"rtsps",fServerSocketIPv6);
       break;
     case type_https_only:
-      PrintAcceptSocketInfo(o,"https",m_HTTPServerSocketIPv4,params.bind_to_interface_https,params.httpsPort);
+      PrintAcceptSocketInfo(o,"https",m_HTTPServerSocketIPv4);
       PrintAcceptSocketInfo(o,"https",m_HTTPServerSocketIPv6);
       break;
   }
@@ -1971,7 +1957,7 @@ private:
 void PluginInstance::generateInfoString(void) {
   std::stringstream o;
   o << "---- RtspMStreamPlugin(" PLUGIN_VERSION "(" __DATE__ " " __TIME__ "), api:" RTCMEDIALIB_API_VERSION ")\n"
-       "Ports:\n";
+       "URIs (0.0.0.0: the port is bound to all interfaces):\n";
 
   MediaServerPluginRTSPServer::InfoMap connection_info,stream_info;
   MediaServerPluginRTSPServer::SubsessionMap subsessions;
