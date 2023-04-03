@@ -1968,14 +1968,16 @@ void PluginInstance::generateInfoString(void) {
     }
   }
 
-  o << "\nRtspMStreamPlugin: " << connection_info.size() << " connections:\n";
+  o << "\n" << connection_info.size() << " connections:\n"
+       "ClientIp:Port->ServerIp:Port stream [...]\n";
   for (auto &it : connection_info) {
     o << it.first;
     for (auto &it2 : it.second) o << ' ' << it2;
     o << '\n';
   }
 
-  o << "\nRtspMStreamPlugin: " << stream_info.size() << " streams:\n";
+  o << "\n" << stream_info.size() << " streams:\n"
+       "stream, subsessions: ClientIp:Port->ServerIp:Port [...]\n";
   for (auto &it : stream_info) {
     o << it.first;
     auto ss_it = subsessions.find(it.first);
