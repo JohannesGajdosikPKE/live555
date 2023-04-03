@@ -1387,9 +1387,15 @@ void RTSPServer::RTSPClientConnection
                  "disabling handling for " << newSocketNum << " in the this same thread\n";
     // Change the socket number:
     other_env.taskScheduler().disableBackgroundHandling(newSocketNum);
-    Semaphore sem;
+    unsigned char *copied_extraData = nullptr;
+    if (extraDataSize > 0 && extraDataSize <= fRequestBufferBytesLeft/*sanity check; should always be true*/) {
+      copied_extraData = new unsigned char[extraDataSize];
+      memcpy(copied_extraData,extraData,extraDataSize);
+    }
+    ServerTLSState *copiedTLSState = new ServerTLSState(envir());
+    copiedTLSState->assignStateFrom(*newTLSState);
     envir().taskScheduler().executeCommand(
-      [this, &sem, newSocketNum, newTLSState, extraData, extraDataSize](uint64_t) {
+      [this, newSocketNum, copiedTLSState, copied_extraData, extraDataSize](uint64_t) {
         envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
                    "disabling handling for " << fClientInputSocket << " in this other thread\n";
         envir().taskScheduler().disableBackgroundHandling(fClientInputSocket);
@@ -1400,20 +1406,20 @@ void RTSPServer::RTSPClientConnection
         envir().taskScheduler().setBackgroundHandling(fClientInputSocket, SOCKET_READABLE|SOCKET_EXCEPTION,
                                                       incomingRequestHandler, this);
         // Change the TLS state:
-        fPOSTSocketTLS.assignStateFrom(*newTLSState);
+        fPOSTSocketTLS.assignStateFrom(*copiedTLSState);
+        delete copiedTLSState;
         fInputTLS = &fPOSTSocketTLS;
 
         // Also write any extra data to our buffer, and handle it:
         if (extraDataSize > 0 && extraDataSize <= fRequestBufferBytesLeft/*sanity check; should always be true*/) {
           unsigned char* ptr = &fRequestBuffer[fRequestBytesAlreadySeen];
           for (unsigned i = 0; i < extraDataSize; ++i) {
-            ptr[i] = extraData[i];
+            ptr[i] = copied_extraData[i];
           }
+          delete[] copied_extraData;
           handleRequestBytes(extraDataSize);
         }
-        sem.post();
       });
-    sem.wait();
   }
 }
 
