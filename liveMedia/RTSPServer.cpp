@@ -1366,7 +1366,7 @@ void RTSPServer::RTSPClientConnection
     other_env.taskScheduler().disableBackgroundHandling(fClientInputSocket);
 
     other_env << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
-                 "enabling handling for " << newSocketNum << " in the this same thread\n";
+                 "enabling handling for " << newSocketNum << " in this same thread\n";
     fClientInputSocket = newSocketNum;
     other_env.taskScheduler().setBackgroundHandling(fClientInputSocket, SOCKET_READABLE|SOCKET_EXCEPTION,
                                                     incomingRequestHandler, this);
@@ -1384,7 +1384,7 @@ void RTSPServer::RTSPClientConnection
     }
   } else {
     other_env << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
-                 "disabling handling for " << newSocketNum << " in the this same thread\n";
+                 "disabling handling for " << newSocketNum << " in the old thread\n";
     // Change the socket number:
     other_env.taskScheduler().disableBackgroundHandling(newSocketNum);
     unsigned char *copied_extraData = nullptr;
@@ -1397,16 +1397,17 @@ void RTSPServer::RTSPClientConnection
     envir().taskScheduler().executeCommand(
       [this, newSocketNum, copiedTLSState, copied_extraData, extraDataSize](uint64_t) {
         envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
-                   "disabling handling for " << fClientInputSocket << " in this other thread\n";
+                   "disabling handling for " << fClientInputSocket << " in the new thread\n";
         envir().taskScheduler().disableBackgroundHandling(fClientInputSocket);
 
         envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
-                   "enabling handling for " << newSocketNum << " in the this other thread\n";
+                   "enabling handling for " << newSocketNum << " in the new thread, changing socket number\n";
         fClientInputSocket = newSocketNum;
         envir().taskScheduler().setBackgroundHandling(fClientInputSocket, SOCKET_READABLE|SOCKET_EXCEPTION,
                                                       incomingRequestHandler, this);
         // Change the TLS state:
         fPOSTSocketTLS.assignStateFrom(*copiedTLSState);
+        copiedTLSState->nullify(); // transfer ownership of fCtx and fCon
         delete copiedTLSState;
         fInputTLS = &fPOSTSocketTLS;
 
@@ -1420,6 +1421,7 @@ void RTSPServer::RTSPClientConnection
           handleRequestBytes(extraDataSize);
         }
       });
+    other_env << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket end in the old thread\n";
   }
 }
 
