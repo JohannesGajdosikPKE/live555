@@ -1789,7 +1789,7 @@ static std::string SocketToString(const int s,bool with_peer = true) {
     strcpy(sock_port_str, "unknown");
   }
   return (with_peer
-            ? (std::string(peer_host_str) + ":" + peer_port_str + "->" + sock_host_str)
+            ? (std::string(peer_host_str) + ":" + sock_port_str + " - " + peer_host_str)
             : std::string(sock_host_str))
           + ":" + sock_port_str;
 }
@@ -1969,7 +1969,7 @@ void PluginInstance::generateInfoString(void) {
   }
 
   o << "\n" << connection_info.size() << " connections:\n"
-       "ClientIp:Port->ServerIp:Port stream [...]\n";
+       "ServerIp:Port - ClientIp:Port stream [...]\n";
   for (auto &it : connection_info) {
     o << it.first;
     for (auto &it2 : it.second) o << ' ' << it2;
@@ -1977,7 +1977,7 @@ void PluginInstance::generateInfoString(void) {
   }
 
   o << "\n" << stream_info.size() << " streams:\n"
-       "stream, subsessions: ClientIp:Port->ServerIp:Port [...]\n";
+       "stream, subsessions: ServerIp:Port - ClientIp:Port [...]\n";
   for (auto &it : stream_info) {
     o << it.first;
     auto ss_it = subsessions.find(it.first);
