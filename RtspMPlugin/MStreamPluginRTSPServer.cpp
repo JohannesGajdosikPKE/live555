@@ -1789,9 +1789,8 @@ static std::string SocketToString(const int s,bool with_peer = true) {
     strcpy(sock_port_str, "unknown");
   }
   return (with_peer
-            ? (std::string(peer_host_str) + ":" + sock_port_str + " - " + peer_host_str)
-            : std::string(sock_host_str))
-          + ":" + sock_port_str;
+            ? (std::string(sock_host_str) + ":" + sock_port_str + " - " + peer_host_str + ":" + peer_port_str)
+            : (std::string(sock_host_str) + ":" + sock_port_str));
 }
 
 static void PrintAcceptSocketInfo(std::ostream &o,const char *proto,int socket) {
