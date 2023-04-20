@@ -234,25 +234,29 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
     }
     if (err != EINTR) {
 #else
-    if (errno != EINTR && errno != EAGAIN) {
+    int err = errno;
+    if (err != EINTR && err != EAGAIN) {
 #endif
 	// Unexpected error - treat this as fatal:
+	envir() << "FATAL: BasicTaskScheduler::SingleStep(): select() failed: " << err << "\n";
+	envir().setResultErrMsg("FATAL: BasicTaskScheduler::SingleStep(): select() failed: ",err);
+	envir() << envir().getResultMsg() << "\n";
 #if !defined(_WIN32_WCE)
 	perror("BasicTaskScheduler::SingleStep(): select() fails");
 	// Because this failure is often "Bad file descriptor" - which is caused by an invalid socket number (i.e., a socket number
 	// that had already been closed) being used in "select()" - we print out the sockets that were being used in "select()",
 	// to assist in debugging:
-	fprintf(stderr, "socket numbers used in the select() call:");
+	envir() << "socket numbers used in the select() call:\n";
 	for (int i = 0; i < 10000; ++i) {
 	  if (FD_ISSET(i, &fReadSet) || FD_ISSET(i, &fWriteSet) || FD_ISSET(i, &fExceptionSet)) {
-	    fprintf(stderr, " %d(", i);
-	    if (FD_ISSET(i, &fReadSet)) fprintf(stderr, "r");
-	    if (FD_ISSET(i, &fWriteSet)) fprintf(stderr, "w");
-	    if (FD_ISSET(i, &fExceptionSet)) fprintf(stderr, "e");
-	    fprintf(stderr, ")");
+	    envir() << " " << i << "(";
+	    if (FD_ISSET(i, &fReadSet)) envir() << "r";
+	    if (FD_ISSET(i, &fWriteSet)) envir() << "w";
+	    if (FD_ISSET(i, &fExceptionSet)) envir() << "e";
+	    envir() << ")";
 	  }
 	}
-	fprintf(stderr, "\n");
+	envir() << "\n";
 #endif
 	internalError();
       }

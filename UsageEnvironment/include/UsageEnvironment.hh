@@ -188,10 +188,13 @@ public:
   bool assert_threads;
   int addNrOfUsers(int x) {return (nr_of_users += x);}
   int passAndAssert(int x) {assertSameThread();return x;}
+  void setUsageEnvironment(UsageEnvironment &e) {env = &e;} // called in UsageEnvironment constructor
 private:
+  UsageEnvironment *env;
   std::atomic<int> nr_of_users;
 protected:
   TaskScheduler(); // abstract base class
+  UsageEnvironment &envir(void) const {return *env;}
 };
 
 #endif

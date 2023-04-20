@@ -37,6 +37,7 @@ Boolean UsageEnvironment::reclaim() {
 
 UsageEnvironment::UsageEnvironment(TaskScheduler& scheduler)
   : liveMediaPriv(NULL), groupsockPriv(NULL), fScheduler(scheduler) {
+  fScheduler.setUsageEnvironment(*this);
 }
 
 UsageEnvironment::~UsageEnvironment() {
@@ -52,7 +53,7 @@ void UsageEnvironment::internalError() {
 
 TaskScheduler::TaskScheduler()
               :my_thread_id(Live555CurrentThreadId()),
-               assert_threads(false),nr_of_users(0) {
+               assert_threads(false),env(0),nr_of_users(0) {
 //  std::cout << "TaskScheduler::TaskScheduler(" << my_thread_id << ")" << std::endl << std::flush;
 }
 
