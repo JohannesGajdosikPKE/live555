@@ -79,6 +79,7 @@ protected:
   // Redefined virtual functions:
   virtual void SingleStep(unsigned maxDelayTime);
 
+  void assertValidSocketForSelect(int socketNum);
   virtual void setBackgroundHandling(int socketNum, int conditionSet, BackgroundHandlerProc* handlerProc, void* clientData);
   virtual void moveSocketHandling(int oldSocketNum, int newSocketNum);
 

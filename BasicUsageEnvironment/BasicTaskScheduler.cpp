@@ -388,6 +388,53 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
   fDelayQueue.handleAlarm();
 }
 
+void BasicTaskScheduler::assertValidSocketForSelect(int socketNum) {
+  int val;
+  socklen_t length = sizeof(val);
+  int rc = getsockopt(socketNum, SOL_SOCKET, SO_TYPE, &val, &length);
+  if (rc) {
+    if (envirInitialized()) {
+      int err = envir().getErrno();
+      char tmp[256];
+      envir() << "FATAL: BasicTaskScheduler::assertValidSocketForSelect(" << PrintSocket(tmp,sizeof(tmp),socketNum) << "): getsockopt(SO_TYPE) failed: " << err << "\n";
+      envir().setResultErrMsg("FATAL: BasicTaskScheduler::assertValidSocketForSelect(): getsockopt(SO_TYPE) failed: ",err);
+      envir() << envir().getResultMsg() << "\n";
+    }
+    internalError();
+  } else {
+    if (val == SOCK_STREAM) {
+      length = sizeof(val);
+      rc = getsockopt(socketNum, SOL_SOCKET, SO_ACCEPTCONN, &val, &length);
+      if (rc) {
+        if (envirInitialized()) {
+          int err = envir().getErrno();
+          char tmp[256];
+          envir() << "FATAL: BasicTaskScheduler::assertValidSocketForSelect(" << PrintSocket(tmp,sizeof(tmp),socketNum) << "): getsockopt(SO_ACCEPTCONN) failed: " << err << "\n";
+          envir().setResultErrMsg("FATAL: BasicTaskScheduler::assertValidSocketForSelect(): getsockopt(SO_ACCEPTCONN) failed: ",err);
+          envir() << envir().getResultMsg() << "\n";
+        }
+        internalError();
+      } else {
+        if (val == 0) { // a non-listening socket
+          struct sockaddr_storage sock_addr;
+          socklen_t sock_addrlen = sizeof(sock_addr);
+          rc = getpeername(socketNum, (struct sockaddr*)&sock_addr, &sock_addrlen);
+          if (rc) {
+            if (envirInitialized()) {
+              int err = envir().getErrno();
+              char tmp[256];
+              envir() << "FATAL: BasicTaskScheduler::assertValidSocketForSelect(" << PrintSocket(tmp,sizeof(tmp),socketNum) << "): getpeername() failed: " << err << "\n";
+              envir().setResultErrMsg("FATAL: BasicTaskScheduler::assertValidSocketForSelect(): getpeername() failed: ",err);
+              envir() << envir().getResultMsg() << "\n";
+            }
+            internalError();
+          }
+        }
+      }
+    }
+  }
+}
+
 void BasicTaskScheduler
   ::setBackgroundHandling(int socketNum, int conditionSet, BackgroundHandlerProc* handlerProc, void* clientData) {
   assertSameThread();
@@ -412,6 +459,7 @@ void BasicTaskScheduler
       --fMaxNumSockets;
     }
   } else {
+    assertValidSocketForSelect(socketNum);
     fHandlers->assignHandler(socketNum, conditionSet, handlerProc, clientData);
     if (socketNum+1 > fMaxNumSockets) {
       fMaxNumSockets = socketNum+1;
