@@ -23,6 +23,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #ifndef NO_OPENSSL
 #include <openssl/err.h>
 #endif
+#include "BasicUsageEnvironment.hh" // PrintSocket
 
 ////////// TLSState implementation //////////
 
@@ -242,6 +243,8 @@ int ServerTLSState::accept(int socketNum) {
     return 0; // connection is pending
   } else {
     fEnv.setResultErrMsg("SSL_accept() call failed: ", sslGetErrorResult);
+    char tmp[256];
+    fEnv << "ServerTLSState::accept(" << PrintSocket(tmp,sizeof(tmp),socketNum) << "): " << fEnv.getResultMsg() << "\n";
     return -1; // error
   }
 #else
@@ -277,7 +280,23 @@ Boolean ServerTLSState::setup(int socketNum) {
   } while (0);
 
   // An error occurred:
-  ERR_print_errors_fp(stderr);
+//  ERR_print_errors_fp(stderr);
+
+  {
+    char tmp[16*1024];
+    fEnv << "ServerTLSState::setup(" << PrintSocket(tmp,sizeof(tmp),socketNum) << "): accumulated SSL errors: ";
+    BIO *bio = BIO_new(BIO_s_mem());
+    ERR_print_errors(bio);
+    char *buf;
+    size_t len = BIO_get_mem_data(bio, &buf);
+    if (len > sizeof(tmp)-2) len = sizeof(tmp)-2;
+    memcpy(tmp,buf,len);
+    tmp[len-1] = '\n';
+    tmp[len] = '\0';
+    BIO_free(bio);
+    fEnv << tmp;
+  }
+
   reset();
   return False;
 }

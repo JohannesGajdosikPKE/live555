@@ -34,6 +34,39 @@ extern "C" int initializeWinsockIfNecessary();
   #include <unistd.h>
 #endif
 
+const char *PrintSocket(char tmp[],const int tmp_size,const int s) {
+  if (tmp_size < 11+2+2*(INET6_ADDRSTRLEN+1+5)+2) {
+    tmp[0] = '\0';
+  } else {
+    sprintf(tmp,"%d(",s);
+    size_t l = strlen(tmp);
+    struct sockaddr_storage sock_addr;
+    socklen_t sock_addrlen = sizeof(sock_addr);
+    char port_str[8];
+    sock_addrlen = sizeof(sock_addr);
+    if (getsockname(s, (struct sockaddr*)&sock_addr, &sock_addrlen) ||
+        getnameinfo((struct sockaddr*)&sock_addr, sock_addrlen,
+                    tmp+l, INET6_ADDRSTRLEN+1, port_str+1, 6,
+                    NI_NUMERICHOST | NI_NUMERICSERV)) {
+      strcpy(tmp+l,"unknown");
+    } else {
+      port_str[0] = ':';
+      strcat(tmp,port_str);
+      l += strlen(tmp+l);
+      if (getpeername(s, (struct sockaddr*)&sock_addr, &sock_addrlen) ||
+          getnameinfo((struct sockaddr*)&sock_addr, sock_addrlen,
+                      tmp+l+1, INET6_ADDRSTRLEN+1, port_str+1, 6,
+                      NI_NUMERICHOST | NI_NUMERICSERV)) {
+      } else {
+        tmp[l] = '-';
+        strcat(tmp,port_str);
+      }
+    }
+    strcat(tmp,")");
+  }
+  return tmp;
+}
+
 ////////// BasicTaskScheduler //////////
 
 BasicTaskScheduler* BasicTaskScheduler::createNew(unsigned maxSchedulerGranularity) {
@@ -228,8 +261,14 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
     if (err == WSAEINVAL && readSet.fd_count == 0) {
       err = EINTR;
       // To stop this from happening again, create a dummy socket:
-      if (fDummySocketNum >= 0) closeSocket(fDummySocketNum);
+      char tmp[256];
+      if (fDummySocketNum >= 0) {
+        envir() << "BasicTaskScheduler::SingleStep() closing dummy socket " << PrintSocket(tmp,sizeof(tmp),fDummySocketNum) << "\n";
+        FD_CLR((unsigned)fDummySocketNum, &fReadSet);
+        closeSocket(fDummySocketNum);
+      }
       fDummySocketNum = socket(AF_INET, SOCK_DGRAM, 0);
+      envir() << "BasicTaskScheduler::SingleStep() opening dummy socket " << PrintSocket(tmp,sizeof(tmp),fDummySocketNum) << "\n";
       FD_SET((unsigned)fDummySocketNum, &fReadSet);
     }
     if (err != EINTR) {
@@ -247,9 +286,10 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
 	// that had already been closed) being used in "select()" - we print out the sockets that were being used in "select()",
 	// to assist in debugging:
 	envir() << "socket numbers used in the select() call:\n";
+	char tmp[256];
 	for (int i = 0; i < 10000; ++i) {
 	  if (FD_ISSET(i, &fReadSet) || FD_ISSET(i, &fWriteSet) || FD_ISSET(i, &fExceptionSet)) {
-	    envir() << " " << i << "(";
+	    envir() << " " << PrintSocket(tmp,sizeof(tmp),i) << "(";
 	    if (FD_ISSET(i, &fReadSet)) envir() << "r";
 	    if (FD_ISSET(i, &fWriteSet)) envir() << "w";
 	    if (FD_ISSET(i, &fExceptionSet)) envir() << "e";
@@ -355,6 +395,14 @@ void BasicTaskScheduler
 #if !defined(__WIN32__) && !defined(_WIN32) && defined(FD_SETSIZE)
   if (socketNum >= (int)(FD_SETSIZE)) return;
 #endif
+  if (envirInitialized()) {
+    char tmp[256];
+    envir() << "BasicTaskScheduler::setBackgroundHandling(" << PrintSocket(tmp,sizeof(tmp),socketNum) << "): FdSets: "
+            << ((conditionSet&SOCKET_READABLE) ? "+r" : "-r")
+            << ((conditionSet&SOCKET_WRITABLE) ? "+w" : "-w")
+            << ((conditionSet&SOCKET_EXCEPTION) ? "+e" : "-e")
+            << "\n";
+  }
   FD_CLR((unsigned)socketNum, &fReadSet);
   FD_CLR((unsigned)socketNum, &fWriteSet);
   FD_CLR((unsigned)socketNum, &fExceptionSet);
@@ -380,6 +428,10 @@ void BasicTaskScheduler::moveSocketHandling(int oldSocketNum, int newSocketNum) 
 #if !defined(__WIN32__) && !defined(_WIN32) && defined(FD_SETSIZE)
   if (oldSocketNum >= (int)(FD_SETSIZE) || newSocketNum >= (int)(FD_SETSIZE)) return; // sanity check
 #endif
+  char tmp[256];
+  envir() << "BasicTaskScheduler::moveSocketHandling: "
+             "moving from " << PrintSocket(tmp,sizeof(tmp),oldSocketNum);
+  envir() << " to " << PrintSocket(tmp,sizeof(tmp),newSocketNum) << "\n";
   if (FD_ISSET(oldSocketNum, &fReadSet)) {FD_CLR((unsigned)oldSocketNum, &fReadSet); FD_SET((unsigned)newSocketNum, &fReadSet);}
   if (FD_ISSET(oldSocketNum, &fWriteSet)) {FD_CLR((unsigned)oldSocketNum, &fWriteSet); FD_SET((unsigned)newSocketNum, &fWriteSet);}
   if (FD_ISSET(oldSocketNum, &fExceptionSet)) {FD_CLR((unsigned)oldSocketNum, &fExceptionSet); FD_SET((unsigned)newSocketNum, &fExceptionSet);}

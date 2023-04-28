@@ -28,6 +28,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <functional>
 #include <mutex>
 
+const char *PrintSocket(char tmp[],const int tmp_size,const int s);
+
 class BasicUsageEnvironment: public BasicUsageEnvironment0 {
 public:
   static BasicUsageEnvironment* createNew(TaskScheduler& taskScheduler);

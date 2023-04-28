@@ -194,6 +194,7 @@ private:
   std::atomic<int> nr_of_users;
 protected:
   TaskScheduler(); // abstract base class
+  bool envirInitialized(void) const {return env;}
   UsageEnvironment &envir(void) const {return *env;}
 };
 
