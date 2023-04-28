@@ -391,7 +391,7 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
 void BasicTaskScheduler::assertValidSocketForSelect(int socketNum) {
   int val;
   socklen_t length = sizeof(val);
-  int rc = getsockopt(socketNum, SOL_SOCKET, SO_TYPE, &val, &length);
+  int rc = getsockopt(socketNum, SOL_SOCKET, SO_TYPE, (char*)&val, &length);
   if (rc) {
     if (envirInitialized()) {
       int err = envir().getErrno();
@@ -404,7 +404,7 @@ void BasicTaskScheduler::assertValidSocketForSelect(int socketNum) {
   } else {
     if (val == SOCK_STREAM) {
       length = sizeof(val);
-      rc = getsockopt(socketNum, SOL_SOCKET, SO_ACCEPTCONN, &val, &length);
+      rc = getsockopt(socketNum, SOL_SOCKET, SO_ACCEPTCONN, (char*)&val, &length);
       if (rc) {
         if (envirInitialized()) {
           int err = envir().getErrno();
