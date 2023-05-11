@@ -1870,7 +1870,15 @@ const char *MediaServerPluginRTSPServer::ServerTypeToString(int t) {
 
 
 
-
+static std::string IpToString(int ip) {
+  std::ostringstream o;
+  ip = ntohl(ip);
+  o << (ip&0xFF) << '.'
+    << ((ip>>8)&0xFF) << '.'
+    << ((ip>>16)&0xFF) << '.'
+    << ((ip>>24)&0xFF);
+  return o.str();
+}
 
 class PluginInstance {
 public:
@@ -1895,7 +1903,19 @@ private:
         scheduler = BasicTaskScheduler::createNew();
         scheduler->assert_threads = true;
         env = new LoggingUsageEnvironment(*scheduler,PluginInstance::params);
-        *env << "PluginInstance::PluginInstance::l: start\n";
+        *env << "PluginInstance::PluginInstance::l: start: "
+                "rtsp: " << PluginInstance::params.rtspPort
+             << "(bind:" << IpToString(PluginInstance::params.bind_to_interface_rtsp).c_str()
+             << (PluginInstance::params.rtsp_is_optional ? ",o" : "") << "), "
+                "http: " << PluginInstance::params.httpPort
+             << "(bind:" << IpToString(PluginInstance::params.bind_to_interface_http).c_str()
+             << (PluginInstance::params.http_is_optional ? ",o" : "") << "), "
+                "https: " << PluginInstance::params.httpsPort
+             << "(bind:" << IpToString(PluginInstance::params.bind_to_interface_https).c_str()
+             << (PluginInstance::params.https_is_optional ? ",o" : "") << "), "
+                "rtsps: " << PluginInstance::params.rtspsPort
+             << "(bind:" << IpToString(PluginInstance::params.bind_to_interface_rtsps).c_str()
+             << (PluginInstance::params.rtsps_is_optional ? ",o" : "") << ")\n";
         bool success = true;
         for (int i=0;i<3 && success;i++) {
           server[i] = MediaServerPluginRTSPServer::createNew(
@@ -1931,7 +1951,7 @@ private:
           watchVariable = 0;
         }
       }) {
-    params.log("PluginInstance::PluginInstance: start\n");
+    params.log("PluginInstance::PluginInstance(" + std::to_string(PluginInstance::params.rtspPort) + "): start\n");
     sem.wait();
     params.log("PluginInstance::PluginInstance: end\n");
   }

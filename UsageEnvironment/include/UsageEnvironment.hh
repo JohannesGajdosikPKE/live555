@@ -176,6 +176,7 @@ public:
 
   // The following two functions are deprecated, and are provided for backwards-compatibility only:
   void turnOnBackgroundReadHandling(int socketNum, BackgroundHandlerProc* handlerProc, void* clientData) {
+    if (env) {*env << "turnOnBackgroundReadHandling: calling setBackgroundHandling\n";}
     setBackgroundHandling(socketNum, SOCKET_READABLE, handlerProc, clientData);
   }
   void turnOffBackgroundReadHandling(int socketNum) { disableBackgroundHandling(socketNum); }
