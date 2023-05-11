@@ -244,7 +244,6 @@ public: // should be protected, but some old compilers complain otherwise
 
     RTSPServer& fOurRTSPServer; // same as ::fOurServer
     int& fClientInputSocket; // aliased to ::fOurSocket
-    int fClientOutputSocket;
     ServerTLSState fPOSTSocketTLS; // used only for RTSP-over-HTTPS
     int fAddressFamily;
     Boolean fIsActive;

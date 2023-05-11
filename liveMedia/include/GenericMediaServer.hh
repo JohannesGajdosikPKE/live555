@@ -166,6 +166,7 @@ public: // should be protected, but some old compilers complain otherwise
     std::atomic<uint64_t> init_command;
   protected:
     int fOurSocket;
+    int fClientOutputSocket; // for RTSPClientConnection only
     struct sockaddr_storage fClientAddr;
     unsigned char fRequestBuffer[REQUEST_BUFFER_SIZE];
     unsigned char fResponseBuffer[RESPONSE_BUFFER_SIZE];

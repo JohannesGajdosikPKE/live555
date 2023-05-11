@@ -23,6 +23,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "RTSPRegisterSender.hh"
 #include "Base64.hh"
 #include <GroupsockHelper.hh>
+#include "BasicUsageEnvironment.hh"
 
 #include <list>
 #include <iostream>
@@ -127,7 +128,7 @@ Boolean RTSPServer::setUpTunnelingOverHTTP(Port httpPort) {
   fHTTPServerSocketIPv6 = setUpOurSocket(envir(), httpPort, AF_INET6);
   if (fHTTPServerSocketIPv4 >= 0 || fHTTPServerSocketIPv6 >= 0) {
     fHTTPServerPort = httpPort;
-    std::cout << "RTSPServer(" << this << ")::setUpTunnelingOverHTTP: " << ntohs(fHTTPServerPort.num()) << std::endl;
+    envir() << "RTSPServer(" << this << ")::setUpTunnelingOverHTTP: " << ntohs(fHTTPServerPort.num()) << "\n";
     envir().taskScheduler().turnOnBackgroundReadHandling(fHTTPServerSocketIPv4,
 							 incomingConnectionHandlerHTTPIPv4, this);
     envir().taskScheduler().turnOnBackgroundReadHandling(fHTTPServerSocketIPv6,
@@ -386,6 +387,12 @@ void RTSPServer::stopTCPStreamingOnSocket(int socketNum) {
 RTSPServer::RTSPClientConnection*
 RTSPServer::RTSPClientConnection::create(UsageEnvironment& threaded_env, RTSPServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr, Boolean useTLS) {
   RTSPClientConnection* rval = new RTSPClientConnection(threaded_env, ourServer, clientSocket, clientAddr, useTLS);
+  char tmp[256];
+  threaded_env << "RTSPServer::RTSPClientConnection::create: "
+                  "new RTSPClientConnection created for socket "
+               << PrintSocket(tmp,sizeof(tmp),clientSocket)
+               << " and thread " << threaded_env.taskScheduler().my_thread_id
+               << "\n";
   rval->afterConstruction();
   return rval;
 }
@@ -395,7 +402,7 @@ RTSPServer::RTSPClientConnection
 		       int clientSocket, struct sockaddr_storage const& clientAddr,
 		       Boolean useTLS)
   : GenericMediaServer::ClientConnection(threaded_env, ourServer, clientSocket, clientAddr, useTLS),
-    fOurRTSPServer(ourServer), fClientInputSocket(fOurSocket), fClientOutputSocket(fOurSocket),
+    fOurRTSPServer(ourServer), fClientInputSocket(fOurSocket),
     fPOSTSocketTLS(envir()), fAddressFamily(clientAddr.ss_family),
     fIsActive(True), fRecursionCount(0), fOurSessionCookie(NULL), fScheduledDelayedTask(0) {
   envir() << "RTSPServer::RTSPClientConnection(" << getId() << ")::RTSPClientConnection\n";
@@ -726,7 +733,7 @@ Boolean RTSPServer::RTSPClientConnection
   fprintf(stderr, "Handled HTTP \"POST\" request (client input socket: %d)\n", fClientInputSocket);
 #endif
   envir() << "RTSPServer::RTSPClientConnection("  << this << ")::handleHTTPCmd_TunnelingPOST: "
-             "transfering socket " << fClientInputSocket << " and handling to " << prevClientConnection << "\n";
+             "transfering socket " << fClientInputSocket << " and handling to " << prevClientConnection->getId() << "\n";
   // Change the previous "RTSPClientSession" object's input socket to ours.  It will be used for subsequent requests:
   prevClientConnection->changeClientInputSocket(fClientInputSocket, fInputTLS,
 						envir(), extraData, extraDataSize);
@@ -755,7 +762,8 @@ void RTSPServer::RTSPClientConnection::closeSocketsRTSP() {
   fOurRTSPServer.stopTCPStreamingOnSocket(fClientOutputSocket);
 
   // Turn off background handling on our input socket (and output socket, if different); then close it (or them):
-  if (fClientOutputSocket != fClientInputSocket) {
+  if (fClientOutputSocket != fClientInputSocket && fClientOutputSocket >= 0) {
+    envir() << "GenericMediaServer::RTSPClientConnection(" << getId() << ")::closeSocketsRTSP: disableBackgroundHandling(" << fClientOutputSocket << ") and close socket\n";
     envir().taskScheduler().disableBackgroundHandling(fClientOutputSocket);
     ::closeSocket(fClientOutputSocket);
   }
@@ -776,6 +784,7 @@ void RTSPServer::RTSPClientConnection::handleAlternativeRequestByte1(u_int8_t re
     handleRequestBytes(-1);
   } else if (requestByte == 0xFE) {
     // Another hack: The new handler of the input TCP socket no longer needs it, so take back control of it:
+    envir() << "RTSPServer::RTSPClientConnection::handleAlternativeRequestByte1: calling setBackgroundHandling\n";
     envir().taskScheduler().setBackgroundHandling(fClientInputSocket, SOCKET_READABLE|SOCKET_EXCEPTION,
 						  incomingRequestHandler, this);
   } else {
@@ -1368,6 +1377,7 @@ void RTSPServer::RTSPClientConnection
     other_env << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
                  "enabling handling for " << newSocketNum << " in this same thread\n";
     fClientInputSocket = newSocketNum;
+    other_env << "RTSPServer::RTSPClientConnection::changeClientInputSocket: calling setBackgroundHandling\n";
     other_env.taskScheduler().setBackgroundHandling(fClientInputSocket, SOCKET_READABLE|SOCKET_EXCEPTION,
                                                     incomingRequestHandler, this);
     // Change the TLS state:
@@ -1403,6 +1413,7 @@ void RTSPServer::RTSPClientConnection
         envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << fClientInputSocket << "->" << newSocketNum << "): "
                    "enabling handling for " << newSocketNum << " in the new thread, changing socket number\n";
         fClientInputSocket = newSocketNum;
+        envir() << "RTSPServer::RTSPClientConnection::changeClientInputSocket::l: calling setBackgroundHandling\n";
         envir().taskScheduler().setBackgroundHandling(fClientInputSocket, SOCKET_READABLE|SOCKET_EXCEPTION,
                                                       incomingRequestHandler, this);
         // Change the TLS state:

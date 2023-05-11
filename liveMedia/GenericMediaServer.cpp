@@ -507,7 +507,7 @@ static GenericMediaServer::ClientConnection::IdType GenerateId(void) {
 
 GenericMediaServer::ClientConnection
 ::ClientConnection(UsageEnvironment &threaded_env, GenericMediaServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr, Boolean useTLS)
-  : threaded_env(threaded_env), fOurServer(ourServer), id(GenerateId()), init_command(0), fOurSocket(clientSocket), fClientAddr(clientAddr), fTLS(threaded_env) {
+  : threaded_env(threaded_env), fOurServer(ourServer), id(GenerateId()), init_command(0), fOurSocket(clientSocket), fClientOutputSocket(clientSocket), fClientAddr(clientAddr), fTLS(threaded_env) {
   fInputTLS = fOutputTLS = &fTLS;
     char peer_host_str[INET6_ADDRSTRLEN + 1];
     char peer_port_str[7 + 1];
@@ -551,13 +551,15 @@ void GenericMediaServer::ClientConnection::afterConstruction(void) {
   
   // Arrange to handle incoming requests:
   resetRequestBuffer();
-  envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::afterConstruction: setBackgroundHandling(" << fOurSocket << ")\n";
   if (envir().taskScheduler().isSameThread()) {
+    envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::afterConstruction: calling setBackgroundHandling(" << fOurSocket << ") in same thread\n";
     envir().taskScheduler().setBackgroundHandling(fOurSocket, SOCKET_READABLE|SOCKET_EXCEPTION, incomingRequestHandler, this);
   } else {
+    envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::afterConstruction: delegating setBackgroundHandling(" << fOurSocket << ") to thread " << envir().taskScheduler().my_thread_id << "\n";
     init_command = envir().taskScheduler().executeCommand(
       [this](uint64_t) {
         envir().taskScheduler().setBackgroundHandling(fOurSocket, SOCKET_READABLE|SOCKET_EXCEPTION, incomingRequestHandler, this);
+        envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::afterConstruction::l: executed delegated setBackgroundHandling(" << fOurSocket << ")\n";
           // Maybe this task will finish fast, and assigning init_command will happen after clearing.
           // Never mind.
           // There is no way cancelling a wrong task: even if there is a new task every nanosecond
@@ -579,11 +581,14 @@ GenericMediaServer::ClientConnection::~ClientConnection() {
 }
 
 void GenericMediaServer::ClientConnection::closeSockets() {
-  envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::closeSockets: disableBackgroundHandling(" << fOurSocket << ")\n";
   // Turn off background handling on our socket:
-  envir().taskScheduler().disableBackgroundHandling(fOurSocket);
-  if (fOurSocket>= 0) ::closeSocket(fOurSocket);
+  if (fOurSocket>= 0) {
+    envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::closeSockets: disableBackgroundHandling(" << fOurSocket << ") and close socket\n";
+    envir().taskScheduler().disableBackgroundHandling(fOurSocket);
+    ::closeSocket(fOurSocket);
+  }
 
+  if (fClientOutputSocket == fOurSocket) fClientOutputSocket = -1;
   fOurSocket = -1;
 }
 
