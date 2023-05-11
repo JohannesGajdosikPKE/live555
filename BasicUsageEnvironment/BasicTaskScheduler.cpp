@@ -101,7 +101,7 @@ BasicTaskScheduler::BasicTaskScheduler(unsigned maxSchedulerGranularity)
   if (connect(command_pipe[0], (sockaddr*)&a, sizeof(a))) abort();
   command_pipe[1] = accept(listener, 0, 0);
   if (command_pipe[1] == INVALID_SOCKET) abort();
-  if (closesocket(listener)) abort();
+  if (::closeSocket(listener)) abort();
 #else
   if (pipe2(command_pipe, O_CLOEXEC)) abort();
 #endif
@@ -207,12 +207,9 @@ void BasicTaskScheduler::commandRequestHandler(void) {
 BasicTaskScheduler::~BasicTaskScheduler() {
 #if defined(__WIN32__) || defined(_WIN32)
   if (fDummySocketNum >= 0) closeSocket(fDummySocketNum);
-  closesocket(command_pipe[0]);
-  closesocket(command_pipe[1]);
-#else
-  close(command_pipe[0]);
-  close(command_pipe[1]);
 #endif
+  ::closeSocket(command_pipe[0]);
+  ::closeSocket(command_pipe[1]);
 }
 
 void BasicTaskScheduler::schedulerTickTask(void* clientData) {
