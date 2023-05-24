@@ -150,8 +150,16 @@ void GenericMediaServer::closeAllClientSessionsForServerMediaSession(ServerMedia
       } else {
         std::string key_string(key);
         clientSession->envir().taskScheduler().executeCommand([this,key_string,&sem](uint64_t) {
-          std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
-          GenericMediaServer::ClientSession *clientSession = (GenericMediaServer::ClientSession*)fClientSessions->Lookup(key_string.c_str());
+          GenericMediaServer::ClientSession *clientSession = 0;
+          {
+              // locking fClientSessions_mutex guarantees that fClientSessions is not modified from another thread while iterating
+            std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
+            clientSession = (GenericMediaServer::ClientSession*)fClientSessions->Lookup(key_string.c_str());
+            fClientSessions->Remove(key_string.c_str());
+              // release fClientSessions_mutex before deleting clientSession because
+              // ~RTSPClientSession deletes the StreamStates which deletes the ServerMediaSession which will
+              // lock fClientSessions_mutex and cause a deadlock
+          }
           if (clientSession) clientSession->deleteThis();
             // I must guarantee that all clientSessions are deleted when this function finishes 
           sem.post();
@@ -332,8 +340,12 @@ void GenericMediaServer::cleanup() {
       } else {
         std::string key_string(key);
         clientSession->envir().taskScheduler().executeCommand([this,key_string,&sem](uint64_t) {
-            std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
-            GenericMediaServer::ClientSession *clientSession = (GenericMediaServer::ClientSession*)fClientSessions->Lookup(key_string.c_str());
+            GenericMediaServer::ClientSession *clientSession = 0;
+            {
+              std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
+              clientSession = (GenericMediaServer::ClientSession*)fClientSessions->Lookup(key_string.c_str());
+              fClientSessions->Remove(key_string.c_str());
+            }
             if (clientSession) {
 //              envir() << "GenericMediaServer::cleanup: found ClientSession " << key_string.c_str() << " for deleting: " << clientSession << "\n";
               clientSession->deleteThis();
