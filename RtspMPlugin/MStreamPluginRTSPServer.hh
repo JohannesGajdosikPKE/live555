@@ -30,6 +30,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <mutex>
 #include <iostream>
 
+struct KeepTaskHelper;
+
 class MediaServerPluginRTSPServer : public RTSPServer {
 public:
   enum ServerType {
@@ -50,6 +52,15 @@ public:
   typedef std::map<std::string,std::set<std::string> > SubsessionMap;
   void generateConnectionStreamInfo(InfoMap &connection_info,InfoMap &stream_info,
                                     SubsessionMap &subsessions) const;
+  bool registerKeepTaskHelper(KeepTaskHelper *h) {
+    std::lock_guard<std::recursive_mutex> lock(keep_task_helpers_mutex);
+    return keep_task_helpers.insert(h).second;
+  }
+  bool unregisterKeepTaskHelper(KeepTaskHelper *h) {
+    std::lock_guard<std::recursive_mutex> lock(keep_task_helpers_mutex);
+    return (keep_task_helpers.erase(h) == 1);
+  }
+  struct LookupCompletionFuncData;
 protected:
   MediaServerPluginRTSPServer(ServerType type,UsageEnvironment &env, int ourSocketIPv4, int ourSocketIPv6,
                               int m_HTTPServerSocketIPv4, int m_HTTPServerSocketIPv6,
@@ -58,7 +69,6 @@ protected:
   ~MediaServerPluginRTSPServer(void) override;
 
 protected:
-  struct LookupCompletionFuncData;
   static void GetStreamCb(void *cb_context,
                           const std::shared_ptr<IMStream> &stream);
   void getStreamCb(const LookupCompletionFuncData *l,
@@ -89,6 +99,8 @@ protected:
   mutable std::recursive_mutex stream_map_mutex;
   const std::unique_ptr<const char[]> m_urlPrefix;
   bool destructor_started = false;
+  mutable std::recursive_mutex keep_task_helpers_mutex;
+  std::set<KeepTaskHelper*> keep_task_helpers;
 };
 
 #endif

@@ -121,6 +121,67 @@ static void PrintAllocInfos(std::ostream &o) {
 
 #endif
 
+class ContextEncoder {
+public:
+  static void *Encode(void *context) {
+    return Process(context,0,std::function<void(void*)>());
+  }
+  static void *Decode(void *context) {
+    return Process(context,1,std::function<void(void*)>());
+  }
+  static void Clear(const std::function<void(void*)> &f) {
+    Process(nullptr,2,f);
+  }
+private:
+  static void *Process(void *context,int what,const std::function<void(void*)> &f) {
+    static ContextEncoder encoder;
+    switch (what) {
+      case 0: return encoder.encode(context);
+      case 1: return encoder.decode(context);
+    }
+    encoder.clear(f);
+    return nullptr;
+  }
+  ContextEncoder(void) : sequence(InitSequence()) {
+    if (!sequence) abort();
+  }
+  void *encode(void *x) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!sequence) return nullptr;
+    if (!lookup_map.insert(std::pair<uintptr_t,void*>(sequence,x)).second) abort();
+    return (void*)(sequence++);
+  }
+  void *decode(void *x) {
+    std::lock_guard<std::mutex> lock(mutex);
+    auto it(lookup_map.find((uintptr_t)x));
+    if (it == lookup_map.end()) return nullptr;
+    void *rval = it->second;
+    lookup_map.erase(it);
+    return rval;
+  }
+  void clear(const std::function<void(void*)> &f) {
+    std::lock_guard<std::mutex> lock(mutex);
+    for (auto it : lookup_map) {
+      f(it.second);
+    }
+    lookup_map.clear();
+    sequence = 0;
+  }
+  uintptr_t InitSequence(void) {
+      // can return 0 only when time_since_epoch()==0
+    return 0x7FFFFFFFFFFFFFFFULL &
+           (0x5E89A06202219bc1ULL *
+            std::chrono::duration_cast<std::chrono::microseconds>
+              (std::chrono::system_clock::now().time_since_epoch()).count());
+  }
+private:
+  std::mutex mutex;
+  uintptr_t sequence;
+  std::map<uintptr_t,void*> lookup_map;
+};
+
+
+
 
 class IdContainer {
   static unsigned int GetSequenceId(void) {
@@ -201,6 +262,7 @@ public:
   std::unique_ptr<Registration> connect(const SubsessionInfo *info,FrameFunction &&f);
   void getSubsessions(std::set<std::string> &subsessions) const;
   void keepAlive(void);
+  void cancelKeepAlive(void);
   MediaServerPluginRTSPServer &server;
   UsageEnvironment &env(void) const {return server.envir();}
   const std::string name;
@@ -213,7 +275,6 @@ private:
   bool i_want_to_die = false;            // protected by delayed_keep_task_mutex
   bool must_deregister = true;
   void emptyFrameReceived(void);
-  void cancelKeepAlive(void);
   friend class Registration;
   void remember(Registration *reg);
   void forget(Registration *reg);
@@ -387,8 +448,17 @@ struct KeepTaskHelper : public std::shared_ptr<MediaServerPluginRTSPServer::Stre
     : std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry>(std::move(p)) {
     get()->env() << "KeepTaskHelper::KeepTaskHelper(" << get()->id << "," << get()->name.c_str() << "): "
                     "keeping shared_ptr, use_count: " << (int)(use_count()) << "\n";
+    if (!get()->server.registerKeepTaskHelper(this)) {
+      get()->env() << "FATAL KeepTaskHelper::KeepTaskHelper(" << get()->id << "," << get()->name.c_str() << "): "
+                      "double registration\n";
+      abort();
+    }
   }
   ~KeepTaskHelper(void) {
+    if (!get()->server.unregisterKeepTaskHelper(this)) {
+        // double delete: timeout and plugin close at the same time
+      return;
+    }
     UsageEnvironment &env(get()->env());
     const unsigned int id(get()->id);
     const std::string name(get()->name);
@@ -396,6 +466,17 @@ struct KeepTaskHelper : public std::shared_ptr<MediaServerPluginRTSPServer::Stre
     reset();
     env << "KeepTaskHelper::~KeepTaskHelper(" << id << "," << name.c_str() << "): "
            "shared_ptr released, use_count: " << uc << "\n";
+  }
+  void finishWaiting(void) {
+    if (get()->env().taskScheduler().isSameThread()) {
+      get()->cancelKeepAlive();
+    } else {
+      get()->env().taskScheduler().executeCommand(
+        [e=std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry>(*this)](uint64_t) {
+          e->cancelKeepAlive();
+        }
+      );
+    }
   }
 };
 
@@ -433,11 +514,12 @@ void MediaServerPluginRTSPServer::StreamMapEntry::keepAlive(void) {
 }
 
 void MediaServerPluginRTSPServer::StreamMapEntry::cancelKeepAlive(void) {
-  std::lock_guard<std::mutex> lock(delayed_keep_task_mutex);
+  std::unique_lock<std::mutex> lock(delayed_keep_task_mutex);
   i_want_to_die = true;
   if (delayed_keep_task) {
     KeepTaskHelper *const old_ptr = reinterpret_cast<KeepTaskHelper*>(
       env().taskScheduler().unscheduleDelayedTask(delayed_keep_task));
+    lock.unlock();
     env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::cancelKeepAlive: unscheduled, ";
     if (old_ptr) {
       env() << "releasing old KeepTaskHelper\n";
@@ -786,6 +868,19 @@ MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer() {
   if (m_HTTPServerSocketIPv4 >= 0) {
     envir().taskScheduler().turnOffBackgroundReadHandling(m_HTTPServerSocketIPv4);
     ::closeSocket(m_HTTPServerSocketIPv4);
+  }
+  {
+      // the remaining keep_tasks will never be executed: delete the KeepTaskHelpers to prevent leaking:
+    envir() << "MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer: closing kept streams\n";
+
+    for (;;) {
+      std::lock_guard<std::recursive_mutex> lock(keep_task_helpers_mutex);
+      if (keep_task_helpers.empty()) break;
+      const std::string name((*keep_task_helpers.begin())->get()->name);
+      envir() << "MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer: deleting KeepTaskHelper for " << name.c_str() << "\n";
+      (*keep_task_helpers.begin())->finishWaiting();
+      envir() << "MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer: KeepTaskHelper for " << name.c_str() << " deleted\n";
+    }
   }
   envir() << "MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer: calling cleanup()\n";
   RTSPServer::cleanup();
@@ -1576,7 +1671,7 @@ void MediaServerPluginRTSPServer
         env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") begin: "
                "no such stream in stream_map, delegating completionFunc to stream_factory->GetStream\n";
         LookupCompletionFuncData *context = new LookupCompletionFuncData(this,env,streamName,completionFunc,completionClientData);
-        stream_factory->GetStream(streamName, context, &MediaServerPluginRTSPServer::GetStreamCb);
+        stream_factory->GetStream(streamName, ContextEncoder::Encode(context), &MediaServerPluginRTSPServer::GetStreamCb);
         env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") end, expecting getStreamCb\n";
         return;
       }
@@ -1594,19 +1689,25 @@ void MediaServerPluginRTSPServer
 
 void MediaServerPluginRTSPServer::GetStreamCb(void *cb_context,const std::shared_ptr<IMStream> &stream) {
     // called from some thread in the executable (or from my own thread, direct callback)
-  LookupCompletionFuncData *l = (LookupCompletionFuncData*)cb_context;
-  if (l->env.taskScheduler().isSameThread()) {
-    l->self->getStreamCb(l,stream);
+  LookupCompletionFuncData *l = (LookupCompletionFuncData*)ContextEncoder::Decode(cb_context);
+  if (l) {
+    if (l->env.taskScheduler().isSameThread()) {
+      l->self->getStreamCb(l,stream);
+    } else {
+      Semaphore sem;
+      l->env.taskScheduler().executeCommand(
+        [l,stream,&sem](uint64_t) {
+          l->self->getStreamCb(l,stream);
+          sem.post();
+        });
+      sem.wait();
+    }
+    delete l;
   } else {
-    Semaphore sem;
-    l->env.taskScheduler().executeCommand(
-      [l,stream,&sem](uint64_t) {
-        l->self->getStreamCb(l,stream);
-        sem.post();
-      });
-    sem.wait();
+      // The plugin was closed and reopened by the main program, and the main program has called GetStreamCb with an old context.
+      // The stream is not remembered will be closed by the main program.
+      // Nothing to to, I cannot even log.
   }
-  delete l;
 }
 
 void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer::LookupCompletionFuncData *l,
@@ -1930,6 +2031,9 @@ private:
           sem.post();
           watchVariable = 0;
           scheduler->doEventLoop(&watchVariable);
+          ContextEncoder::Clear([](void *c) {
+            delete (MediaServerPluginRTSPServer::LookupCompletionFuncData*)c;
+          });
           scheduler->unscheduleDelayedTask(generate_info_string_task);
           *env << "PluginInstance::PluginInstance::l: stopping...\n";
         } else {
