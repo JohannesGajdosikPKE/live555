@@ -229,10 +229,10 @@ class MediaServerPluginRTSPServer::MyRTSPClientSession : public RTSPServer::RTSP
 public:
   MyRTSPClientSession(UsageEnvironment& env, RTSPServer& ourServer, u_int32_t sessionId)
     : RTSPClientSession(env, ourServer, sessionId) {}
+  ~MyRTSPClientSession(void) {}
   int getSocket(void) const { return socket; }
   using RTSPClientSession::fOurServerMediaSession;
 protected:
-  ~MyRTSPClientSession(void) {}
   void handleCmd_SETUP(RTSPClientConnection* ourClientConnection,
     char const* urlPreSuffix, char const* urlSuffix, char const* fullRequestStr) override {
     const int s = ourClientConnection ? ourClientConnection->getSocket() : 0;
@@ -245,8 +245,8 @@ protected:
   int socket = 0;
 };
 
-GenericMediaServer::ClientSession *MediaServerPluginRTSPServer::createNewClientSession(UsageEnvironment& env, u_int32_t sessionId) {
-  return new MyRTSPClientSession(env, *this, sessionId);
+std::shared_ptr<GenericMediaServer::ClientSession> MediaServerPluginRTSPServer::createNewClientSession(UsageEnvironment& env, u_int32_t sessionId) {
+  return std::make_shared<MyRTSPClientSession>(env, *this, sessionId);
 }
 
 class MediaServerPluginRTSPServer::StreamMapEntry : public std::enable_shared_from_this<MediaServerPluginRTSPServer::StreamMapEntry>, public IdContainer {
@@ -1923,11 +1923,8 @@ void MediaServerPluginRTSPServer::generateConnectionStreamInfo(InfoMap &connecti
                                                                SubsessionMap &subsessions) const {
   {
     std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
-    HashTable::Iterator* iter = HashTable::Iterator::create(*fClientSessions);
-    GenericMediaServer::ClientSession *clientSession;
-    char const *key;
-    while ((clientSession = (GenericMediaServer::ClientSession*)(iter->next(key))) != NULL) {
-      MyRTSPClientSession *const session(dynamic_cast<MyRTSPClientSession*>(clientSession));
+    for (auto &iter : fClientSessions) {
+      const std::shared_ptr<MyRTSPClientSession> session(std::dynamic_pointer_cast<MyRTSPClientSession>(iter.second));
       if (session && session->fOurServerMediaSession && session->getSocket()) {
         const std::string socket_string(SocketToString(session->getSocket()));
         const std::string stream_name(session->fOurServerMediaSession->streamName());
@@ -1935,7 +1932,6 @@ void MediaServerPluginRTSPServer::generateConnectionStreamInfo(InfoMap &connecti
         stream_info[stream_name].insert(socket_string);
       }
     }
-    delete iter;
   }
   {
     std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);

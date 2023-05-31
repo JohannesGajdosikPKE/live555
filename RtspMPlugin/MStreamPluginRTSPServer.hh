@@ -86,7 +86,7 @@ protected:
   void incomingConnectionHandlerHTTPIPv6(void);
 
   class MyRTSPClientSession;
-  ClientSession *createNewClientSession(UsageEnvironment &env, u_int32_t sessionId) override;
+  std::shared_ptr<ClientSession> createNewClientSession(UsageEnvironment &env, u_int32_t sessionId) override;
 
   UsageEnvironment *createNewUsageEnvironment(TaskScheduler &scheduler) override;
   std::shared_ptr<StreamMapEntry> getStreamMapEntry(const std::string &stream_name) const;

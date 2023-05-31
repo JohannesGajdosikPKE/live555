@@ -86,7 +86,10 @@ public:
   virtual void deleteAllServerMediaSessions(char const* streamName);
       // delete seesions with this name from all UsageEnvironments
 
-  unsigned numClientSessions() const { return fClientSessions->numEntries(); }
+  unsigned numClientSessions() const {
+    std::lock_guard<std::recursive_mutex> lock(fClientSessions_mutex);
+    return fClientSessions.size();
+  }
 
   // https://stackoverflow.com/questions/4792449/c0x-has-no-semaphores-how-to-synchronize-threads
   class Semaphore {
@@ -201,21 +204,19 @@ public: // should be protected, but some old compilers complain otherwise
     const u_int32_t fOurSessionId;
     ServerMediaSession* fOurServerMediaSession;
     TaskToken fLivenessCheckTask;
-      // prevent recursive destruction:
-    bool destructor_in_progress = false;
   };
 
 protected:
   virtual ClientConnection* createNewClientConnection(int clientSocket, struct sockaddr_storage const& clientAddr) = 0;
-  virtual ClientSession* createNewClientSession(UsageEnvironment& env, u_int32_t sessionId) = 0;
+  virtual std::shared_ptr<ClientSession> createNewClientSession(UsageEnvironment& env, u_int32_t sessionId) = 0;
 
-  ClientSession* createNewClientSessionWithId(UsageEnvironment& env);
+  std::shared_ptr<ClientSession> createNewClientSessionWithId(UsageEnvironment& env);
       // Generates a new (unused) random session id, and calls the "createNewClientSession()"
       // virtual function with this session id as parameter.
 
   // Lookup a "ClientSession" object by sessionId (integer, and string):
-  ClientSession* lookupClientSession(u_int32_t sessionId);
-  ClientSession* lookupClientSession(char const* sessionIdStr);
+  std::shared_ptr<ClientSession> lookupClientSession(u_int32_t sessionId);
+  std::shared_ptr<ClientSession> lookupClientSession(char const* sessionIdStr);
 
   // An iterator over our "ServerMediaSession" objects:
   // while using you must lock the sms_mutex
@@ -270,15 +271,18 @@ protected:
   mutable std::recursive_mutex sms_mutex; // protectes fServerMediaSessions only
   std::map<ClientConnection::IdType,ClientConnection*> fClientConnections; // the "ClientConnection" objects that we're using
   mutable std::recursive_mutex fClientConnections_mutex; // protectes fClientConnections
-  HashTable* fClientSessions; // maps 'session id' strings to "ClientSession" objects
-  mutable std::recursive_mutex fClientSessions_mutex; // protectes fClientSessions
+    // maps 'session id' strings to "ClientSession" objects
+  mutable std::recursive_mutex fClientSessions_mutex; // protects fClientSessions
+  std::map<std::string,std::shared_ptr<ClientSession> > fClientSessions;
   u_int32_t fPreviousClientSessionId;
   char const* fTLSCertificateFileName;
   char const* fTLSPrivateKeyFileName;
 
   const unsigned int nr_of_workers;
   class Worker;
+  std::mutex workers_mutex;
   std::unique_ptr<Worker> *const workers;
+  bool cleanup_called;
 };
 
 // A data structure used for optional user/password authentication:

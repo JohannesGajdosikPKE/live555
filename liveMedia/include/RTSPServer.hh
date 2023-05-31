@@ -180,7 +180,7 @@ public: // should be protected, but some old compilers complain otherwise
     virtual void handleRequestBytes(int newBytesRead);
   private:
     void handleRequestBytesBody(void);
-    void handleRequestBytesEndOfLoop(Boolean playAfterSetup,RTSPServer::RTSPClientSession *clientSession,
+    void handleRequestBytesEndOfLoop(Boolean playAfterSetup,std::shared_ptr<RTSPServer::RTSPClientSession> &&clientSession,
                                      const char *urlPreSuffix,const char *urlSuffix);
     void handleRequestBytesFinish(void);
     void handleRequestBytesResume(void);
@@ -260,7 +260,6 @@ public: // should be protected, but some old compilers complain otherwise
   class RTSPClientSession: public GenericMediaServer::ClientSession {
   public:
     RTSPClientSession(UsageEnvironment& env, RTSPServer& ourServer, u_int32_t sessionId);
-  protected:
       virtual ~RTSPClientSession();
 
     // Make the handler functions for each command virtual, to allow subclasses to redefine them:
@@ -326,7 +325,7 @@ protected: // redefined virtual functions
 protected:
   // If you subclass "RTSPClientSession", then you must also redefine this virtual function in order
   // to create new objects of your subclass:
-  virtual ClientSession* createNewClientSession(UsageEnvironment& env, u_int32_t sessionId);
+  std::shared_ptr<ClientSession> createNewClientSession(UsageEnvironment& env, u_int32_t sessionId) override;
 
 private:
   static void incomingConnectionHandlerHTTPIPv4(void*, int /*mask*/);

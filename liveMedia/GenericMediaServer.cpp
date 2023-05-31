@@ -24,6 +24,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <BasicUsageEnvironment.hh>
 
 #include <thread>
+#include <vector>
 #include <iostream>
 
 #if defined(__WIN32__) || defined(_WIN32) || defined(_QNX4)
@@ -137,38 +138,32 @@ void GenericMediaServer::closeAllClientSessionsForServerMediaSession(ServerMedia
   Semaphore sem;
   unsigned int post_count = 0;
   {
-  std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
-  HashTable::Iterator* iter = HashTable::Iterator::create(*fClientSessions);
-  GenericMediaServer::ClientSession* clientSession;
-  char const* key;
-  while ((clientSession = (GenericMediaServer::ClientSession*)(iter->next(key))) != NULL) {
-      // the RTSPClientSession destructor delets the "streamStates" which in turn delete....
-      // So I cannot delete it in aother thread
-    if (clientSession->getOurServerMediaSession() == serverMediaSession) {
-      if (clientSession->envir().taskScheduler().isSameThread()) {
-        clientSession->deleteThis();
+    std::vector<std::shared_ptr<ClientSession> > sessions_of_this_thread;
+      // declare guard *after* sessions_of_this_thread:
+    std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
+    for (auto iter(fClientSessions.begin());iter!=fClientSessions.end();) {
+        // the RTSPClientSession destructor delets the "streamStates" which in turn delete....
+        // So I cannot delete it in aother thread
+      if (iter->second->getOurServerMediaSession() == serverMediaSession) {
+        TaskScheduler &scheduler(iter->second->envir().taskScheduler());
+        if (scheduler.isSameThread()) {
+          sessions_of_this_thread.push_back(std::move(iter->second));
+        } else {
+          scheduler.executeCommand([clientSession=std::move(iter->second),&sem](uint64_t) mutable {
+              // deleting clientSession in proper thread because
+              // ~RTSPClientSession deletes the StreamStates which deletes the ServerMediaSession
+            clientSession.reset();
+              // I cannot guarantee that all clientSessions are deleted when this function finishes
+            sem.post();
+          });
+          post_count++;
+        }
+        fClientSessions.erase(iter++);
       } else {
-        std::string key_string(key);
-        clientSession->envir().taskScheduler().executeCommand([this,key_string,&sem](uint64_t) {
-          GenericMediaServer::ClientSession *clientSession = 0;
-          {
-              // locking fClientSessions_mutex guarantees that fClientSessions is not modified from another thread while iterating
-            std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
-            clientSession = (GenericMediaServer::ClientSession*)fClientSessions->Lookup(key_string.c_str());
-            fClientSessions->Remove(key_string.c_str());
-              // release fClientSessions_mutex before deleting clientSession because
-              // ~RTSPClientSession deletes the StreamStates which deletes the ServerMediaSession which will
-              // lock fClientSessions_mutex and cause a deadlock
-          }
-          if (clientSession) clientSession->deleteThis();
-            // I must guarantee that all clientSessions are deleted when this function finishes 
-          sem.post();
-        });
-        post_count++;
+        ++iter;
       }
     }
-  }
-  delete iter;
+      // guard is released, then sessions_of_this_thread is released
   }
   while (post_count) {
     sem.wait();
@@ -224,14 +219,16 @@ public:
         (*env) << "GenericMediaServer::Worker::mainThread: end\n";
         sem.post();
         sem2.wait();
-        if (!env->reclaim()) {
-          *env << "GenericMediaServer::Worker::mainThread: env->reclaim failed"
-                  " and destruction in live555 is a mess. Prefer memleak over crash/abort\n";
-        }
-        env = nullptr;
-        delete scheduler; scheduler = nullptr;
       }) {
     sem.wait();
+  }
+  ~Worker(void) {
+    if (!env->reclaim()) {
+      *env << "GenericMediaServer::Worker::mainThread: env->reclaim failed"
+              " and destruction in live555 is a mess. Prefer memleak over crash/abort\n";
+    }
+    env = nullptr;
+    delete scheduler; scheduler = nullptr;
   }
   void joinThread(void) {
     try {
@@ -271,11 +268,11 @@ GenericMediaServer
   : Medium(env),
     fServerSocketIPv4(ourSocketIPv4), fServerSocketIPv6(ourSocketIPv6),
     fServerPort(ourPort), fReclamationSeconds(reclamationSeconds),
-    fClientSessions(HashTable::create(STRING_HASH_KEYS)),
     fPreviousClientSessionId(0),
+    fTLSCertificateFileName(NULL), fTLSPrivateKeyFileName(NULL),
     nr_of_workers(GetNrOfCores()),
     workers(new std::unique_ptr<Worker>[nr_of_workers]),
-    fTLSCertificateFileName(NULL), fTLSPrivateKeyFileName(NULL) {
+    cleanup_called(false) {
 //fprintf(stderr,"GenericMediaServer::GenericMediaServer: %u workers\n", nr_of_workers);
   ignoreSigPipeOnSocket(fServerSocketIPv4); // so that clients on the same host that are killed don't also kill us
   ignoreSigPipeOnSocket(fServerSocketIPv6); // ditto
@@ -286,6 +283,7 @@ GenericMediaServer
 }
 
 GenericMediaServer::~GenericMediaServer() {
+  if (!cleanup_called) abort();
   delete[] workers;
   // Turn off background read handling:
   envir().taskScheduler().turnOffBackgroundReadHandling(fServerSocketIPv4);
@@ -301,6 +299,7 @@ UsageEnvironment *GenericMediaServer::createNewUsageEnvironment(TaskScheduler &s
 }
 
 UsageEnvironment &GenericMediaServer::getBestThreadedUsageEnvironment(void) {
+  std::lock_guard<std::mutex> lock(workers_mutex);
   int best_i = nr_of_workers;
   int best_load = 0x7FFFFFFF;
   for (int i=nr_of_workers-1;i>=0;i--) {
@@ -318,7 +317,8 @@ UsageEnvironment &GenericMediaServer::getBestThreadedUsageEnvironment(void) {
 }
 
 void GenericMediaServer::cleanup() {
-  if (!fClientSessions) return; // cleanup called twice
+  if (cleanup_called) return; // cleanup called twice
+  cleanup_called = true;
   // This member function must be called in the destructor of any subclass of
   // "GenericMediaServer".  (We don't call this in the destructor of "GenericMediaServer" itself,
   // because by that time, the subclass destructor will already have been called, and this may
@@ -329,33 +329,23 @@ void GenericMediaServer::cleanup() {
   Semaphore sem;
   unsigned int post_count = 0;
   {
-    std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
-    // Close all client session objects:
-    HashTable::Iterator* iter = HashTable::Iterator::create(*fClientSessions);
-    GenericMediaServer::ClientSession* clientSession;
-    char const* key;
-    while ((clientSession = (GenericMediaServer::ClientSession*)(iter->next(key))) != NULL) {
-      if (clientSession->envir().taskScheduler().isSameThread()) {
-        clientSession->deleteThis();
-      } else {
-        std::string key_string(key);
-        clientSession->envir().taskScheduler().executeCommand([this,key_string,&sem](uint64_t) {
-            GenericMediaServer::ClientSession *clientSession = 0;
-            {
-              std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
-              clientSession = (GenericMediaServer::ClientSession*)fClientSessions->Lookup(key_string.c_str());
-              fClientSessions->Remove(key_string.c_str());
-            }
-            if (clientSession) {
-//              envir() << "GenericMediaServer::cleanup: found ClientSession " << key_string.c_str() << " for deleting: " << clientSession << "\n";
-              clientSession->deleteThis();
-            }
+    std::map<std::string,std::shared_ptr<ClientSession> > tmp_ClientSessions;
+    {
+      std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
+      tmp_ClientSessions.swap(fClientSessions);
+    }
+    for (auto &iter: tmp_ClientSessions) {
+      if (iter.second) {
+        TaskScheduler &scheduler(iter.second->envir().taskScheduler());
+        if (!scheduler.isSameThread()) {
+          scheduler.executeCommand([clientSession=std::move(iter.second),&sem](uint64_t) mutable {
+            clientSession.reset();
             sem.post();
           });
-        post_count++;
+          post_count++;
+        }
       }
     }
-    delete iter;
   }
   while (post_count) {
     sem.wait();
@@ -415,11 +405,9 @@ void GenericMediaServer::cleanup() {
     post_count--;
   }
 
-
-  for (unsigned int i = 0; i < nr_of_workers; i++) if (workers[i]) workers[i]->stop();
-  for (unsigned int i = 0; i < nr_of_workers; i++) if (workers[i]) workers[i]->waitUnitStopped();
-  for (unsigned int i = 0; i < nr_of_workers; i++) if (workers[i]) workers[i]->joinThread();
-  delete fClientSessions; fClientSessions = nullptr;
+  for (unsigned int i = 0; i < nr_of_workers; i++) {std::lock_guard<std::mutex> lock(workers_mutex);if (workers[i]) workers[i]->stop();}
+  for (unsigned int i = 0; i < nr_of_workers; i++) {std::lock_guard<std::mutex> lock(workers_mutex);if (workers[i]) workers[i]->waitUnitStopped();}
+  for (unsigned int i = 0; i < nr_of_workers; i++) {std::lock_guard<std::mutex> lock(workers_mutex);if (workers[i]) workers[i]->joinThread();}
 //  envir() << "GenericMediaServer::cleanup: end\n";
 }
 
@@ -657,16 +645,10 @@ GenericMediaServer::ClientSession
 }
 
 GenericMediaServer::ClientSession::~ClientSession() {
+  envir().taskScheduler().assertSameThread();
   // Turn off any liveness checking:
   envir().taskScheduler().unscheduleDelayedTask(fLivenessCheckTask);
 
-  // Remove ourself from the server's 'client sessions' hash table before we go:
-  char sessionIdStr[8+1];
-  sprintf(sessionIdStr, "%08X", fOurSessionId);
-  {
-  std::lock_guard<std::recursive_mutex> lock(fOurServer.fClientSessions_mutex);
-  fOurServer.fClientSessions->Remove(sessionIdStr);
-  }
   if (fOurServerMediaSession != NULL) {
     fOurServerMediaSession->decrementReferenceCount();
     if (fOurServerMediaSession->referenceCount() == 0
@@ -678,12 +660,15 @@ GenericMediaServer::ClientSession::~ClientSession() {
 }
 
 void GenericMediaServer::ClientSession::deleteThis(void) {
-  if (destructor_in_progress) {
-//    envir() << "ClientSession(" << this << ") deleteThis: preventing double destruction\n";
-    return;
-  }
-  destructor_in_progress = true;
-  delete this;
+  envir().taskScheduler().assertSameThread();
+
+  // Remove ourself from the server's 'client sessions' hash table before we go:
+  char sessionIdStr[8+1];
+  sprintf(sessionIdStr, "%08X", fOurSessionId);
+
+  std::lock_guard<std::recursive_mutex> lock(fOurServer.fClientSessions_mutex);
+  fOurServer.fClientSessions.erase(sessionIdStr);
+  // TODO: Here I should get rid of fOurServerMediaSession so that the liveness task works coorectly 
 }
 
 void GenericMediaServer::ClientSession::noteLiveness() {
@@ -715,10 +700,10 @@ void GenericMediaServer::ClientSession::livenessTimeoutTask(ClientSession* clien
 	  clientSession->fOurSessionId, streamName);
 #endif
   clientSession->fLivenessCheckTask = NULL;
-  delete clientSession;
+  clientSession->deleteThis();
 }
 
-GenericMediaServer::ClientSession* GenericMediaServer::createNewClientSessionWithId(UsageEnvironment& env) {
+std::shared_ptr<GenericMediaServer::ClientSession> GenericMediaServer::createNewClientSessionWithId(UsageEnvironment& env) {
   u_int32_t sessionId;
   char sessionIdStr[8+1];
 
@@ -735,23 +720,25 @@ GenericMediaServer::ClientSession* GenericMediaServer::createNewClientSessionWit
 	   || lookupClientSession(sessionIdStr) != NULL);
   fPreviousClientSessionId = sessionId;
 
-  ClientSession* clientSession = createNewClientSession(env, sessionId);
-  if (clientSession != NULL) fClientSessions->Add(sessionIdStr, clientSession);
+  std::shared_ptr<ClientSession> clientSession = createNewClientSession(env, sessionId);
+  if (clientSession) fClientSessions[sessionIdStr] = clientSession;
 
   return clientSession;
 }
 
-GenericMediaServer::ClientSession*
+std::shared_ptr<GenericMediaServer::ClientSession>
 GenericMediaServer::lookupClientSession(u_int32_t sessionId) {
   char sessionIdStr[8+1];
   snprintf(sessionIdStr, sizeof sessionIdStr, "%08X", sessionId);
   return lookupClientSession(sessionIdStr);
 }
 
-GenericMediaServer::ClientSession*
+std::shared_ptr<GenericMediaServer::ClientSession>
 GenericMediaServer::lookupClientSession(char const* sessionIdStr) {
   std::lock_guard<std::recursive_mutex> lock(fClientSessions_mutex);
-  return (GenericMediaServer::ClientSession*)fClientSessions->Lookup(sessionIdStr);
+  auto it(fClientSessions.find(sessionIdStr));
+  if (it != fClientSessions.end()) return it->second;
+  return std::shared_ptr<GenericMediaServer::ClientSession>();
 }
 
 ServerMediaSession* GenericMediaServer::getServerMediaSession(UsageEnvironment &env,char const* streamName) {

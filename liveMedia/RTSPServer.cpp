@@ -330,8 +330,7 @@ void RTSPServer::stopTCPStreamingOnSocket(int socketNum) {
   Semaphore sem;
   unsigned int post_count = 0;
   {
-    std::lock_guard<std::recursive_mutex> guard(fClientSessions_mutex);
-    std::list<std::pair<RTSPClientSession*,unsigned int> > sessions;
+    std::list<std::pair<std::shared_ptr<RTSPClientSession>,unsigned int> > sessions;
     {
       std::lock_guard<std::recursive_mutex> guard(fTCPStreamingDatabase_mutex);
       // Close any stream that is streaming over "socketNum" (using RTP/RTCP-over-TCP streaming):
@@ -339,10 +338,10 @@ void RTSPServer::stopTCPStreamingOnSocket(int socketNum) {
         = (streamingOverTCPRecord*)fTCPStreamingDatabase->Lookup((char const*)socketNum);
       if (sotcp != NULL) {
         do {
-          RTSPClientSession* clientSession
-            = (RTSPServer::RTSPClientSession*)lookupClientSession(sotcp->fSessionId);
-          if (clientSession != NULL) {
-            sessions.push_back(std::pair<RTSPClientSession*, unsigned int>(clientSession, sotcp->fTrackNum));
+          std::shared_ptr<RTSPClientSession> clientSession
+            = std::static_pointer_cast<RTSPClientSession>(lookupClientSession(sotcp->fSessionId));
+          if (clientSession) {
+            sessions.push_back(std::pair<std::shared_ptr<RTSPClientSession>, unsigned int>(clientSession, sotcp->fTrackNum));
 //            envir() << "RTSPServer::stopTCPStreamingOnSocket(" << socketNum << "): "
 //                       "found ClientSession(" << clientSession << ") with id " << sotcp->fSessionId << "\n";
           }
@@ -356,27 +355,20 @@ void RTSPServer::stopTCPStreamingOnSocket(int socketNum) {
     }
     for (auto &it : sessions) {
         // call deleteStreamByTrack in the proper thread
-      if (it.first->envir().taskScheduler().isSameThread()) {
+      TaskScheduler &scheduler(it.first->envir().taskScheduler());
+      if (scheduler.isSameThread()) {
         it.first->deleteStreamByTrack(it.second);
       } else {
-          // 'it' is protected by fClientSessions_mutex.
-          // Queue lambdas with only the client_session_id inside.
-          // The lambdas will want do lock fClientSessions_mutex and they
-          // will finish only after fClientSessions_mutex is unlocked below.
           // Before returning I must wait for all lambdas to complete.
-        it.first->envir().taskScheduler().executeCommand(
-          [this,id=it.first->getOurSessionId(),track_nr=it.second,&sem](uint64_t) {
-            RTSPClientSession* clientSession
-              = (RTSPServer::RTSPClientSession*)lookupClientSession(id);
-            if (clientSession != NULL) {
-              clientSession->deleteStreamByTrack(track_nr);
-            }
+        scheduler.executeCommand(
+          [this,clientSession=std::move(it.first),track_nr=it.second,&sem](uint64_t) {
+            clientSession->deleteStreamByTrack(track_nr);
             sem.post();
           });
         post_count++;
       }
     }
-  } // fClientSessions_mutex is unlocked here
+  }
   while (post_count-- > 0) sem.wait();
 //  envir() << "RTSPServer::stopTCPStreamingOnSocket(" << socketNum << ") end\n";
 }
@@ -807,7 +799,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
 
 void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
   do {
-    RTSPServer::RTSPClientSession* clientSession = NULL;
+    std::shared_ptr<RTSPServer::RTSPClientSession> clientSession;
 
     if (newBytesRead < 0 || (unsigned)newBytesRead >= fRequestBufferBytesLeft) {
       // Either the client socket has died, or the request was too big for us.
@@ -933,7 +925,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
       Boolean const requestIncludedSessionId = sessionIdStr[0] != '\0';
       if (requestIncludedSessionId) {
 	clientSession
-	  = (RTSPServer::RTSPClientSession*)(fOurRTSPServer.lookupClientSession(sessionIdStr));
+	  = std::static_pointer_cast<RTSPServer::RTSPClientSession>(fOurRTSPServer.lookupClientSession(sessionIdStr));
 	if (clientSession != NULL) clientSession->noteLiveness();
       }
     
@@ -952,7 +944,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
       } else if (strcmp(cmdName, "OPTIONS") == 0) {
 	// If the "OPTIONS" command included a "Session:" id for a session that doesn't exist,
 	// then treat this as an error:
-	if (requestIncludedSessionId && clientSession == NULL) {
+	if (requestIncludedSessionId && !clientSession) {
 #ifdef DEBUG
 	  fprintf(stderr, "Calling handleCmd_sessionNotFound() (case 1)\n");
 #endif
@@ -991,7 +983,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
 	  strcat(urlTotalSuffix, urlSuffix);
 	  if (authenticationOK("SETUP", urlTotalSuffix, (char const*)fRequestBuffer)) {
 	    clientSession
-	      = (RTSPServer::RTSPClientSession*)fOurRTSPServer.createNewClientSessionWithId(envir());
+	      = std::static_pointer_cast<RTSPServer::RTSPClientSession>(fOurRTSPServer.createNewClientSessionWithId(envir()));
 	  } else {
 	    areAuthenticated = False;
 	  }
@@ -1093,12 +1085,12 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
       }
     }
     
-    handleRequestBytesEndOfLoop(playAfterSetup,clientSession,urlPreSuffix,urlSuffix);
+    handleRequestBytesEndOfLoop(playAfterSetup,std::move(clientSession),urlPreSuffix,urlSuffix);
   } while (numBytesRemaining > 0);
   handleRequestBytesFinish();
 }
 
-void RTSPServer::RTSPClientConnection::handleRequestBytesEndOfLoop(Boolean playAfterSetup,RTSPServer::RTSPClientSession *clientSession,
+void RTSPServer::RTSPClientConnection::handleRequestBytesEndOfLoop(Boolean playAfterSetup,std::shared_ptr<RTSPServer::RTSPClientSession> &&clientSession,
                                                                    const char *urlPreSuffix,const char *urlSuffix) {
 #ifdef DEBUG
     fprintf(stderr, "sending response: %s", fResponseBuffer);
@@ -1143,7 +1135,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesFinish(void) {
 
 void RTSPServer::RTSPClientConnection::handleRequestBytesResume(void) {
   envir().taskScheduler().assertSameThread();
-  handleRequestBytesEndOfLoop(False,nullptr,nullptr,nullptr);
+  handleRequestBytesEndOfLoop(False,std::shared_ptr<RTSPServer::RTSPClientSession>(),nullptr,nullptr);
   if (numBytesRemaining > 0) {
     handleRequestBytesBody();
   } else {
@@ -1447,6 +1439,7 @@ RTSPServer::RTSPClientSession
 }
 
 RTSPServer::RTSPClientSession::~RTSPClientSession() {
+  envir().taskScheduler().assertSameThread();
   reclaimStreamStates();
 }
 
@@ -2234,7 +2227,7 @@ RTSPServer::createNewClientConnection(int clientSocket, struct sockaddr_storage 
   return RTSPClientConnection::create(getBestThreadedUsageEnvironment(), *this, clientSocket, clientAddr, fOurConnectionsUseTLS);
 }
 
-GenericMediaServer::ClientSession*
+std::shared_ptr<GenericMediaServer::ClientSession>
 RTSPServer::createNewClientSession(UsageEnvironment &env, u_int32_t sessionId) {
-  return new RTSPClientSession(env, *this, sessionId);
+  return std::make_shared<RTSPClientSession>(env, *this, sessionId);
 }
