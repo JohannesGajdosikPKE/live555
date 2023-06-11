@@ -22,6 +22,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // Implementation
 
 #include "ServerMediaSession.hh"
+#include "GenericMediaServer.hh"
 #include <GroupsockHelper.hh>
 #include <math.h>
 #if defined(__WIN32__) || defined(_WIN32) || defined(_QNX4)
@@ -30,14 +31,17 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 ////////// ServerMediaSession //////////
 
-ServerMediaSession* ServerMediaSession
-::createNew(UsageEnvironment& env,
+std::shared_ptr<ServerMediaSession> ServerMediaSession
+::createNew(GenericMediaServer &server, UsageEnvironment& env,
 	    char const* streamName, char const* info,
 	    char const* description, Boolean isSSM, char const* miscSDPLines) {
-  return new ServerMediaSession(env, streamName, info, description,
-				isSSM, miscSDPLines);
+  std::shared_ptr<ServerMediaSession> rval(new ServerMediaSession(server, env, streamName, info, description,
+				isSSM, miscSDPLines));
+  server.addServerMediaSession(rval);
+  return rval;
 }
 
+#ifdef NOT_NEEDED
 Boolean ServerMediaSession
 ::lookupByName(UsageEnvironment& env, char const* mediumName,
 	       ServerMediaSession*& resultSession) {
@@ -54,20 +58,21 @@ Boolean ServerMediaSession
   resultSession = (ServerMediaSession*)medium;
   return True;
 }
+#endif
 
 static char const* const libNameStr = "LIVE555 Streaming Media v";
 char const* const libVersionStr = LIVEMEDIA_LIBRARY_VERSION_STRING;
 
-ServerMediaSession::ServerMediaSession(UsageEnvironment& env,
+ServerMediaSession::ServerMediaSession(GenericMediaServer &server, UsageEnvironment& env,
 				       char const* streamName,
 				       char const* info,
 				       char const* description,
 				       Boolean isSSM, char const* miscSDPLines)
-  : Medium(env), streamingUsesSRTP(False), streamingIsEncrypted(False),
+  : server(server), fEnvir(env), streamingUsesSRTP(False), streamingIsEncrypted(False),
     fIsSSM(isSSM), fSubsessionsHead(NULL),
-    fSubsessionsTail(NULL), fSubsessionCounter(0),
-    fReferenceCount(0), fDeleteWhenUnreferenced(False) {
+    fSubsessionsTail(NULL), fSubsessionCounter(0) {
   fStreamName = strDup(streamName == NULL ? "" : streamName);
+  envir() << "ServerMediaSession::ServerMediaSession(" << fEnvir.taskScheduler().my_thread_id << ", " << fStreamName << ")\n";
 
   char* libNamePlusVersionStr = NULL; // by default
   if (info == NULL || description == NULL) {
@@ -84,6 +89,8 @@ ServerMediaSession::ServerMediaSession(UsageEnvironment& env,
 }
 
 ServerMediaSession::~ServerMediaSession() {
+  envir() << "ServerMediaSession(" << fEnvir.taskScheduler().my_thread_id << ", " << fStreamName << ")::~ServerMediaSession\n";
+  server.removeServerMediaSession(*this);
   deleteAllSubsessions();
   delete[] fStreamName;
   delete[] fInfoSDPString;

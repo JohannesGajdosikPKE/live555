@@ -80,15 +80,15 @@ defaultCreateNewProxyRTSPClientFunc(ProxyServerMediaSession& ourServerMediaSessi
 			     tunnelOverHTTPPortNum, verbosityLevel, socketNumToServer);
 }
 
-ProxyServerMediaSession* ProxyServerMediaSession
+std::shared_ptr<ProxyServerMediaSession> ProxyServerMediaSession
 ::createNew(UsageEnvironment& env, GenericMediaServer* ourMediaServer,
 	    char const* inputStreamURL, char const* streamName,
 	    char const* username, char const* password,
 	    portNumBits tunnelOverHTTPPortNum, int verbosityLevel, int socketNumToServer,
 	    MediaTranscodingTable* transcodingTable) {
-  return new ProxyServerMediaSession(env, ourMediaServer, inputStreamURL, streamName, username, password,
+  return std::shared_ptr<ProxyServerMediaSession>(new ProxyServerMediaSession(env, ourMediaServer, inputStreamURL, streamName, username, password,
 				     tunnelOverHTTPPortNum, verbosityLevel, socketNumToServer,
-				     transcodingTable);
+				     transcodingTable));
 }
 
 
@@ -101,7 +101,7 @@ ProxyServerMediaSession
 			  MediaTranscodingTable* transcodingTable,
 			  createNewProxyRTSPClientFunc* ourCreateNewProxyRTSPClientFunc,
 			  portNumBits initialPortNum, Boolean multiplexRTCPWithRTP)
-  : ServerMediaSession(env, streamName, NULL, NULL, False, NULL),
+  : ServerMediaSession(*ourMediaServer, env, streamName, NULL, NULL, False, NULL),
     describeCompletedFlag(0), fOurMediaServer(ourMediaServer), fClientMediaSession(NULL),
     fVerbosityLevel(verbosityLevel),
     fPresentationTimeSessionNormalizer(new PresentationTimeSessionNormalizer(envir())),
@@ -184,7 +184,7 @@ void ProxyServerMediaSession::resetDESCRIBEState() {
   // Delete all of our "ProxyServerMediaSubsession"s; they'll get set up again once we get a response to the new "DESCRIBE".
   if (fOurMediaServer != NULL) {
     // First, close any client connections that may have already been set up:
-    fOurMediaServer->closeAllClientSessionsForServerMediaSession(this);
+    fOurMediaServer->closeAllClientSessionsForServerMediaSession(*this);
   }
   deleteAllSubsessions();
 
@@ -651,7 +651,7 @@ void ProxyServerMediaSubsession::closeStreamSource(FramedSource* /*inputSource*/
     ProxyServerMediaSession* const sms = (ProxyServerMediaSession*)fParentSession;
     ProxyRTSPClient* const proxyRTSPClient = sms->fProxyRTSPClient;
     if (proxyRTSPClient->fLastCommandWasPLAY) { // so that we send only one "PAUSE"; not one for each subsession
-      if (fParentSession->referenceCount() > 1) {
+      if (fParentSession->shared_from_this().use_count() > 1) {
 	// There are other client(s) still streaming other subsessions of this stream.
 	// Therefore, we don't send a "PAUSE" for the whole stream.
 	// In principle, we would send a "PAUSE" only for the sub-stream here, but some

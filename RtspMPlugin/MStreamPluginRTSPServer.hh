@@ -77,7 +77,7 @@ protected:
                                 lookupServerMediaSessionCompletionFunc *completionFunc,
                                 void *completionClientData,
                                 Boolean isFirstLookupInSession = True) override;
-  ServerMediaSession *createServerMediaSession(UsageEnvironment &env,
+  std::shared_ptr<ServerMediaSession> createServerMediaSession(UsageEnvironment &env,
                                                const std::shared_ptr<StreamMapEntry> &e);
 
   static void IncomingConnectionHandlerHTTPIPv4(void* instance, int /*mask*/);

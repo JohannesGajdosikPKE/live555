@@ -28,20 +28,28 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "RTCP.hh"
 #endif
 
-class ServerMediaSubsession; // forward
+#include <memory>
 
-class ServerMediaSession: public Medium {
+class ServerMediaSubsession; // forward
+class GenericMediaServer;
+
+// Each single Worker thread may have an instance of a ServerMediaSession to the same stream.
+// TODO: this results in suboptimal performance
+class ServerMediaSession : public std::enable_shared_from_this<ServerMediaSession> {
 public:
-  static ServerMediaSession* createNew(UsageEnvironment& env,
+  static std::shared_ptr<ServerMediaSession> createNew(GenericMediaServer &server,UsageEnvironment& env,
 				       char const* streamName = NULL,
 				       char const* info = NULL,
 				       char const* description = NULL,
 				       Boolean isSSM = False,
 				       char const* miscSDPLines = NULL);
+  UsageEnvironment &envir(void) const {return fEnvir;}
 
+#ifdef NOT_NEEDED
   static Boolean lookupByName(UsageEnvironment& env,
                               char const* mediumName,
-                              ServerMediaSession*& resultSession);
+                              std::shared_ptr<ServerMediaSession>& resultSession);
+#endif
 
   char* generateSDPDescription(int addressFamily); // based on the entire session
       // Note: The caller is responsible for freeing the returned string
@@ -62,10 +70,12 @@ public:
     // The default implementation does nothing, but subclasses can redefine this - e.g., if you
     // want to remove long-unused "ServerMediaSession"s from the server.
 
+#ifdef NOT_NEEDED
   unsigned referenceCount() const { return fReferenceCount; }
   void incrementReferenceCount() { ++fReferenceCount; }
   void decrementReferenceCount() { if (fReferenceCount > 0) --fReferenceCount; }
   Boolean& deleteWhenUnreferenced() { return fDeleteWhenUnreferenced; }
+#endif
 
   void deleteAllSubsessions();
     // Removes and deletes all subsessions added by "addSubsession()", returning us to an 'empty' state
@@ -77,17 +87,20 @@ public:
   Boolean streamingIsEncrypted; // by default, False
 
 protected:
-  ServerMediaSession(UsageEnvironment& env, char const* streamName,
+  ServerMediaSession(GenericMediaServer &server, UsageEnvironment& env, char const* streamName,
 		     char const* info, char const* description,
 		     Boolean isSSM, char const* miscSDPLines);
   // called only by "createNew()"
 
+public:
   virtual ~ServerMediaSession();
 
 private: // redefined virtual functions
   virtual Boolean isServerMediaSession() const;
 
 private:
+  GenericMediaServer &server;
+  UsageEnvironment &fEnvir;
   Boolean fIsSSM;
 
   // Linkage fields:
@@ -101,8 +114,10 @@ private:
   char* fDescriptionSDPString;
   char* fMiscSDPLines;
   struct timeval fCreationTime;
+#ifdef NOT_NEEDED
   unsigned fReferenceCount;
   Boolean fDeleteWhenUnreferenced;
+#endif
 };
 
 

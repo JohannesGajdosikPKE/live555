@@ -257,6 +257,10 @@ public:
   }
   ~StreamMapEntry(void);
   const SubsessionInfo *const *getSubsessionInfoList(void) const {return subsession_info_list;}
+  void rememberServerMediaSession(const std::shared_ptr<ServerMediaSession> &sms) {
+    std::lock_guard<std::mutex> lock(sms_map_mutex);
+    if (!sms_map.insert(std::pair<UsageEnvironment*,std::shared_ptr<ServerMediaSession> >(&sms->envir(),sms)).second) abort();
+  }
   typedef std::function<void(const Frame&)> FrameFunction;
   class Registration;
   std::unique_ptr<Registration> connect(const SubsessionInfo *info,FrameFunction &&f);
@@ -284,6 +288,8 @@ private:
   mutable std::recursive_mutex registration_mutex;
   std::map<const SubsessionInfo*,RegistrationSet> registration_map;
   const SubsessionInfo *const *subsession_info_list;
+  mutable std::mutex sms_map_mutex;
+  std::map<UsageEnvironment*,std::shared_ptr<ServerMediaSession> > sms_map;
 };
 
 static
@@ -1655,7 +1661,7 @@ void MediaServerPluginRTSPServer
     // this function seems to be called for each subsession.
     // when we already have a ServerMediaSession for the first subsession,
     // return this stream, the stream of the second subsession will not work
-  ServerMediaSession *sms = nullptr;
+  std::shared_ptr<ServerMediaSession> sms;
   if (!streamName[0]) {
     env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") begin: "
            "empty streamName\n";
@@ -1663,7 +1669,7 @@ void MediaServerPluginRTSPServer
     sms = getServerMediaSession(env,streamName);
     if (sms) {
       env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") begin: "
-             "found existing ServerMediaSession " << sms << "\n";
+             "found existing ServerMediaSession " << sms.get() << "\n";
     } else {
         // called from the thread of the new rtsp connection (env-thread): lock recursive mutex
       const std::shared_ptr<StreamMapEntry> e(getStreamMapEntry(streamName));
@@ -1679,10 +1685,10 @@ void MediaServerPluginRTSPServer
              "creating new ServerMediaSession with existing StreamMap entry, use_count: " << (int)(e.use_count()) << "\n";
       sms = createServerMediaSession(env,e);
       env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << "): "
-           "new ServerMediaSession " << sms << " with existing StreamMap entry created\n";
+           "new ServerMediaSession " << sms.get() << " with existing StreamMap entry created\n";
     }
   }
-  env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << "): calling completionFunc(" << sms << ")\n";
+  env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << "): calling completionFunc(" << sms.get() << ")\n";
   (*completionFunc)(completionClientData,sms);
   env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") end\n";
 }
@@ -1712,7 +1718,7 @@ void MediaServerPluginRTSPServer::GetStreamCb(void *cb_context,const std::shared
 
 void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer::LookupCompletionFuncData *l,
                                               const std::shared_ptr<IMStream> &stream) {
-  ServerMediaSession *sms = nullptr;
+  std::shared_ptr<ServerMediaSession> sms;
   if (stream) {
     envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str() << "): start\n";
     std::shared_ptr<StreamMapEntry> e;
@@ -1756,31 +1762,31 @@ void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer:
                " because stream==NULL\n";
   }
   envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str()
-          << "): calling completionFunc(new ServerMediaSession " << sms << ")\n";
+          << "): calling completionFunc(new ServerMediaSession " << sms.get() << ")\n";
   (*(l->completionFunc))(l->completionClientData, sms);
   envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str() << "): end\n";
 }
 
-ServerMediaSession *MediaServerPluginRTSPServer::createServerMediaSession(UsageEnvironment &env, const std::shared_ptr<StreamMapEntry> &e) {
+std::shared_ptr<ServerMediaSession> MediaServerPluginRTSPServer::createServerMediaSession(UsageEnvironment &env, const std::shared_ptr<StreamMapEntry> &e) {
   envir() << "MediaServerPluginRTSPServer::createServerMediaSession(" << e->name.c_str() << "): start, use_count: " << (int)(e.use_count()) << "\n";
-  ServerMediaSession *sms = nullptr;
+  std::shared_ptr<ServerMediaSession> sms;
   if (!e) abort();
   const SubsessionInfo *const *sl(e->getSubsessionInfoList());
   if ((sl) && (*sl)) {
-    sms = ServerMediaSession::createNew(env, e->name.c_str(), "MediaServerPlugin");
+    sms = ServerMediaSession::createNew(*this, env, e->name.c_str(), "MediaServerPlugin");
     if (sms) {
       for (;*sl;sl++) {
         MyServerMediaSubsession *s = MyServerMediaSubsession::createNew(env, e, *sl);
         sms->addSubsession(s);
       }
-      addServerMediaSession(sms);
+      e->rememberServerMediaSession(sms);
     } else {
       envir() << "MediaServerPluginRTSPServer::createServerMediaSession(" << e->name.c_str() << "): MyServerMediaSubsession::createNew failed" << "\n";
     }
   } else {
     envir() << "MediaServerPluginRTSPServer::createServerMediaSession(" << e->name.c_str() << "): no subsessions" << "\n";
   }
-  envir() << "MediaServerPluginRTSPServer::createServerMediaSession(" << e->name.c_str() << "): end, returning " << sms << "\n";
+  envir() << "MediaServerPluginRTSPServer::createServerMediaSession(" << e->name.c_str() << "): end, returning " << sms.get() << "\n";
   return sms;
 }
 

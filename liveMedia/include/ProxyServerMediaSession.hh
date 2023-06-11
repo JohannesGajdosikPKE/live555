@@ -100,7 +100,7 @@ defaultCreateNewProxyRTSPClientFunc(ProxyServerMediaSession& ourServerMediaSessi
 
 class ProxyServerMediaSession: public ServerMediaSession {
 public:
-  static ProxyServerMediaSession* createNew(UsageEnvironment& env,
+  static std::shared_ptr<ProxyServerMediaSession> createNew(UsageEnvironment& env,
 					    GenericMediaServer* ourMediaServer, // Note: We can be used by just one server
 					    char const* inputStreamURL, // the "rtsp://" URL of the stream we'll be proxying
 					    char const* streamName = NULL,

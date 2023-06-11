@@ -30,6 +30,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 ////////// RTSPServer implementation //////////
 
+#ifdef NOT_NEEDED
 RTSPServer*
 RTSPServer::createNew(UsageEnvironment& env, Port ourPort,
 		      UserAuthenticationDatabase* authDatabase,
@@ -57,6 +58,7 @@ Boolean RTSPServer::lookupByName(UsageEnvironment& env,
   resultServer = (RTSPServer*)medium;
   return True;
 }
+#endif
 
 char* RTSPServer
 ::rtspURL(ServerMediaSession const* serverMediaSession,
@@ -253,9 +255,9 @@ Boolean RTSPServer::isRTSPServer() const {
   return True;
 }
 
-void RTSPServer::addServerMediaSession(ServerMediaSession* serverMediaSession) {
+void RTSPServer::addServerMediaSession(const std::shared_ptr<ServerMediaSession> &serverMediaSession) {
   GenericMediaServer::addServerMediaSession(serverMediaSession);
-  if (serverMediaSession != NULL) {
+  if (serverMediaSession) {
     serverMediaSession->streamingUsesSRTP = fWeServeSRTP;
     serverMediaSession->streamingIsEncrypted = fWeEncryptSRTP;
   }
@@ -475,7 +477,7 @@ void RTSPServer::RTSPClientConnection
 }
 
 void RTSPServer::RTSPClientConnection
-::DESCRIBELookupCompletionFunction(void* clientData, ServerMediaSession* sessionLookedUp) {
+::DESCRIBELookupCompletionFunction(void* clientData, const std::shared_ptr<ServerMediaSession> &sessionLookedUp) {
   LookupContext *context(reinterpret_cast<LookupContext*>(clientData));
   RTSPServer::RTSPClientConnection *const connection
     = static_cast<RTSPServer::RTSPClientConnection*>(context->server.getClientConnection(context->connection_id));
@@ -491,18 +493,20 @@ void RTSPServer::RTSPClientConnection
 }
 
 void RTSPServer::RTSPClientConnection
-::handleCmd_DESCRIBE_afterLookup(ServerMediaSession* session) {
+::handleCmd_DESCRIBE_afterLookup(const std::shared_ptr<ServerMediaSession> &session) {
   char* sdpDescription = NULL;
   char* rtspURL = NULL;
   do {
-    if (session == NULL) {
+    if (!session) {
       handleCmd_notFound();
       break;
     }
     
+#ifdef NOT_NEEDED
     // Increment the "ServerMediaSession" object's reference count, in case someone removes it
     // while we're using it:
     session->incrementReferenceCount();
+#endif
 
     // Then, assemble a SDP description for this session:
     sdpDescription = session->generateSDPDescription(fAddressFamily);
@@ -516,7 +520,7 @@ void RTSPServer::RTSPClientConnection
     
     // Also, generate our RTSP URL, for the "Content-Base:" header
     // (which is necessary to ensure that the correct URL gets used in subsequent "SETUP" requests).
-    rtspURL = fOurRTSPServer.rtspURL(session, fClientInputSocket);
+    rtspURL = fOurRTSPServer.rtspURL(session.get(), fClientInputSocket);
     
     snprintf((char*)fResponseBuffer, sizeof fResponseBuffer,
 	     "RTSP/1.0 200 OK\r\nCSeq: %s\r\n"
@@ -532,6 +536,7 @@ void RTSPServer::RTSPClientConnection
 	     sdpDescription);
   } while (0);
   
+#ifdef NOT_NEEDED
   if (session != NULL) {
     // Decrement its reference count, now that we're done using it:
     session->decrementReferenceCount();
@@ -539,6 +544,7 @@ void RTSPServer::RTSPClientConnection
       removeServerMediaSession(session);
     }
   }
+#endif
 
   delete[] sdpDescription;
   delete[] rtspURL;
@@ -926,7 +932,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
       if (requestIncludedSessionId) {
 	clientSession
 	  = std::static_pointer_cast<RTSPServer::RTSPClientSession>(fOurRTSPServer.lookupClientSession(sessionIdStr));
-	if (clientSession != NULL) clientSession->noteLiveness();
+	if (clientSession) clientSession->noteLiveness();
       }
     
       // We now have a complete RTSP request.
@@ -988,7 +994,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
 	    areAuthenticated = False;
 	  }
 	}
-	if (clientSession != NULL) {
+	if (clientSession) {
 	  clientSession->handleCmd_SETUP(this, urlPreSuffix, urlSuffix, (char const*)fRequestBuffer);
 	  playAfterSetup = clientSession->getStreamAfterSETUP();
 	} else if (areAuthenticated) {
@@ -1002,7 +1008,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
 		 || strcmp(cmdName, "PAUSE") == 0
 		 || strcmp(cmdName, "GET_PARAMETER") == 0
 		 || strcmp(cmdName, "SET_PARAMETER") == 0) {
-	if (clientSession != NULL) {
+	if (clientSession) {
 	  clientSession->handleCmd_withinSession(this, cmdName, urlPreSuffix, urlSuffix, (char const*)fRequestBuffer);
 	} else {
 #ifdef DEBUG
@@ -1576,15 +1582,15 @@ void RTSPServer::RTSPClientSession
 }
 
 void RTSPServer::RTSPClientSession
-::SETUPLookupCompletionFunction1(void* clientData, ServerMediaSession* sessionLookedUp) {
+::SETUPLookupCompletionFunction1(void* clientData, const std::shared_ptr<ServerMediaSession> &sessionLookedUp) {
   RTSPServer::RTSPClientSession* session = (RTSPServer::RTSPClientSession*)clientData;
   session->handleCmd_SETUP_afterLookup1(sessionLookedUp);
 }
 
 void RTSPServer::RTSPClientSession
-::handleCmd_SETUP_afterLookup1(ServerMediaSession* sms) {
+::handleCmd_SETUP_afterLookup1(const std::shared_ptr<ServerMediaSession> &sms) {
   envir().taskScheduler().assertSameThread();
-  if (sms != NULL) {
+  if (sms) {
     // The lookup succeeded; continue working with the returned "ServerMediaSession":
     handleCmd_SETUP_afterLookup2(sms);
     return;
@@ -1611,17 +1617,17 @@ void RTSPServer::RTSPClientSession
 }
 
 void RTSPServer::RTSPClientSession
-::SETUPLookupCompletionFunction2(void* clientData, ServerMediaSession* sessionLookedUp) {
+::SETUPLookupCompletionFunction2(void* clientData, const std::shared_ptr<ServerMediaSession> &sessionLookedUp) {
   RTSPServer::RTSPClientSession* session = (RTSPServer::RTSPClientSession*)clientData;
   session->handleCmd_SETUP_afterLookup2(sessionLookedUp);
 }
 
 void RTSPServer::RTSPClientSession
-::handleCmd_SETUP_afterLookup2(ServerMediaSession* sms) {
+::handleCmd_SETUP_afterLookup2(const std::shared_ptr<ServerMediaSession> &sms) {
   envir().taskScheduler().assertSameThread();
   do {
-    if (sms == NULL) {
-      if (fOurServerMediaSession == NULL) {
+    if (!sms) {
+      if (!fOurServerMediaSession) {
 	// The client asked for a stream that doesn't exist (and this session descriptor has not been used before):
 	fOurClientConnection->handleCmd_notFound();
       } else {
@@ -1630,10 +1636,12 @@ void RTSPServer::RTSPClientSession
       }
       break;
     } else {
-      if (fOurServerMediaSession == NULL) {
+      if (!fOurServerMediaSession) {
 	// We're accessing the "ServerMediaSession" for the first time.
 	fOurServerMediaSession = sms;
+#ifdef NOT_NEEDED
 	fOurServerMediaSession->incrementReferenceCount();
+#endif
       } else if (sms != fOurServerMediaSession) {
 	// The client asked for a stream that's different from the one originally requested for this stream id.  Bad request:
 	fOurClientConnection->handleCmd_bad();
@@ -1972,7 +1980,7 @@ void RTSPServer::RTSPClientSession
 		 ServerMediaSubsession* subsession, char const* fullRequestStr) {
   envir().taskScheduler().assertSameThread();
   char* rtspURL
-    = fOurRTSPServer.rtspURL(fOurServerMediaSession, ourClientConnection->fClientInputSocket);
+    = fOurRTSPServer.rtspURL(fOurServerMediaSession.get(), ourClientConnection->fClientInputSocket);
   unsigned rtspURLSize = strlen(rtspURL);
   
   // Parse the client's "Scale:" header, if any:

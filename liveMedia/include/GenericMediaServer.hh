@@ -45,11 +45,11 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // Typedef for a handler function that gets called when "lookupServerMediaSession()"
 // (defined below) completes:
 typedef void lookupServerMediaSessionCompletionFunc(void* clientData,
-						    ServerMediaSession* sessionLookedUp);
+						    const std::shared_ptr<ServerMediaSession> &sessionLookedUp);
 
 class GenericMediaServer: public Medium {
 public:
-  virtual void addServerMediaSession(ServerMediaSession* serverMediaSession);
+  virtual void addServerMediaSession(const std::shared_ptr<ServerMediaSession> &serverMediaSession);
 
   virtual void lookupServerMediaSession(UsageEnvironment &env, char const* streamName,
 					lookupServerMediaSessionCompletionFunc* completionFunc,
@@ -57,38 +57,44 @@ public:
 					Boolean isFirstLookupInSession = True);
       // Note: This is a virtual function, so can be reimplemented by subclasses.
   void lookupServerMediaSession(UsageEnvironment& env, char const* streamName,
-				void (GenericMediaServer::*memberFunc)(ServerMediaSession*));
+				void (GenericMediaServer::*memberFunc)(const std::shared_ptr<ServerMediaSession> &));
       // Special case of "lookupServerMediaSession()" where the 'completion function' is a
       // member function of "GenericMediaServer" (and the 'completion client data' is "this".)
 
-  void removeServerMediaSession(ServerMediaSession* serverMediaSession);
+  void removeServerMediaSession(const ServerMediaSession &serverMediaSession);
       // Removes the "ServerMediaSession" object from our lookup table, so it will no longer be accessible by new clients.
       // (However, any *existing* client sessions that use this "ServerMediaSession" object will continue streaming.
       //  The "ServerMediaSession" object will not get deleted until all of these client sessions have closed.)
       // (To both delete the "ServerMediaSession" object *and* close all client sessions that use it,
       //  call "deleteServerMediaSession(serverMediaSession)" instead.)
+#ifdef NOT_NEEDED"
   virtual void removeServerMediaSession(UsageEnvironment &env, char const* streamName);
      // ditto
+#endif
 
-  void closeAllClientSessionsForServerMediaSession(ServerMediaSession* serverMediaSession);
+  void closeAllClientSessionsForServerMediaSession(const ServerMediaSession &serverMediaSession);
       // Closes (from the server) all client sessions that are currently using this "ServerMediaSession" object.
       // Note, however, that the "ServerMediaSession" object remains accessible by new clients.
+#ifdef NOT_NEEDED"
   virtual void closeAllClientSessionsForServerMediaSession(char const* streamName);
      // ditto
+#endif
 
-  void deleteServerMediaSession(ServerMediaSession* serverMediaSession);
+  void deleteServerMediaSession(const std::shared_ptr<ServerMediaSession> &serverMediaSession);
       // Equivalent to:
       //     "closeAllClientSessionsForServerMediaSession(serverMediaSession); removeServerMediaSession(serverMediaSession);"
+#ifdef NOT_NEEDED"
   virtual void deleteServerMediaSession(UsageEnvironment &env, char const* streamName);
       // Equivalent to:
       //     "closeAllClientSessionsForServerMediaSession(streamName); removeServerMediaSession(streamName);
+#endif
 
   virtual void deleteAllServerMediaSessions(char const* streamName);
       // delete seesions with this name from all UsageEnvironments
 
   unsigned numClientSessions() const {
     std::lock_guard<std::recursive_mutex> lock(fClientSessions_mutex);
-    return fClientSessions.size();
+    return (unsigned)fClientSessions.size();
   }
 
   // https://stackoverflow.com/questions/4792449/c0x-has-no-semaphores-how-to-synchronize-threads
@@ -159,7 +165,7 @@ public: // should be protected, but some old compilers complain otherwise
                                   Boolean isFirstLookupInSession = True) {
       fOurServer.lookupServerMediaSession(env, streamName, completionFunc, context, isFirstLookupInSession);
     }
-    void removeServerMediaSession(ServerMediaSession* serverMediaSession) {
+    void removeServerMediaSession(const ServerMediaSession &serverMediaSession) {
       fOurServer.removeServerMediaSession(serverMediaSession);
     }
   private:
@@ -186,7 +192,7 @@ public: // should be protected, but some old compilers complain otherwise
   public:
     void deleteThis(void);
     u_int32_t getOurSessionId(void) const {return fOurSessionId;}
-    ServerMediaSession *getOurServerMediaSession(void) const {return fOurServerMediaSession;}
+    std::shared_ptr<ServerMediaSession> getOurServerMediaSession(void) const {return fOurServerMediaSession;}
   protected:
     ClientSession(UsageEnvironment& threaded_env, GenericMediaServer& ourServer, u_int32_t sessionId);
     virtual ~ClientSession();
@@ -202,7 +208,7 @@ public: // should be protected, but some old compilers complain otherwise
     UsageEnvironment &threaded_env;
     GenericMediaServer& fOurServer;
     const u_int32_t fOurSessionId;
-    ServerMediaSession* fOurServerMediaSession;
+    std::shared_ptr<ServerMediaSession> fOurServerMediaSession;
     TaskToken fLivenessCheckTask;
   };
 
@@ -231,7 +237,7 @@ protected:
 */
 protected:
     // The basic, synchronous "ServerMediaSession" lookup operation; only for subclasses:
-  ServerMediaSession* getServerMediaSession(UsageEnvironment &env,char const* streamName);
+  std::shared_ptr<ServerMediaSession> getServerMediaSession(UsageEnvironment &env,char const* streamName);
   
   ClientConnection *getClientConnection(ClientConnection::IdType id) const {
     std::lock_guard<std::recursive_mutex> lock(fClientConnections_mutex);
@@ -249,7 +255,6 @@ protected:
   UsageEnvironment& getBestThreadedUsageEnvironment(void);
 
 private:
-  void removeServerMediaSessionImpl(ServerMediaSession* serverMediaSession);
   virtual UsageEnvironment *createNewUsageEnvironment(TaskScheduler &scheduler);
   void addClientConnection(ClientConnection *c) {
     std::lock_guard<std::recursive_mutex> guard(fClientConnections_mutex);
@@ -265,7 +270,7 @@ private:
   }
   
 protected:
-  typedef std::map<std::string,ServerMediaSession*> ServerMediaSessionMap;
+  typedef std::map<std::string,std::weak_ptr<ServerMediaSession> > ServerMediaSessionMap;
   typedef std::map<UsageEnvironment*,ServerMediaSessionMap> ServerMediaSessionEnvMap;
   ServerMediaSessionEnvMap fServerMediaSessions; // maps 'stream name' strings to "ServerMediaSession" objects
   mutable std::recursive_mutex sms_mutex; // protectes fServerMediaSessions only

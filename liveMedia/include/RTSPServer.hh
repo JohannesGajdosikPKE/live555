@@ -32,6 +32,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 class RTSPServer: public GenericMediaServer {
 public:
+#ifdef NOT_NEEDED
   static RTSPServer* createNew(UsageEnvironment& env, Port ourPort = 554,
 			       UserAuthenticationDatabase* authDatabase = NULL,
 			       unsigned reclamationSeconds = 65);
@@ -44,9 +45,10 @@ public:
 
   static Boolean lookupByName(UsageEnvironment& env, char const* name,
 			      RTSPServer*& resultServer);
+#endif
 
   typedef void (responseHandlerForREGISTER)(RTSPServer* rtspServer, unsigned requestId, int resultCode, char* resultString);
-  unsigned registerStream(ServerMediaSession* serverMediaSession,
+  unsigned registerStream(const std::shared_ptr<ServerMediaSession> &serverMediaSession,
 			  char const* remoteClientNameOrAddress, portNumBits remoteClientPortNum,
 			  responseHandlerForREGISTER* responseHandler,
 			  char const* username = NULL, char const* password = NULL,
@@ -64,7 +66,7 @@ public:
   //   It tells the proxy server the suffix that it should use in its "rtsp://" URL (when front-end clients access the stream)
 
   typedef void (responseHandlerForDEREGISTER)(RTSPServer* rtspServer, unsigned requestId, int resultCode, char* resultString);
-  unsigned deregisterStream(ServerMediaSession* serverMediaSession,
+  unsigned deregisterStream(const std::shared_ptr<ServerMediaSession> &serverMediaSession,
 			    char const* remoteClientNameOrAddress, portNumBits remoteClientPortNum,
 			    responseHandlerForDEREGISTER* responseHandler,
 			    char const* username = NULL, char const* password = NULL,
@@ -151,7 +153,7 @@ protected:
 
 public: // redefined virtual functions
   virtual Boolean isRTSPServer() const;
-  virtual void addServerMediaSession(ServerMediaSession* serverMediaSession);
+  virtual void addServerMediaSession(const std::shared_ptr<ServerMediaSession> &serverMediaSession);
 
 public: // should be protected, but some old compilers complain otherwise
   // The state of a TCP connection used by a RTSP client:
@@ -200,8 +202,8 @@ public: // should be protected, but some old compilers complain otherwise
     virtual void handleCmd_GET_PARAMETER(char const* fullRequestStr); // when operating on the entire server
     virtual void handleCmd_SET_PARAMETER(char const* fullRequestStr); // when operating on the entire server
     virtual void handleCmd_DESCRIBE(char const* urlPreSuffix, char const* urlSuffix, char const* fullRequestStr);
-    static void DESCRIBELookupCompletionFunction(void* clientData, ServerMediaSession* sessionLookedUp);
-    virtual void handleCmd_DESCRIBE_afterLookup(ServerMediaSession* session);
+    static void DESCRIBELookupCompletionFunction(void* clientData, const std::shared_ptr<ServerMediaSession> &sessionLookedUp);
+    virtual void handleCmd_DESCRIBE_afterLookup(const std::shared_ptr<ServerMediaSession> &session);
     virtual void handleCmd_REGISTER(char const* cmd/*"REGISTER" or "DEREGISTER"*/,
 				    char const* url, char const* urlSuffix, char const* fullRequestStr,
 				    Boolean reuseConnection, Boolean deliverViaTCP, char const* proxyURLSuffix);
@@ -267,10 +269,10 @@ public: // should be protected, but some old compilers complain otherwise
     virtual void handleCmd_SETUP(RTSPClientConnection* ourClientConnection,
 				 char const* urlPreSuffix, char const* urlSuffix, char const* fullRequestStr);
   protected:
-    static void SETUPLookupCompletionFunction1(void* clientData, ServerMediaSession* sessionLookedUp);
-    virtual void handleCmd_SETUP_afterLookup1(ServerMediaSession* sms);
-    static void SETUPLookupCompletionFunction2(void* clientData, ServerMediaSession* sessionLookedUp);
-    virtual void handleCmd_SETUP_afterLookup2(ServerMediaSession* sms);
+    static void SETUPLookupCompletionFunction1(void* clientData, const std::shared_ptr<ServerMediaSession> &sessionLookedUp);
+    virtual void handleCmd_SETUP_afterLookup1(const std::shared_ptr<ServerMediaSession> &sms);
+    static void SETUPLookupCompletionFunction2(void* clientData, const std::shared_ptr<ServerMediaSession> &sessionLookedUp);
+    virtual void handleCmd_SETUP_afterLookup2(const std::shared_ptr<ServerMediaSession> &sms);
   public:
     virtual void handleCmd_withinSession(RTSPClientConnection* ourClientConnection,
 					 char const* cmdName,

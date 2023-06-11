@@ -96,7 +96,7 @@ static void rtspRegisterResponseHandler(RTSPClient* rtspClient, int resultCode, 
   registerRequestRecord->handleResponse(resultCode, resultString);
 }
 
-unsigned RTSPServer::registerStream(ServerMediaSession* serverMediaSession,
+unsigned RTSPServer::registerStream(const std::shared_ptr<ServerMediaSession> &serverMediaSession,
 				    char const* remoteClientNameOrAddress, portNumBits remoteClientPortNum,
 				    responseHandlerForREGISTER* responseHandler,
 				    char const* username, char const* password,
@@ -109,7 +109,7 @@ unsigned RTSPServer::registerStream(ServerMediaSession* serverMediaSession,
     authenticator = new Authenticator(username, password);
   }
   unsigned requestId = ++fRegisterOrDeregisterRequestCounter;
-  char const* url = rtspURL(serverMediaSession);
+  char const* url = rtspURL(serverMediaSession.get());
   new RegisterRequestRecord(*this, requestId,
 			    remoteClientNameOrAddress, remoteClientPortNum, url,
 			    responseHandler, authenticator,
@@ -174,7 +174,7 @@ static void rtspDeregisterResponseHandler(RTSPClient* rtspClient, int resultCode
   deregisterRequestRecord->handleResponse(resultCode, resultString);
 }
 
-unsigned RTSPServer::deregisterStream(ServerMediaSession* serverMediaSession,
+unsigned RTSPServer::deregisterStream(const std::shared_ptr<ServerMediaSession> &serverMediaSession,
 				      char const* remoteClientNameOrAddress, portNumBits remoteClientPortNum,
 				      responseHandlerForDEREGISTER* responseHandler,
 				      char const* username, char const* password,
@@ -187,7 +187,7 @@ unsigned RTSPServer::deregisterStream(ServerMediaSession* serverMediaSession,
     authenticator = new Authenticator(username, password);
   }
   unsigned requestId = ++fRegisterOrDeregisterRequestCounter;
-  char const* url = rtspURL(serverMediaSession);
+  char const* url = rtspURL(serverMediaSession.get());
   new DeregisterRequestRecord(*this, requestId,
 			      remoteClientNameOrAddress, remoteClientPortNum, url,
 			      responseHandler, authenticator,
@@ -379,9 +379,9 @@ Boolean RTSPServerWithREGISTERProxying
 		      char const* proxyURLSuffix, char*& responseStr) {
   // First, check whether we have already proxied a stream as "proxyURLSuffix":
   if (proxyURLSuffix != NULL) {
-    ServerMediaSession* sms = getServerMediaSession(env,proxyURLSuffix);
-    if ((strcmp(cmd, "REGISTER") == 0 && sms != NULL) ||
-	(strcmp(cmd, "DEREGISTER") == 0 && sms == NULL)) {
+    std::shared_ptr<ServerMediaSession> sms = getServerMediaSession(env,proxyURLSuffix);
+    if ((strcmp(cmd, "REGISTER") == 0 && sms) ||
+	(strcmp(cmd, "DEREGISTER") == 0 && !sms)) {
       responseStr = strDup("451 Invalid parameter");
       return False;
     }
@@ -419,14 +419,14 @@ void RTSPServerWithREGISTERProxying
     portNumBits tunnelOverHTTPPortNum = deliverViaTCP ? (portNumBits)(~0) : 0;
         // We don't support streaming from the back-end via RTSP/RTP/RTCP-over-HTTP; only via RTP/RTCP-over-TCP or RTP/RTCP-over-UDP
 
-    ServerMediaSession* sms
+    std::shared_ptr<ServerMediaSession> sms
       = ProxyServerMediaSession::createNew(env, this, url, proxyStreamName,
 					   fBackEndUsername, fBackEndPassword,
 					   tunnelOverHTTPPortNum, fVerbosityLevelForProxying, socketToRemoteServer);
-    addServerMediaSession(sms);
+    // gaj TODO: remember the shared ptr addServerMediaSession(sms);
   
     // (Regardless of the verbosity level) announce the fact that we're proxying this new stream, and the URL to use to access it:
-    char* proxyStreamURL = rtspURL(sms);
+    char* proxyStreamURL = rtspURL(sms.get());
     envir() << "Proxying the registered back-end stream \"" << url << "\".\n";
     envir() << "\tPlay this stream using the URL: " << proxyStreamURL << "\n";
     delete[] proxyStreamURL;
