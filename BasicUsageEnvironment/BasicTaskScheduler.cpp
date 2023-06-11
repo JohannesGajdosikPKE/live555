@@ -29,9 +29,11 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #if defined(__WIN32__) || defined(_WIN32)
 extern "C" int initializeWinsockIfNecessary();
+#define ERRNO_BAD_FD WSAENOTSOCK
 #else
   #include <fcntl.h>
   #include <unistd.h>
+#define ERRNO_BAD_FD EBADF
 #endif
 
 const char *PrintSocket(char tmp[],const int tmp_size,const int s) {
@@ -273,7 +275,26 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
     int err = errno;
     if (err != EINTR && err != EAGAIN) {
 #endif
-	// Unexpected error - treat this as fatal:
+
+    if (err == ERRNO_BAD_FD) {
+      envir() << "BasicTaskScheduler::SingleStep(): select() failed: " << err << ", removing bad sockets from sets\n";
+      for (int i = 0; i < 10000; ++i) {
+        if (FD_ISSET(i, &fReadSet) || FD_ISSET(i, &fWriteSet) || FD_ISSET(i, &fExceptionSet)) {
+          int val;
+          socklen_t length = sizeof(val);
+          if (getsockopt(i, SOL_SOCKET, SO_TYPE, (char*)&val, &length)) {
+            envir() << "BasicTaskScheduler::SingleStep(): removing bad socket " << i << " from sets\n";
+            FD_CLR(i, &fReadSet);
+            FD_CLR(i, &fWriteSet);
+            FD_CLR(i, &fExceptionSet);
+          }
+        }
+      }
+      fLastHandledSocketNum = -1;//because we didn't call a handler
+      goto continue_without_sockets;
+    } else {
+        
+        // Unexpected error - treat this as fatal:
 	envir() << "FATAL: BasicTaskScheduler::SingleStep(): select() failed: " << err << "\n";
 	envir().setResultErrMsg("FATAL: BasicTaskScheduler::SingleStep(): select() failed: ",err);
 	envir() << envir().getResultMsg() << "\n";
@@ -298,7 +319,9 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
 	internalError();
       }
   }
+  }
 
+  {
   // Call the handler function for one readable socket:
   HandlerIterator iter(*fHandlers);
   HandlerDescriptor* handler;
@@ -347,7 +370,8 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
     }
     if (handler == NULL) fLastHandledSocketNum = -1;//because we didn't call a handler
   }
-
+  }
+  continue_without_sockets:
   // Also handle any newly-triggered event (Note that we do this *after* calling a socket handler,
   // in case the triggered event handler modifies The set of readable sockets.)
   if (fTriggersAwaitingHandling != 0) {
