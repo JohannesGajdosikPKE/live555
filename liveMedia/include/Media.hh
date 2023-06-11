@@ -84,7 +84,7 @@ private:
   TaskToken fNextTask;
 };
 
-
+#ifdef USE_LIVE555_MEDIATABLE
 // A data structure for looking up a Medium by its string name.
 // (It is used only to implement "Medium", but we make it visible here, in case developers want to use it to iterate over
 //  the whole set of "Medium" objects that we've created.)
@@ -114,6 +114,8 @@ private:
   unsigned fNameGenerator;
 };
 
+#endif
+
 
 // The structure pointed to by the "liveMediaPriv" UsageEnvironment field:
 class _Tables {
@@ -123,7 +125,9 @@ public:
   void reclaimIfPossible();
       // used to delete ourselves when we're no longer used
 
+#ifdef USE_LIVE555_MEDIATABLE
   MediaLookupTable* mediaTable;
+#endif
   void* socketTable;
 
 protected:

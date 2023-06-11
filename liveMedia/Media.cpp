@@ -19,6 +19,102 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // Implementation
 
 #include "Media.hh"
+
+#ifndef USE_LIVE555_MEDIATABLE
+
+#include <set>
+
+#include <mutex>
+
+#include <string.h>
+
+class MediaLookupTable {
+public:
+  static void Add(Medium *m) {
+    get().add(m);
+  }
+  static Medium *Lookup(const char *n) {
+    return get().lookup(n);
+  }
+  static void Remove(const char *n) {
+    get().remove(n);
+  }
+private:
+  MediaLookupTable(void) : fNameGenerator(0) {}
+  static MediaLookupTable &get(void) {
+    static MediaLookupTable t;
+    return t;
+  }
+  struct MediaPointer {
+    MediaPointer(void) : m(nullptr) {}
+    MediaPointer(Medium *m) : m(m) {}
+    Medium *m;
+    struct IsLess {
+      typedef void is_transparent; // weird C++14 hack for searching non-keys
+      bool operator()(MediaPointer a,MediaPointer b) const {return (strcmp(a.m->name(),b.m->name()) < 0);}
+      bool operator()(MediaPointer a,const char *b) const {return (strcmp(a.m->name(),b) < 0);}
+      bool operator()(const char *a,MediaPointer b) const {return (strcmp(a,b.m->name()) < 0);}
+    };
+  };
+  void add(Medium *m) {
+    std::lock_guard<std::mutex> lock(mutex);
+    for (;;) {
+      ++fNameGenerator;
+      if (!fNameGenerator) continue;
+      snprintf(m->fMediumName, mediumNameMaxLen, "liveMedia%lu", fNameGenerator++);
+      if (table.insert(MediaPointer(m)).second) break;
+    }
+  }
+  Medium *lookup(const char *n) const {
+    std::lock_guard<std::mutex> lock(mutex);
+    auto it(table.find(n));
+    if (it == table.end()) return nullptr;
+    return it->m;
+  }
+  void remove(const char *n) {
+    Medium *m = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      auto it(table.find(n));
+      if (it == table.end()) return;
+      m = it->m;
+      table.erase(it);
+    }
+    delete m;
+  }
+  unsigned long int fNameGenerator;
+  std::set<MediaPointer,MediaPointer::IsLess> table;
+  mutable std::mutex mutex;
+};
+
+Medium::Medium(UsageEnvironment& env)
+	: fEnviron(env), fNextTask(NULL) {
+  MediaLookupTable::Add(this);
+  env.setResultMsg(fMediumName);
+}
+
+Medium::~Medium() {
+  // Remove any tasks that might be pending for us:
+  fEnviron.taskScheduler().unscheduleDelayedTask(fNextTask);
+}
+
+Boolean Medium::lookupByName(UsageEnvironment& env, char const* mediumName,
+				  Medium*& resultMedium) {
+  resultMedium = MediaLookupTable::Lookup(mediumName);
+  if (resultMedium == NULL) {
+    env.setResultMsg("Medium ", mediumName, " does not exist");
+    return False;
+  }
+
+  return True;
+}
+
+void Medium::close(UsageEnvironment& env, char const* name) {
+  MediaLookupTable::Remove(name);
+}
+
+#else
+
 #include "HashTable.hh"
 
 ////////// Medium //////////
@@ -52,6 +148,8 @@ Boolean Medium::lookupByName(UsageEnvironment& env, char const* mediumName,
 void Medium::close(UsageEnvironment& env, char const* name) {
   MediaLookupTable::ourMedia(env)->remove(name);
 }
+
+#endif
 
 void Medium::close(Medium* medium) {
   if (medium == NULL) return;
@@ -96,6 +194,25 @@ _Tables* _Tables::getOurTables(UsageEnvironment& env, Boolean createIfNotPresent
   }
   return (_Tables*)(env.liveMediaPriv);
 }
+
+#ifndef USE_LIVE555_MEDIATABLE
+
+void _Tables::reclaimIfPossible() {
+  if (socketTable == NULL) {
+    fEnv.liveMediaPriv = NULL;
+    delete this;
+  }
+}
+
+_Tables::_Tables(UsageEnvironment& env)
+  : socketTable(NULL), fEnv(env) {
+}
+
+_Tables::~_Tables() {
+}
+
+
+#else
 
 void _Tables::reclaimIfPossible() {
   if (mediaTable == NULL && socketTable == NULL) {
@@ -161,3 +278,5 @@ MediaLookupTable::MediaLookupTable(UsageEnvironment& env)
 MediaLookupTable::~MediaLookupTable() {
   delete fTable;
 }
+
+#endif
