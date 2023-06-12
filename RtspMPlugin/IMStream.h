@@ -5,6 +5,8 @@
 #include <memory>
 #include <chrono>
 
+namespace InterfaceMediaStream {
+
 class SubsessionInfo {
 public:
   virtual ~SubsessionInfo(void) {}
@@ -18,6 +20,8 @@ public:
   virtual const char *getRtpPayloadFormatName(void) const = 0;
   virtual uint32_t getRtpTimestampFrequency(void) const {return 0;}
   virtual const char *getSdpMediaTypeString(void) const {return nullptr;}
+  virtual uint32_t getInitialRtpTimestamp(void) const { return 0;}
+  virtual bool useRTPTimestampCorrection(void) const { return false; }
 
     // payload specific extra information
     // like AuxSdpLine in case of H264 or FmtpConfig in case of AAC-hbr
@@ -31,7 +35,19 @@ private:
 };
 
 typedef std::chrono::duration<int64_t,std::micro> DurationType;
-typedef std::chrono::time_point<std::chrono::system_clock,DurationType> TimeType;
+
+struct TimeType
+{
+  TimeType(void) {}
+  template<class T> TimeType(const T &t) : abs_time(t) {}
+  template<class T> TimeType(const T &t, const std::uint32_t& rtime, const std::uint32_t& rfreq, const std::uint32_t& rid)
+    : abs_time(t),rtp_time(rtime), rtp_freq(rfreq), rtp_id(rid) {}
+
+  std::chrono::time_point<std::chrono::system_clock, DurationType> abs_time;
+  std::uint32_t rtp_time = 0;
+  std::uint32_t rtp_freq = 0;
+  std::uint32_t rtp_id = 0; 
+};
 
 typedef void (*TOnFrameCallbackPtr)(void *callerId, const SubsessionInfo *info,
                                     const uint8_t *buffer, int bufferSize,
@@ -192,7 +208,7 @@ typedef const char *(InitializeMPluginFunc)(
                     IMStreamFactory *streamManager,
                     const MPluginParams &params);
 
-#define RTCMEDIALIB_API_VERSION "0.11"
+#define RTCMEDIALIB_API_VERSION "0.12"
     // will return the API version of the Library.
     // when the interface_api_version_of_caller does not match,
     // the library will not call the stream_factory.
@@ -201,4 +217,7 @@ const char *InitializeMPlugin(
               const char *interface_api_version_of_caller,
               IMStreamFactory *stream_factory,
               const MPluginParams &params);
+
+} // end of namespace InterfaceMediaStream
+
 #endif

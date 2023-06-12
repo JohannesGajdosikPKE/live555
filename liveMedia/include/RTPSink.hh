@@ -50,6 +50,9 @@ public:
   void setRTPTimestampFrequency(unsigned freq) {
     fTimestampFrequency = freq;
   }
+  void setRTPTimestamp(const u_int32_t& timestamp) {  
+    fTimestampBase = timestamp;
+  }
   char const* rtpPayloadFormatName() const {return fRTPPayloadFormatName;}
 
   unsigned numChannels() const { return fNumChannels; }
@@ -116,7 +119,7 @@ protected:
   // used by RTCP:
   friend class RTCPInstance;
   friend class RTPTransmissionStats;
-  u_int32_t convertToRTPTimestamp(struct timeval tv);
+  virtual u_int32_t convertToRTPTimestamp(struct timeval tv);
   long long int getLastFrameTime(void) const {return last_frame_time;}
   unsigned packetCount() const {return fPacketCount;}
   unsigned octetCount() const {return fOctetCount;}

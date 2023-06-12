@@ -31,7 +31,9 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <atomic>
 #include <thread>
 
-#define PLUGIN_VERSION "1.01"
+using namespace InterfaceMediaStream;
+
+#define PLUGIN_VERSION "1.02"
 
 //#define ALLOC_STATS
 #ifdef ALLOC_STATS
@@ -148,10 +150,10 @@ static const char *SubsessionInfoToString(const SubsessionInfo &ssi) {
 
 
 struct Frame {
-  Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t *data,int32_t size,int64_t time,bool end_of_frame);
+  Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t *data,int32_t size,TimeType time,bool end_of_frame);
   const uint8_t *getData(void) const {return data.get();}
   const uint32_t size;
-  const int64_t time;
+  const TimeType time;
   const bool end_of_frame;
 private:
   std::shared_ptr<uint8_t> data; // actually contains an array and a custom deleter
@@ -218,7 +220,7 @@ private:
   void remember(Registration *reg);
   void forget(Registration *reg);
   struct RegistrationSet;
-  static void OnH26xFrameCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const int64_t frameTime);
+  static void OnH26xFrameCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const TimeType frameTime);
   static void OnFrameCallback(void *callerId, const SubsessionInfo *info, const uint8_t *buffer, int bufferSize, const TimeType &frameTime);
   mutable std::recursive_mutex registration_mutex;
   std::map<const SubsessionInfo*,RegistrationSet> registration_map;
@@ -254,7 +256,7 @@ std::shared_ptr<uint8_t> CreateSharedArray(const uint8_t *const data,const int32
   return rval;
 }
 
-Frame::Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t *data,int32_t size,int64_t time,bool end_of_frame)
+Frame::Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t *data,int32_t size,TimeType time,bool end_of_frame)
       :size((data && size>0)?size:0),time(time),end_of_frame(end_of_frame),data(CreateSharedArray(data,Frame::size)) {
 }
 
@@ -289,7 +291,7 @@ public:
 
 struct MediaServerPluginRTSPServer::StreamMapEntry::RegistrationSet : public std::set<Registration*> {
   RegistrationSet(void) : e(0) {}
-  void callFunctions(const uint8_t *buffer, int bufferSize, const int64_t frameTime, bool end_of_frame) const {
+  void callFunctions(const uint8_t *buffer, int bufferSize, const TimeType frameTime, bool end_of_frame) const {
     const Frame f(*e,buffer,bufferSize,frameTime,end_of_frame);
     for (auto &it : *this) it->f(f);
   }
@@ -478,7 +480,7 @@ void MediaServerPluginRTSPServer::StreamMapEntry::getSubsessions(std::set<std::s
 }
 
 
-void MediaServerPluginRTSPServer::StreamMapEntry::OnH26xFrameCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const int64_t frameTime) {
+void MediaServerPluginRTSPServer::StreamMapEntry::OnH26xFrameCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const TimeType frameTime) {
   if (bufferSize <= 0) return;
     // extract all nal units, strip h26x bytestream headers:
   const uint8_t *p = buffer;
@@ -533,14 +535,9 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void *callerId
   if (r != e.registration_map.end()) {
     if (0 == strcmp(info->getRtpPayloadFormatName(),"H264") ||
         0 == strcmp(info->getRtpPayloadFormatName(),"H265")) {
-      OnH26xFrameCallback(r->second,buffer,bufferSize,
-                          std::chrono::duration_cast<std::chrono::microseconds>(
-                            frameTime.time_since_epoch()).count());
+      OnH26xFrameCallback(r->second,buffer,bufferSize,frameTime);
     } else {
-      r->second.callFunctions(buffer,bufferSize,
-                              std::chrono::duration_cast<std::chrono::microseconds>(
-                                frameTime.time_since_epoch()).count(),
-                              true);
+      r->second.callFunctions(buffer,bufferSize, frameTime,true);
     }
   }
 }
@@ -824,12 +821,54 @@ void MediaServerPluginRTSPServer::incomingConnectionHandlerHTTPIPv6() {
 
 class MyServerMediaSubsession;
 
-class MyFrameSource : public FramedSource, public IdContainer {
+class TimeInformationSource
+{
+public:
+  void setTimeVal(const TimeType& time) { 
+    _time = time;
+  };
+
+  struct timeval getPresentationTime()  const {
+    auto presentation_time = (_time.abs_time.time_since_epoch()).count();
+    struct timeval presTime = { 0 };
+    presTime.tv_sec = presentation_time / 1000000LL;
+    presTime.tv_usec = presentation_time - 1000000LL * presTime.tv_sec;
+    return presTime;
+  }
+  
+  bool isValid() {
+    return (_time.rtp_freq != 0);
+  }
+
+  u_int32_t getRTPTimestamp()
+  {
+    return _time.rtp_time;
+  }
+
+  u_int32_t getRTPFrequency()
+  {
+    return _time.rtp_freq;
+  }
+    
+private:
+  TimeType _time;
+};
+
+class MyFrameSource : public FramedSource, public IdContainer, public TimeInformationSource {
 public:
   static MyFrameSource *createNew(UsageEnvironment &env,
                                   MediaServerPluginRTSPServer::StreamMapEntry &e,
                                   const SubsessionInfo *info) {
     MyFrameSource *rval = new MyFrameSource(env,e.name+","+info->getRtpPayloadFormatName());
+
+    if (info->useRTPTimestampCorrection())
+      // set initial rtp time value for SDP information, in case we want to reuse ther RTP timestamp from source
+      rval->setTimeVal(TimeType(std::chrono::time_point<std::chrono::system_clock, DurationType>(
+        std::chrono::milliseconds(0)),
+        info->getInitialRtpTimestamp(),
+        info->getRtpTimestampFrequency(),
+        0));
+
     rval->connect(e,info);
     return rval;
   }
@@ -839,7 +878,7 @@ public:
 private:
   MyFrameSource(const MyFrameSource&);
   MyFrameSource &operator=(MyFrameSource&);
-  MyFrameSource(UsageEnvironment &env,const std::string &name) : FramedSource(env),name(name) {
+  MyFrameSource(UsageEnvironment &env,const std::string &name) : FramedSource(env), name(name) {
     env << "MyFrameSource(" << id << "," << name.c_str() << ")::MyFrameSource\n";
   }
   ~MyFrameSource(void) override {
@@ -943,8 +982,9 @@ private:
       fFrameSize = frame_size;
       fNumTruncatedBytes = 0;
     }
-    fPresentationTime.tv_sec  = f.time / 1000000LL;
-    fPresentationTime.tv_usec = f.time - 1000000LL*fPresentationTime.tv_sec;
+
+    setTimeVal(f.time);
+    fPresentationTime = getPresentationTime();
     nal_unit_ends_access_unit = f.end_of_frame;
       // If the device is *not* a 'live source'
       // (e.g., it comes instead from a file or buffer),
@@ -1016,6 +1056,54 @@ protected:
   const SubsessionInfo *info;
 };
 
+template<typename T> class RTPSinkTimeCorrection : public T
+{
+protected:
+  RTPSinkTimeCorrection<T>(UsageEnvironment& env, Groupsock* RTPgs, unsigned char rtpPayloadFormat, FramedSource* inputSource)
+    :T(env, RTPgs, rtpPayloadFormat)
+    , time_info((inputSource != nullptr) ?
+      ((MyFrameSource*)((FramedFilter*)inputSource)->inputSource()) :
+      nullptr) {
+
+    if (time_info && time_info->isValid())
+      RTPSink::setRTPTimestamp(time_info->getRTPTimestamp());
+  };
+
+public:
+  // ctor
+  static RTPSinkTimeCorrection<T>* createNew(UsageEnvironment& env, Groupsock* RTPgs, unsigned char rtpPayloadFormat, FramedSource* inputSource)
+  {
+    return new RTPSinkTimeCorrection<T>(env, RTPgs, rtpPayloadFormat,inputSource);
+  }
+
+  u_int32_t convertToRTPTimestamp(struct timeval tv) override
+  {
+    // RIA: 
+    // Access source time information to propagate original RTP-Time into RTPSink
+    
+    const auto originalRTPTimestamp = RTPSink::convertToRTPTimestamp(tv);
+
+    if (!time_info || !time_info->isValid())
+      return originalRTPTimestamp;
+
+    // Consistancy chceck:
+    auto presTime = time_info->getPresentationTime();
+    if (presTime.tv_sec != tv.tv_sec || presTime.tv_usec != presTime.tv_usec)
+    {
+      //envir() << "Inconsistant frame time information! " << timeInfo->GetPresentationTimeIncrementInMicros();
+      return originalRTPTimestamp;
+    }
+
+    //envir() << "RTPSinkTimeCorrection::convertToRTPTimestamp: setting custom RTP Timestamp: " << time_info->GetRTPTimestamp() << "\n";
+    auto newRTPTimestamp = time_info->getRTPTimestamp();
+    RTPSink::setRTPTimestamp(newRTPTimestamp);
+    return newRTPTimestamp;
+  }
+
+private:
+  TimeInformationSource* time_info = nullptr;
+};
+
 class MyH264ServerMediaSubsession : public MyServerMediaSubsession {
 public:
   MyH264ServerMediaSubsession(UsageEnvironment &env,
@@ -1041,9 +1129,19 @@ protected:
                             FramedSource* inputSource) override {
     RTPSink *rval = nullptr;
     if (inputSource) {
-      rval = H264VideoRTPSink::createNew(envir(),
-                                         rtpGroupsock,
-                                         rtpPayloadTypeIfDynamic);
+      // we want to recycle the timestamps of the source using RTPSinkTimeCorrection class
+      if (info->useRTPTimestampCorrection())
+      {
+        rval = RTPSinkTimeCorrection<H264VideoRTPSink>::createNew(envir(),
+          rtpGroupsock,
+          rtpPayloadTypeIfDynamic, inputSource);
+        rval->setRTPTimestamp(info->getInitialRtpTimestamp());
+      }
+      // no rtp timestamp recycling
+      else
+        rval = H264VideoRTPSink::createNew(envir(),
+          rtpGroupsock,
+          rtpPayloadTypeIfDynamic);
     }
     return rval;
   }
@@ -1082,7 +1180,18 @@ protected:
                             FramedSource* inputSource) override {
     RTPSink *rval = nullptr;
     if (inputSource) {
-      rval = H265VideoRTPSink::createNew(envir(),
+      // we want to recycle the timestamps of the source using RTPSinkTimeCorrection class
+      if (info->useRTPTimestampCorrection())
+      {
+        rval = RTPSinkTimeCorrection<H264VideoRTPSink>::createNew(envir(),
+          rtpGroupsock,
+          rtpPayloadTypeIfDynamic, inputSource);
+
+        rval->setRTPTimestamp(info->getInitialRtpTimestamp());
+      }
+      // no rtp timestamp recycling
+      else
+        rval = H265VideoRTPSink::createNew(envir(),
                                          rtpGroupsock,
                                          rtpPayloadTypeIfDynamic);
     }
