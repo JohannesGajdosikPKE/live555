@@ -1,5 +1,7 @@
 #include "IMStream.h"
 
+using namespace InterfaceMediaStream;
+
 #include <string>
 #include <map>
 #include <list>

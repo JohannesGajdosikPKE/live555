@@ -42,8 +42,8 @@ public:
   static const char *ServerTypeToString(int t);
   static MediaServerPluginRTSPServer *createNew(ServerType type,bool &success,
                                                 UsageEnvironment &env,
-                                                const RTSPParameters &params,
-                                                IMStreamFactory *streamManager);
+                                                const InterfaceMediaStream::RTSPParameters &params,
+                                                InterfaceMediaStream::IMStreamFactory *streamManager);
   class StreamMapEntry;
   bool destructorStarted(void) const {return destructor_started;}
 
@@ -64,15 +64,16 @@ public:
 protected:
   MediaServerPluginRTSPServer(ServerType type,UsageEnvironment &env, int ourSocketIPv4, int ourSocketIPv6,
                               int m_HTTPServerSocketIPv4, int m_HTTPServerSocketIPv6,
-                              const RTSPParameters &params, IMStreamFactory* streamManager);
+                              const InterfaceMediaStream::RTSPParameters &params,
+                              InterfaceMediaStream::IMStreamFactory* streamManager);
   // called only by createNew();
   ~MediaServerPluginRTSPServer(void) override;
 
 protected:
   static void GetStreamCb(void *cb_context,
-                          const std::shared_ptr<IMStream> &stream);
+                          const std::shared_ptr<InterfaceMediaStream::IMStream> &stream);
   void getStreamCb(const LookupCompletionFuncData *l,
-                   const std::shared_ptr<IMStream> &stream);
+                   const std::shared_ptr<InterfaceMediaStream::IMStream> &stream);
   void lookupServerMediaSession(UsageEnvironment &env, char const *streamName,
                                 lookupServerMediaSessionCompletionFunc *completionFunc,
                                 void *completionClientData,
@@ -93,8 +94,8 @@ protected:
 
   const ServerType type;
   int m_HTTPServerSocketIPv4,m_HTTPServerSocketIPv6;
-  const RTSPParameters params;
-  IMStreamFactory *const stream_factory;
+  const InterfaceMediaStream::RTSPParameters params;
+  InterfaceMediaStream::IMStreamFactory *const stream_factory;
   std::map<std::string,std::weak_ptr<StreamMapEntry> > stream_map;
   mutable std::recursive_mutex stream_map_mutex;
   const std::unique_ptr<const char[]> m_urlPrefix;
