@@ -548,7 +548,16 @@ void GenericMediaServer::ClientConnection::incomingRequestHandler() {
     // this is called from the tasksceduler, asserting does not hurt:
   envir().taskScheduler().assertSameThread();
   if (fInputTLS->tlsAcceptIsNeeded) { // we need to successfully call fInputTLS->accept() first:
-    if (fInputTLS->accept(fOurSocket) <= 0) return; // either an error, or we need to try again later
+    const int rc = fInputTLS->accept(fOurSocket);
+    if (rc == 0) {
+      return; // we need to try again later
+    }
+    if (rc < 0) {
+      envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::incomingRequestHandler: "
+                 "fInputTLS->accept(" << fOurSocket << ") failed, client hangup\n";
+      handleRequestBytes(-1);
+      return;
+    }
 
     fInputTLS->tlsAcceptIsNeeded = False;
     // We can now read data, as usual:
