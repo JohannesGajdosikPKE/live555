@@ -144,14 +144,13 @@ private:
     encoder.clear(f);
     return nullptr;
   }
-  ContextEncoder(void) : sequence(InitSequence()) {
-    if (!sequence) abort();
-  }
+  ContextEncoder(void) : sequence(InitSequence()) {}
   void *encode(void *x) {
     std::lock_guard<std::mutex> lock(mutex);
-    if (!sequence) return nullptr;
-    if (!lookup_map.insert(std::pair<uintptr_t,void*>(sequence,x)).second) abort();
-    return (void*)(sequence++);
+    do {
+      ++sequence;
+    } while (!(sequence && lookup_map.insert(std::pair<uintptr_t,void*>(sequence,x)).second));
+    return (void*)sequence;
   }
   void *decode(void *x) {
     std::lock_guard<std::mutex> lock(mutex);
@@ -167,14 +166,11 @@ private:
       f(it.second);
     }
     lookup_map.clear();
-    sequence = 0;
+    sequence = InitSequence();
   }
-  uintptr_t InitSequence(void) {
-      // can return 0 only when time_since_epoch()==0
-    return 0x7FFFFFFFFFFFFFFFULL &
-           (0x5E89A06202219bc1ULL *
-            std::chrono::duration_cast<std::chrono::microseconds>
-              (std::chrono::system_clock::now().time_since_epoch()).count());
+  static uintptr_t InitSequence(void) {
+    return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count()
+             * 0x5E89A06202219bc1ULL + 0x75a4801ffee10083ULL;
   }
 private:
   std::mutex mutex;
