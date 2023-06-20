@@ -1158,22 +1158,60 @@ template<typename T> class RTPSinkTimeCorrection : public T
 protected:
   RTPSinkTimeCorrection<T>(UsageEnvironment& env, Groupsock* RTPgs, unsigned char rtpPayloadFormat, FramedSource* inputSource)
     :T(env, RTPgs, rtpPayloadFormat)
-    , time_info((inputSource != nullptr) ?
-      ((MyFrameSource*)((FramedFilter*)inputSource)->inputSource()) :
-      nullptr) {
+    , time_info((inputSource == nullptr) ? nullptr :
+      (dynamic_cast<FramedFilter*>(inputSource) == nullptr) ?
+      dynamic_cast<MyFrameSource*>(inputSource) :
+      dynamic_cast<MyFrameSource*>((dynamic_cast<FramedFilter*>(inputSource))->inputSource())) 
+  {
 
     if (time_info && time_info->isValid())
       RTPSink::setRTPTimestamp(time_info->getRTPTimestamp());
   };
 
+  RTPSinkTimeCorrection<T>(
+    UsageEnvironment& env, Groupsock* RTPgs,
+    unsigned char rtpPayloadFormat,
+    unsigned rtpTimestampFrequency,
+    char const* sdpMediaTypeString,
+    char const* rtpPayloadFormatName,
+    unsigned numChannels,
+    Boolean allowMultipleFramesPerPacket,
+    FramedSource* inputSource)
+    :T(env, RTPgs, rtpPayloadFormat, rtpTimestampFrequency, sdpMediaTypeString, rtpPayloadFormatName, numChannels, allowMultipleFramesPerPacket, true)
+    , time_info((inputSource == nullptr)? nullptr:
+        (dynamic_cast<FramedFilter*>(inputSource) == nullptr)? 
+          dynamic_cast<MyFrameSource*>(inputSource):
+          dynamic_cast<MyFrameSource*>( (dynamic_cast<FramedFilter*>(inputSource))->inputSource() )) 
+  {
+
+    if (time_info && time_info->isValid())
+      RTPSink::setRTPTimestamp(time_info->getRTPTimestamp());
+  };
+
+
 public:
-  // ctor
+  // used for H264RTPSink/H265RTPSink
   static RTPSinkTimeCorrection<T>* createNew(UsageEnvironment& env, Groupsock* RTPgs, unsigned char rtpPayloadFormat, FramedSource* inputSource)
   {
     return new RTPSinkTimeCorrection<T>(env, RTPgs, rtpPayloadFormat,inputSource);
   }
 
-  u_int32_t convertToRTPTimestamp(struct timeval tv) override
+  // used for SimpleRTPSink
+  static RTPSinkTimeCorrection<T>* createNew(
+    UsageEnvironment& env, Groupsock* RTPgs,
+    unsigned char rtpPayloadFormat,
+    unsigned rtpTimestampFrequency,
+    char const* sdpMediaTypeString,
+    char const* rtpPayloadFormatName,
+    unsigned numChannels,
+    Boolean allowMultipleFramesPerPacket,
+    FramedSource* inputSource)
+  {
+    return new RTPSinkTimeCorrection<T>(env, RTPgs, rtpPayloadFormat, rtpTimestampFrequency,
+      sdpMediaTypeString, rtpPayloadFormatName, numChannels, allowMultipleFramesPerPacket, inputSource);
+  }
+
+  virtual u_int32_t convertToRTPTimestamp(struct timeval tv) override
   {
     // RIA: 
     // Access source time information to propagate original RTP-Time into RTPSink
@@ -1686,7 +1724,24 @@ protected:
                             FramedSource* inputSource) override {
     RTPSink *rval = nullptr;
     if (inputSource) {
-      rval = SimpleRTPSink::createNew(envir(),
+      // we want to recycle the timestamps of the source using RTPSinkTimeCorrection class
+      if (info->useRTPTimestampCorrection())
+      {
+        rval = RTPSinkTimeCorrection<SimpleRTPSink>::createNew(
+          envir(),
+          rtpGroupsock,
+          rtpPayloadTypeIfDynamic,
+          info->getRtpTimestampFrequency(),
+          info->getSdpMediaTypeString(),
+          info->getRtpPayloadFormatName(),
+          1, False,
+          inputSource);
+
+        rval->setRTPTimestamp(info->getInitialRtpTimestamp());
+      }
+      // no rtp timestamp recycling
+      else
+        rval = SimpleRTPSink::createNew(envir(),
                                       rtpGroupsock,
                                       rtpPayloadTypeIfDynamic,
                                       info->getRtpTimestampFrequency(),
