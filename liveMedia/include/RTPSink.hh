@@ -119,7 +119,9 @@ protected:
   // used by RTCP:
   friend class RTCPInstance;
   friend class RTPTransmissionStats;
+public:
   virtual u_int32_t convertToRTPTimestamp(struct timeval tv);
+protected:
   long long int getLastFrameTime(void) const {return last_frame_time;}
   unsigned packetCount() const {return fPacketCount;}
   unsigned octetCount() const {return fOctetCount;}
