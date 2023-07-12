@@ -422,38 +422,11 @@ void BasicTaskScheduler::assertValidSocketForSelect(int socketNum) {
       envir() << envir().getResultMsg() << "\n";
     }
     internalError();
-  } else {
-    if (val == SOCK_STREAM) {
-      length = sizeof(val);
-      rc = getsockopt(socketNum, SOL_SOCKET, SO_ACCEPTCONN, (char*)&val, &length);
-      if (rc) {
-        if (envirInitialized()) {
-          int err = envir().getErrno();
-          char tmp[256];
-          envir() << "FATAL: BasicTaskScheduler::assertValidSocketForSelect(" << PrintSocket(tmp,sizeof(tmp),socketNum) << "): getsockopt(SO_ACCEPTCONN) failed: " << err << "\n";
-          envir().setResultErrMsg("FATAL: BasicTaskScheduler::assertValidSocketForSelect(): getsockopt(SO_ACCEPTCONN) failed: ",err);
-          envir() << envir().getResultMsg() << "\n";
-        }
-        internalError();
-      } else {
-        if (val == 0) { // a non-listening socket
-          struct sockaddr_storage sock_addr;
-          socklen_t sock_addrlen = sizeof(sock_addr);
-          rc = getpeername(socketNum, (struct sockaddr*)&sock_addr, &sock_addrlen);
-          if (rc) {
-            if (envirInitialized()) {
-              int err = envir().getErrno();
-              char tmp[256];
-              envir() << "FATAL: BasicTaskScheduler::assertValidSocketForSelect(" << PrintSocket(tmp,sizeof(tmp),socketNum) << "): getpeername() failed: " << err << "\n";
-              envir().setResultErrMsg("FATAL: BasicTaskScheduler::assertValidSocketForSelect(): getpeername() failed: ",err);
-              envir() << envir().getResultMsg() << "\n";
-            }
-            internalError();
-          }
-        }
-      }
-    }
   }
+    // The socket may be a datagram socket, a listening socket, or a nonblocking TCP socket with connecting still in progress.
+    // This is legal, but there is no peer name.
+    // Or a connected TCP socket with a peer name.
+    // No further checking.
 }
 
 void BasicTaskScheduler
