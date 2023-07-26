@@ -1215,23 +1215,34 @@ public:
   {
     // RIA: 
     // Access source time information to propagate original RTP-Time into RTPSink
+
+    // We need to set RTP-Time first, to generate valid RTCP Message
+    bool customRTPTimestampUsed = false;
+    if (time_info && time_info->isValid())
+    {
+      auto presTime = time_info->getPresentationTime();
+      
+      // Consistency check:
+      if (presTime.tv_sec == tv.tv_sec && tv.tv_usec == presTime.tv_usec)
+      {
+        auto newRTPTimestamp = time_info->getRTPTimestamp();
+        RTPSink::setRTPTimestamp(newRTPTimestamp);
+        customRTPTimestampUsed = true;
+      }
+    }
     
     const auto originalRTPTimestamp = RTPSink::convertToRTPTimestamp(tv);
 
-    if (!time_info || !time_info->isValid())
+    if (!customRTPTimestampUsed)
       return originalRTPTimestamp;
 
-    // Consistancy chceck:
-    auto presTime = time_info->getPresentationTime();
-    if (presTime.tv_sec != tv.tv_sec || presTime.tv_usec != presTime.tv_usec)
-    {
-      //envir() << "Inconsistant frame time information! " << timeInfo->GetPresentationTimeIncrementInMicros();
-      return originalRTPTimestamp;
-    }
 
     //envir() << "RTPSinkTimeCorrection::convertToRTPTimestamp: setting custom RTP Timestamp: " << time_info->GetRTPTimestamp() << "\n";
+
+    // override the RTPTimestamp information again ( changed in RTPSink::convertToRTPTimestamp)
     auto newRTPTimestamp = time_info->getRTPTimestamp();
     RTPSink::setRTPTimestamp(newRTPTimestamp);
+
     return newRTPTimestamp;
   }
 
