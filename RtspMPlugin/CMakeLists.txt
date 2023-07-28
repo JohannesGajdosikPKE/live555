@@ -5,16 +5,16 @@ if (EXISTS "${OPENSSL_INCLUDE_PATH}/openssl/ssl.h")
   message("openssl include files found at ${OPENSSL_INCLUDE_PATH}")
 else()
   message(FATAL_ERROR "openssl include files not found at ${OPENSSL_INCLUDE_PATH}."
-          " Use cmake -D OPENSSL_INCLUDE_PATH=<path_where_openssl/ssl.h_lives" )
+          " Use cmake -D OPENSSL_INCLUDE_PATH=<path where openssl/ssl.h lives>" )
 endif()
 
 if (WIN32)
-  set(OPENSSL_LIBRARY_PATH "/usr/include" CACHE PATH "path where MT/libssl_static.lib lives")
+  set(OPENSSL_LIBRARY_PATH "/usr/lib" CACHE PATH "path where MT/libssl_static.lib lives")
   if (EXISTS "${OPENSSL_LIBRARY_PATH}/MT/libssl_static.lib")
     message("openssl library files found at ${OPENSSL_LIBRARY_PATH}")
   else()
     message(FATAL_ERROR "openssl library files not found at ${OPENSSL_LIBRARY_PATH}."
-            " Use cmake -D OPENSSL_LIBRARY_PATH=<path_where_MT/libssl_static.lib_lives" )
+            " Use cmake -D OPENSSL_LIBRARY_PATH=<path where MT/libssl_static.lib lives>" )
   endif()
 endif()
 

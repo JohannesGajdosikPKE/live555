@@ -67,7 +67,7 @@ public:
       //  The "ServerMediaSession" object will not get deleted until all of these client sessions have closed.)
       // (To both delete the "ServerMediaSession" object *and* close all client sessions that use it,
       //  call "deleteServerMediaSession(serverMediaSession)" instead.)
-#ifdef NOT_NEEDED"
+#ifdef NOT_NEEDED
   virtual void removeServerMediaSession(UsageEnvironment &env, char const* streamName);
      // ditto
 #endif
@@ -75,7 +75,7 @@ public:
   void closeAllClientSessionsForServerMediaSession(const ServerMediaSession &serverMediaSession);
       // Closes (from the server) all client sessions that are currently using this "ServerMediaSession" object.
       // Note, however, that the "ServerMediaSession" object remains accessible by new clients.
-#ifdef NOT_NEEDED"
+#ifdef NOT_NEEDED
   virtual void closeAllClientSessionsForServerMediaSession(char const* streamName);
      // ditto
 #endif
@@ -83,7 +83,7 @@ public:
   void deleteServerMediaSession(const std::shared_ptr<ServerMediaSession> &serverMediaSession);
       // Equivalent to:
       //     "closeAllClientSessionsForServerMediaSession(serverMediaSession); removeServerMediaSession(serverMediaSession);"
-#ifdef NOT_NEEDED"
+#ifdef NOT_NEEDED
   virtual void deleteServerMediaSession(UsageEnvironment &env, char const* streamName);
       // Equivalent to:
       //     "closeAllClientSessionsForServerMediaSession(streamName); removeServerMediaSession(streamName);

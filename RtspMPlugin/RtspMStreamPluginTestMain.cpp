@@ -38,6 +38,10 @@ public:
       (void*)LoadLibraryA(filename);
 #else
       dlopen(filename,RTLD_NOW|RTLD_GLOBAL);
+    if (!handle) {
+      std::cout << "DynamicLibrary::DynamicLibrary(" << filename << "): "
+                   "dlopen failed: " << dlerror() << std::endl;
+    }
 #endif
   }
   ~DynamicLibrary(void) {
@@ -530,6 +534,10 @@ int main(int argc,char **argv) {
         return 1;
       }
       argv++;
+    } else {
+      std::cout << "unknown commandline argument: \"" << *argv << '"' << std::endl;
+      PrintUsage();
+      return 1;
     }
   }
   if (rtsp == 0 && rtsps == 0 && http == 0 && https == 0) {

@@ -1376,6 +1376,25 @@ protected:
   }
 };
 
+static const char *jpeg_marker_name[0x40] = {
+  "SOF0","SOF1","SOF2","SOF3","DHT","SOF5","SOF6","SOF7","JPG",
+  "SOF9","SOF10","SOF11","DAC","SOF13","SOF14","SOF15",
+  "RST0","RST1","RST2","RST3","RST4","RST5","RST6","RST7",
+  "SOI","EOI","SOS","DQT","DNL","DRI","DHP","EXP",
+  "APP0","APP1","APP2","APP3","APP4","APP5","APP6","APP7",
+  "APP8","APP9","APP10","APP11","APP12","APP13","APP14","APP15",
+  "JPG0","JPG1","JPG2","JPG3","JPG4","JPG5","JPG6","JPG7",
+  "JPG8","JPG9","JPG10","JPG11","JPG12","JPG13",
+  "COM",
+  "UndefinedFF"
+};
+
+static const char *JpegMarkerToString(unsigned char marker) {
+  if (marker < 0xC0) return "undefined";
+  return jpeg_marker_name[marker-0xC0];
+}
+
+
   // CAUTION: JPEGVideoSource is no FramedFilter, but I use MyJPEGVideoFramer
   // like a FramedFilter.
 class MyJPEGVideoFramer : public JPEGVideoSource {
@@ -1416,7 +1435,9 @@ private:
                                afterGettingFrame, this,
                                FramedSource::handleClosure, this);
   }
-  u_int8_t type(void) override {return fLastType;}
+    // see RFC2435
+    #define RTP_JPEG_RESTART           0x40
+  u_int8_t type(void) override {return fLastType | (fLastRestartInterval ? RTP_JPEG_RESTART : 0);}
   u_int8_t qFactor(void) override {
       // transmit the quantisation tables with each frame:
       // this works better with mplayer
@@ -1431,6 +1452,9 @@ private:
     length = 128;  // 2 tables
     return quant_tables;
   }
+  u_int16_t restartInterval(void) override {
+    return fLastRestartInterval;
+  }
   u_int8_t quant_tables[128];
 private:
   static void afterGettingFrame(void* clientData, unsigned frameSize,
@@ -1441,46 +1465,152 @@ private:
     source->afterGettingFrame1(frameSize, numTruncatedBytes,
                                presentationTime, durationInMicroseconds);
   }
-  void afterGettingFrame1(int frameSize,
-                          unsigned numTruncatedBytes,
+  void afterGettingFrame1(const int frameSize,
+                          const unsigned numTruncatedBytes,
                           struct timeval presentationTime,
                           unsigned durationInMicroseconds) {
       // RFC2435: RTP Payload Format for JPEG-compressed Video
       // requires to strip away the jpeg header, although the quantisation
       // tables may be (re-)transmitted for each frame, see RFC2435.
 
-#define DQT 	 0xDB	// Define Quantization Table
-#define SOF 	 0xC0	// Start of Frame (size information)
-#define SOI 	 0xD8	// Start of Image
-#define SOS 	 0xDA	// Start of Scan
+  // See https://www.w3.org/Graphics/JPEG/itu-t81.pdf
+  // Start Of Frame markers, non-differential, Huffman coding
+#define SOF0     0xC0    // Start of Frame Baseline DCT
+#define SOF1     0xC1    // Start of Frame Extended sequential DCT
+#define SOF2     0xC2    // Start of Frame Progressive DCT
+#define SOF3     0xC3    // Start of Frame Lossless (sequential)
+
+  // Start Of Frame markers, differential, Huffman coding
+#define SOF5     0xC5    // Start of Frame Differential sequential DCT
+#define SOF6     0xC6    // Start of Frame Differential progressive DCT
+#define SOF7     0xC7    // Start of Frame Differential lossless (sequential)
+
+  // Start Of Frame markers, non-differential, arithmetic coding
+#define JPG      0xC8    // Reserved for JPEG extensions
+#define SOF9     0xC9    // Extended sequential DCT
+#define SOF10    0xCA    // Progressive DCT
+#define SOF11    0xCB    // Lossless (sequential)
+
+  // Start Of Frame markers, differential, arithmetic coding
+#define SOF13    0xCD    // Differential sequential DCT
+#define SOF14    0xCE    // Differential progressive DCT
+#define SOF15    0xCF    // Differential lossless (sequential)
+
+  // Huffman table specification
+#define DHT      0xC4    // Define Huffman table(s)
+
+  //Arithmetic coding conditioning specification
+#define DAC      0xCC    // Define arithmetic coding conditioning(s)
+
+  // Restart interval termination
+#define RST0     0xD0    // Restart with modulo 8 count 0
+#define RST1     0xD1    // Restart with modulo 8 count 1
+#define RST2     0xD2    // Restart with modulo 8 count 2
+#define RST3     0xD3    // Restart with modulo 8 count 3
+#define RST4     0xD4    // Restart with modulo 8 count 4
+#define RST5     0xD5    // Restart with modulo 8 count 5
+#define RST6     0xD6    // Restart with modulo 8 count 6
+#define RST7     0xD7    // Restart with modulo 8 count 7
+
+  // Other markers
+#define SOI      0xD8    // Start of image
+#define EOI      0xD9    // End of image
+#define SOS      0xDA    // Start of scan
+#define DQT      0xDB    // Define quantization table(s)
+#define DNL      0xDC    // Define number of lines
+#define DRI      0xDD    // Define restart interval
+#define DHP      0xDE    // Define hierarchical progression
+#define EXP      0xDF    // Expand reference component(s)
+#define APP0     0xE0    // Reserved for application segment 0
+#define APP1     0xE1    // Reserved for application segment 1
+#define APP15    0xEF    // Reserved for application segment 15
+#define JPG0     0xF0    // Reserved for JPEG extension 0
+#define JPG13    0xFD    // Reserved for JPEG extension 13
+#define COM      0xFE    // Comment
+
+  // Reserved markers
+#define TEM      0x01    // For temporaryprivate use in arithmetic coding
+
       // parse jpeg
     const u_int8_t *p = fTo;
     const u_int8_t *end = fTo+frameSize;
-    if (p+2 > end) return;
-    if (*p++ != 0xFF) return;
-    if (*p++ != SOI) return;
+    if (p+2 > end) {
+      envir() << "MyJPEGVideoFramer: too small\n";
+      return;
+    }
+    if (*p++ != 0xFF) {
+      envir() << "MyJPEGVideoFramer: first byte must be 0xFF\n";
+      return;
+    }
+    if (*p++ != SOI) {
+      envir() << "MyJPEGVideoFramer: SOI expected\n";
+      return;
+    }
+    fLastRestartInterval = 0; // itu-t81: "The SOI marker disables the restart intervals."
     for (;;) {
-      if (p+4 > end) return;
-      if (*p++ != 0xFF) return;
+      if (p+2 > end) {
+        envir() << "MyJPEGVideoFramer: EOI expected, too short: "
+                << (int)(end-p) << "\n";
+        return;
+      }
+      if (*p++ != 0xFF) {
+        envir() << "MyJPEGVideoFramer: 0xFF expected, "
+                << (int)(end-p+1) << " bytes remaining\n";
+        return;
+      }
       const int marker = *p++;
-      int chunk_size = (*p++) << 8;
-      chunk_size |= (*p++);
+      if (marker == EOI) {
+        envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+                << (int)(end-p) << " bytes remaining\n";
+        return;
+      }
+      if (p+2 > end) {
+        envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+                   "no chunk size, too short: " << (int)(end-p) << "\n";
+        return;
+      }
+      const int chunk_size = (p[0] << 8) | p[1];
+      p += 2;
+//      envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+//                 "chunk_size=" << chunk_size << "\n";
       switch (marker) {
-        case SOF: {
-          if (p+6 > end) return;
+        case SOF0: {
+          if (p+6 > end) {
+            envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+                       "too short: " << (int)(end-p) << "\n";
+            return;
+          }
           const u_int8_t *h = p;
           const u_int8_t precision = *h++;
-          if (precision != 8) return;
+          if (precision != 8) {
+            envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+                       "8!=precision=" << (int)precision << "\n";
+            return;
+          }
           fLastHeight = ((*h++) << 5);
           fLastHeight|= ((*h++) >> 3);
           fLastWidth = ((*h++) << 5);
           fLastWidth|= ((*h++) >> 3);
           u_int8_t nr_components = *h++;
-          if (nr_components > 3) return;
+          if (nr_components > 3) {
+            envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+                       "3!=nr_components=" << (int)nr_components << "\n";
+            return;
+          }
           for (u_int8_t i=0;i<nr_components;i++) {
-            if (p+3 > end) return;
+            if (p+3 > end) {
+              envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+                         "component " << (int)i << ": "
+                         "too short: " << (int)(end-p) << "\n";
+              return;
+            }
             const u_int8_t cid = *h++;
-            if (cid != i+1) return;
+            if (cid != i+1) {
+              envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+                         "component " << (int)i << ": "
+                      << (int)(i+1) << "!=cid=" << (int)cid << "\n";
+              return;
+            }
             const u_int8_t sampling_factor = *h++;
             const u_int8_t vFactor = sampling_factor&15;
             const u_int8_t hFactor = sampling_factor>>4;
@@ -1503,36 +1633,86 @@ private:
             if (i == 0) {
               if (nr_components == 1) fLastType = 0;
               else {
-                if (hFactor != 2) return;
+                if (hFactor != 2) {
+                  envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+                             "component " << (int)i << ": "
+                             "2!=hFactor=" << (int)hFactor << "\n";
+                  return;
+                }
                 if (vFactor == 2) fLastType = 1; else
-                if (vFactor == 1) fLastType = 0; else return;
+                if (vFactor == 1) fLastType = 0; else {
+                  envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+                             "component " << (int)i << ": "
+                             "1,2!=vFactor=" << (int)vFactor << "\n";
+                  return;
+                }
               }
-              if (Q_table != 0) return;
+              if (Q_table != 0) {
+                envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+                             "0!=Q_table=" << (int)Q_table << "\n";
+                  return;
+              }
             } else {
-              if (hFactor != 1) return;
-              if (vFactor != 1) return;
-              if (Q_table != 1) return;
+              if (hFactor != 1) {
+                envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+                           "component " << (int)i << ": "
+                           "1!=hFactor=" << (int)hFactor << "\n";
+                  return;
+              }
+              if (vFactor != 1) {
+                envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+                           "component " << (int)i << ": "
+                           "1!=vFactor=" << (int)vFactor << "\n";
+                  return;
+              }
+              if (Q_table != 1) {
+                envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+                             "1!=Q_table=" << (int)Q_table << "\n";
+                  return;
+              }
             }
           }
         } break;
         case DQT: {
-          if (p+65 > end) return;
+          if (p+65 > end) {
+            envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+                       "too short: " << (int)(end-p) << "\n";
+            return;
+          }
           const u_int8_t *h = p;
           const u_int8_t qi = *h++;
-          if (qi & 0xF0) return; // precision must be 0: 8bit
-          if (qi > 2) return;
+          if (qi > 1) {
+            envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+                       "1<qi=" << (int)qi << "\n";
+            return;
+          }
           memcpy(quant_tables+qi*64,h,64);
+        } break;
+        case DRI: {
+          if (p+2 > end) {
+            envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+                       "too short: " << (int)(end-p) << "\n";
+            return;
+          }
+          fLastRestartInterval = (p[0] << 8) | p[1];
         } break;
         case SOS: {
           p += (chunk_size-2);
-          if (p >= end) return;
-          fFrameSize = end - p;
+          if (p >= end) {
+            envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
+                       "too short: " << (int)(end-p) << "\n";
+            return;
+          }
+            // RFC2435: "The data following the RTP/JPEG headers is an entropy-coded segment
+            // consisting of a single scan.  The scan header is not present and is
+            // inferred from the RTP/JPEG header."
+          fFrameSize = end - p; // strip away everything before the scan header
           memmove(fTo,p,fFrameSize);
           fNumTruncatedBytes = numTruncatedBytes;
           fPresentationTime = presentationTime;
           fDurationInMicroseconds = durationInMicroseconds;
           afterGetting(this);
-        } return;
+        } return; // after SOS come ECS (entropy-coded segments), skip skanning
       }
       p += (chunk_size-2);
     }
@@ -1541,6 +1721,7 @@ private:
 private:
   FramedSource* fInputSource;
   u_int8_t fLastType, fLastWidth, fLastHeight, fLastQuality;
+  u_int16_t fLastRestartInterval;
 };
 
 
@@ -1906,10 +2087,10 @@ void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer:
               // Or called from a worker thread when the client closes the connection.
               // There is also a third possibility:
               // when the plugin shuts down, but no empty-Framecallback was called.
-	      // This third possibility shall not happen, the executable must send
-	      // empty Frames for all streams before closing the plugin.
-	      // Otherwise the plugin would Deregister() the streams while shutting down,
-	      // wich you probably would not like.
+              // This third possibility shall not happen, the executable must send
+              // empty Frames for all streams before closing the plugin.
+              // Otherwise the plugin would Deregister() the streams while shutting down,
+              // wich you probably would not like.
             envir() << "MediaServerPluginRTSPServer::getStreamCb::close-lambda(" << name.c_str() << ") start\n";
             {
                 // It is not strictly necessary to erase the weak_ptr from the map.
