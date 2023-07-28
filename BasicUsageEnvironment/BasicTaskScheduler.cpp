@@ -31,8 +31,11 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 extern "C" int initializeWinsockIfNecessary();
 #define ERRNO_BAD_FD WSAENOTSOCK
 #else
+  #include <sys/types.h>
+  #include <sys/stat.h>
   #include <fcntl.h>
   #include <unistd.h>
+  #include <errno.h>
 #define ERRNO_BAD_FD EBADF
 #endif
 
@@ -414,12 +417,29 @@ void BasicTaskScheduler::assertValidSocketForSelect(int socketNum) {
   socklen_t length = sizeof(val);
   int rc = getsockopt(socketNum, SOL_SOCKET, SO_TYPE, (char*)&val, &length);
   if (rc) {
+#if defined(__WIN32__) || defined(_WIN32) || defined(_WIN32_WCE)
+    const int err = WSAGetLastError();
+#else
+    const int err = errno;
+    if (err == ENOTSOCK) {
+      struct stat stat_buf;
+      const int stat_rc = fstat(socketNum,&stat_buf);
+      if (stat_rc == 0 && S_ISFIFO(stat_buf.st_mode)) {
+        return;
+      }
+    }
+#endif
     if (envirInitialized()) {
-      int err = envir().getErrno();
       char tmp[256];
       envir() << "FATAL: BasicTaskScheduler::assertValidSocketForSelect(" << PrintSocket(tmp,sizeof(tmp),socketNum) << "): getsockopt(SO_TYPE) failed: " << err << "\n";
       envir().setResultErrMsg("FATAL: BasicTaskScheduler::assertValidSocketForSelect(): getsockopt(SO_TYPE) failed: ",err);
       envir() << envir().getResultMsg() << "\n";
+    } else {
+#if defined(__WIN32__) || defined(_WIN32) || defined(_WIN32_WCE)
+      printf("getsockopt failed: %d\n",err);
+#else
+      printf("getsockopt failed: %d %s\n",err,strerror(err));
+#endif
     }
     internalError();
   }
