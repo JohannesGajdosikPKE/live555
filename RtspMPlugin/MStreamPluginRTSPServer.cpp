@@ -291,7 +291,11 @@ private:
 };
 
 static
-std::shared_ptr<uint8_t> CreateSharedArray(const uint8_t *const data,const int32_t size) {
+std::shared_ptr<uint8_t> CreateSharedArray(
+#ifdef ALLOC_STATS
+                           const MediaServerPluginRTSPServer::StreamMapEntry &e,
+#endif
+                           const uint8_t *const data,const int32_t size) {
   std::shared_ptr<uint8_t> rval;
   if (size > 0) {
 #ifdef ALLOC_STATS
@@ -320,7 +324,12 @@ std::shared_ptr<uint8_t> CreateSharedArray(const uint8_t *const data,const int32
 }
 
 Frame::Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t *data,int32_t size,TimeType time,bool end_of_frame)
-      :size((data && size>0)?size:0),time(time),end_of_frame(end_of_frame),data(CreateSharedArray(data,Frame::size)) {
+      :size((data && size>0)?size:0),time(time),end_of_frame(end_of_frame),
+       data(CreateSharedArray(
+#ifdef ALLOC_STATS
+              e,
+#endif
+              data,Frame::size)) {
 }
 
 class MediaServerPluginRTSPServer::StreamMapEntry::Registration : public IdContainer {
@@ -1329,7 +1338,7 @@ protected:
       // we want to recycle the timestamps of the source using RTPSinkTimeCorrection class
       if (info->useRTPTimestampCorrection())
       {
-        rval = RTPSinkTimeCorrection<H264VideoRTPSink>::createNew(envir(),
+        rval = RTPSinkTimeCorrection<H265VideoRTPSink>::createNew(envir(),
           rtpGroupsock,
           rtpPayloadTypeIfDynamic, inputSource);
 
