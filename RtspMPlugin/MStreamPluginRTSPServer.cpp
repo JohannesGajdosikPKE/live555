@@ -825,19 +825,18 @@ MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(ServerType type, UsageE
     do {
       const char *const user = it.getUser().c_str();
       const char *const pass = it.getPass().c_str();
-      if (*user && *pass) {
-        env << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer: "
-               "addUserRecord"
-                 // log user/pass only while debugging:
-               //"(" << user << "," << pass << ")"
-               "\n";
-        auth_db->addUserRecord(user,pass);
-        use_auth_db = true;
-      }
+      env << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer: "
+             "addUserRecord"
+               // log user/pass only while debugging:
+             //"(" << user << "," << pass << ")"
+             "\n";
+      auth_db->addUserRecord(user,pass);
+      use_auth_db = true;
     } while (++it);
     if (use_auth_db) {
       env << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(" << ServerTypeToString(type) << "): setting auth_db\n";
-      setAuthenticationDatabase(auth_db);
+      UserAuthenticationDatabase *const old_db = setAuthenticationDatabase(auth_db);
+      if (old_db) delete old_db;
     } else {
       env << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(" << ServerTypeToString(type) << "): discarding auth_db\n";
       delete auth_db;

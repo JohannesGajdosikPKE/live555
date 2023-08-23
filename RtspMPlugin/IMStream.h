@@ -157,11 +157,28 @@ public:
     for (int i=0;i<user_pass_size;i++) user_pass[i].clear();
   }
   bool setUserPass(const std::string &user,const std::string &pass) {
-    if (!user.empty() && !pass.empty()) {
+      // password can be empty, but user cannot.
+    if (!user.empty()) {
       for (int i=0;i<user_pass_size;i+=2) {
         if (user_pass[i].empty() || user_pass[i] == user) {
           user_pass[i  ] = user;
           user_pass[i+1] = pass;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  bool removeUser(const std::string &user) {
+    if (!user.empty()) {
+      for (int i=0;i<user_pass_size;i+=2) {
+        if (user_pass[i] == user) {
+          for (;i<user_pass_size-2;i+=2) {
+            user_pass[i  ] = user_pass[i+2];
+            user_pass[i+1] = user_pass[i+3];
+          }
+          user_pass[i  ].clear();
+          user_pass[i+1].clear();
           return true;
         }
       }
@@ -187,8 +204,10 @@ public:
   std::string tls_cert_file;
   std::string tls_key_file;
 private:
-    // std::map would crash for unknown reason in RTSPParameters constructor
-  enum {user_pass_size = 20};
+    // I would prefer std::map, but this would crash in RTSPParameters constructor
+    // because std::map is actually a different class in Release vs Debug mode.
+    // Using a Release-Plugin with a Debug Binary would crash.
+  enum {user_pass_size = 20}; // 10 times {user,pass}
   std::string user_pass[user_pass_size];
 };
 
