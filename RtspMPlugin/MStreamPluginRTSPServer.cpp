@@ -941,20 +941,25 @@ public:
     return presTime;
   }
   
-  bool isValid() {
+  bool isValid() const {
     return (_time.rtp_freq != 0);
   }
 
-  u_int32_t getRTPTimestamp()
+  u_int32_t getRTPTimestamp() const
   {
     return _time.rtp_time;
   }
 
-  u_int32_t getRTPFrequency()
+  u_int32_t getRTPFrequency() const
   {
     return _time.rtp_freq;
   }
     
+  u_int32_t getSsrc() const
+  {
+    return _time.rtp_id;
+  }
+
 private:
   TimeType _time;
 };
@@ -1172,9 +1177,11 @@ protected:
       dynamic_cast<MyFrameSource*>((dynamic_cast<FramedFilter*>(inputSource))->inputSource())) 
   {
 
-    if (time_info && time_info->isValid())
+    if (time_info && time_info->isValid()) {
       RTPSink::setRTPTimestamp(time_info->getRTPTimestamp());
-  };
+      prev_ssrc = time_info->getSsrc();
+    }
+  }
 
   RTPSinkTimeCorrection<T>(
     UsageEnvironment& env, Groupsock* RTPgs,
@@ -1194,7 +1201,7 @@ protected:
 
     if (time_info && time_info->isValid())
       RTPSink::setRTPTimestamp(time_info->getRTPTimestamp());
-  };
+  }
 
 
 public:
@@ -1221,6 +1228,16 @@ public:
 
   virtual u_int32_t convertToRTPTimestamp(struct timeval tv) override
   {
+      // Send a new sender report when the SSRC has changed.
+      // This prevents wrong timestamps.
+      // Ideally we would also change the SSRC.
+    if (time_info && time_info->isValid()) {
+      if (time_info->getSsrc() != prev_ssrc) {
+        clearFramesReceived();
+        prev_ssrc = time_info->getSsrc();
+      }
+    }
+
     // RIA: 
     // Access source time information to propagate original RTP-Time into RTPSink
 
@@ -1256,6 +1273,7 @@ public:
 
 private:
   TimeInformationSource* time_info = nullptr;
+  uint32_t prev_ssrc = 0;
 };
 
 class MyH264ServerMediaSubsession : public MyServerMediaSubsession {

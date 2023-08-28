@@ -53,6 +53,9 @@ public:
   void setRTPTimestamp(const u_int32_t& timestamp) {  
     fTimestampBase = timestamp;
   }
+  void clearFramesReceived(void) {
+    frames_received = False;
+  }
   char const* rtpPayloadFormatName() const {return fRTPPayloadFormatName;}
 
   unsigned numChannels() const { return fNumChannels; }
