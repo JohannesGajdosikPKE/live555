@@ -1233,7 +1233,7 @@ public:
       // Ideally we would also change the SSRC.
     if (time_info && time_info->isValid()) {
       if (time_info->getSsrc() != prev_ssrc) {
-        clearFramesReceived();
+        RTPSink::clearFramesReceived();
         prev_ssrc = time_info->getSsrc();
       }
     }
