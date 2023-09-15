@@ -43,7 +43,7 @@ DynamicRTSPServer::DynamicRTSPServer(UsageEnvironment& env, int ourSocketIPv4, i
 DynamicRTSPServer::~DynamicRTSPServer() {
 }
 
-static ServerMediaSession* createNewSMS(UsageEnvironment& env,
+static std::shared_ptr<ServerMediaSession> createNewSMS(GenericMediaServer &server, UsageEnvironment& env,
 					char const* fileName, FILE* fid); // forward
 
 void DynamicRTSPServer
@@ -56,14 +56,14 @@ void DynamicRTSPServer
   Boolean const fileExists = fid != NULL;
 
   // Next, check whether we already have a "ServerMediaSession" for this file:
-  ServerMediaSession* sms = getServerMediaSession(streamName);
+  std::shared_ptr<ServerMediaSession> sms = getServerMediaSession(env,streamName);
   Boolean const smsExists = sms != NULL;
 
   // Handle the four possibilities for "fileExists" and "smsExists":
   if (!fileExists) {
     if (smsExists) {
       // "sms" was created for a file that no longer exists. Remove it:
-      removeServerMediaSession(sms);
+      removeServerMediaSession(*sms);
     }
 
     sms = NULL;
@@ -71,12 +71,12 @@ void DynamicRTSPServer
     if (smsExists && isFirstLookupInSession) { 
       // Remove the existing "ServerMediaSession" and create a new one, in case the underlying
       // file has changed in some way:
-      removeServerMediaSession(sms); 
+      removeServerMediaSession(*sms); 
       sms = NULL;
     } 
 
     if (sms == NULL) {
-      sms = createNewSMS(env, streamName, fid); 
+      sms = createNewSMS(*this, env, streamName, fid); 
       addServerMediaSession(sms);
     }
 
@@ -115,16 +115,16 @@ static void onOggDemuxCreation(OggFileServerDemux* newDemux, void* clientData) {
 #define NEW_SMS(description) do {\
 char const* descStr = description\
     ", streamed by the LIVE555 Media Server";\
-sms = ServerMediaSession::createNew(env, fileName, fileName, descStr);\
+sms = ServerMediaSession::createNew(server, env, fileName, fileName, descStr);\
 } while(0)
 
-static ServerMediaSession* createNewSMS(UsageEnvironment& env,
+static std::shared_ptr<ServerMediaSession> createNewSMS(GenericMediaServer &server, UsageEnvironment& env,
 					char const* fileName, FILE* /*fid*/) {
   // Use the file name extension to determine the type of "ServerMediaSession":
   char const* extension = strrchr(fileName, '.');
   if (extension == NULL) return NULL;
 
-  ServerMediaSession* sms = NULL;
+  std::shared_ptr<ServerMediaSession> sms = NULL;
   Boolean const reuseSource = False;
   if (strcmp(extension, ".aac") == 0) {
     // Assumed to be an AAC Audio (ADTS format) file:

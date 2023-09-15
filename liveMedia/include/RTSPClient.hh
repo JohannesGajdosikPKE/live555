@@ -195,8 +195,9 @@ public:
 
   char const* url() const { return fBaseURL; }
 
+#ifndef NO_OPENSSL
   virtual bool verifyServerCertificate(const SSL *ssl) {return true;}
-
+#endif
   static unsigned responseBufferSize;
 
 public: // Some compilers complain if this is "private:"

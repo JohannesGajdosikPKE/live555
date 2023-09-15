@@ -24,7 +24,7 @@ else ()
   target_compile_options (${TARGET} PUBLIC -std=c++-11)
 endif ()
 
-target_link_libraries (${TARGET} $<$<CONFIG:Debug>:../../libLive555/build/Debug/Live555>)
+target_link_libraries (${TARGET} $<$<CONFIG:Debug>:../../libLive555/build/Debug/Live555d>)
 target_link_libraries (${TARGET} $<$<CONFIG:Release>:../../libLive555/build/Release/Live555>)
 target_link_libraries (${TARGET} $<$<CONFIG:RelWithDebInfo>:../../libLive555/build/RelWithDebInfo/Live555>)
 
