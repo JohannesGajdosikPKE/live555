@@ -1491,6 +1491,12 @@ private:
     source->afterGettingFrame1(frameSize, numTruncatedBytes,
                                presentationTime, durationInMicroseconds);
   }
+  void handleJpegError(void) {
+      // Fix found by RIA:
+      // In case of an error in the JPEG data call handleClosure().
+      // This somehow keeps the stream going by setting fIsCurrentlyAwaitingData = False.
+    handleClosure();
+  }
   void afterGettingFrame1(const int frameSize,
                           const unsigned numTruncatedBytes,
                           struct timeval presentationTime,
@@ -1562,14 +1568,17 @@ private:
     const u_int8_t *end = fTo+frameSize;
     if (p+2 > end) {
       envir() << "MyJPEGVideoFramer: too small\n";
+      handleJpegError();
       return;
     }
     if (*p++ != 0xFF) {
       envir() << "MyJPEGVideoFramer: first byte must be 0xFF\n";
+      handleJpegError();
       return;
     }
     if (*p++ != SOI) {
       envir() << "MyJPEGVideoFramer: SOI expected\n";
+      handleJpegError();
       return;
     }
     fLastRestartInterval = 0; // itu-t81: "The SOI marker disables the restart intervals."
@@ -1577,22 +1586,26 @@ private:
       if (p+2 > end) {
         envir() << "MyJPEGVideoFramer: EOI expected, too short: "
                 << (int)(end-p) << "\n";
+        handleJpegError();
         return;
       }
       if (*p++ != 0xFF) {
         envir() << "MyJPEGVideoFramer: 0xFF expected, "
                 << (int)(end-p+1) << " bytes remaining\n";
+        handleJpegError();
         return;
       }
       const int marker = *p++;
       if (marker == EOI) {
         envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
                 << (int)(end-p) << " bytes remaining\n";
+        handleJpegError();
         return;
       }
       if (p+2 > end) {
         envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
                    "no chunk size, too short: " << (int)(end-p) << "\n";
+        handleJpegError();
         return;
       }
       const int chunk_size = (p[0] << 8) | p[1];
@@ -1604,6 +1617,7 @@ private:
           if (p+6 > end) {
             envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
                        "too short: " << (int)(end-p) << "\n";
+            handleJpegError();
             return;
           }
           const u_int8_t *h = p;
@@ -1611,6 +1625,7 @@ private:
           if (precision != 8) {
             envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
                        "8!=precision=" << (int)precision << "\n";
+            handleJpegError();
             return;
           }
           fLastHeight = ((*h++) << 5);
@@ -1621,6 +1636,7 @@ private:
           if (nr_components > 3) {
             envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
                        "3!=nr_components=" << (int)nr_components << "\n";
+            handleJpegError();
             return;
           }
           for (u_int8_t i=0;i<nr_components;i++) {
@@ -1628,6 +1644,7 @@ private:
               envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
                          "component " << (int)i << ": "
                          "too short: " << (int)(end-p) << "\n";
+              handleJpegError();
               return;
             }
             const u_int8_t cid = *h++;
@@ -1635,6 +1652,7 @@ private:
               envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
                          "component " << (int)i << ": "
                       << (int)(i+1) << "!=cid=" << (int)cid << "\n";
+              handleJpegError();
               return;
             }
             const u_int8_t sampling_factor = *h++;
@@ -1663,6 +1681,7 @@ private:
                   envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
                              "component " << (int)i << ": "
                              "2!=hFactor=" << (int)hFactor << "\n";
+                  handleJpegError();
                   return;
                 }
                 if (vFactor == 2) fLastType = 1; else
@@ -1670,31 +1689,36 @@ private:
                   envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
                              "component " << (int)i << ": "
                              "1,2!=vFactor=" << (int)vFactor << "\n";
+                  handleJpegError();
                   return;
                 }
               }
               if (Q_table != 0) {
                 envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
                              "0!=Q_table=" << (int)Q_table << "\n";
-                  return;
+                handleJpegError();
+                return;
               }
             } else {
               if (hFactor != 1) {
                 envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
                            "component " << (int)i << ": "
                            "1!=hFactor=" << (int)hFactor << "\n";
-                  return;
+                handleJpegError();
+                return;
               }
               if (vFactor != 1) {
                 envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
                            "component " << (int)i << ": "
                            "1!=vFactor=" << (int)vFactor << "\n";
-                  return;
+                handleJpegError();
+                return;
               }
               if (Q_table != 1) {
                 envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
                              "1!=Q_table=" << (int)Q_table << "\n";
-                  return;
+                handleJpegError();
+                return;
               }
             }
           }
@@ -1703,6 +1727,7 @@ private:
           if (p+65 > end) {
             envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
                        "too short: " << (int)(end-p) << "\n";
+            handleJpegError();
             return;
           }
           const u_int8_t *h = p;
@@ -1710,6 +1735,7 @@ private:
           if (qi > 1) {
             envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
                        "1<qi=" << (int)qi << "\n";
+            handleJpegError();
             return;
           }
           memcpy(quant_tables+qi*64,h,64);
@@ -1718,6 +1744,7 @@ private:
           if (p+2 > end) {
             envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
                        "too short: " << (int)(end-p) << "\n";
+            handleJpegError();
             return;
           }
           fLastRestartInterval = (p[0] << 8) | p[1];
@@ -1727,6 +1754,7 @@ private:
           if (p >= end) {
             envir() << "MyJPEGVideoFramer " << JpegMarkerToString(marker) << ": "
                        "too short: " << (int)(end-p) << "\n";
+            handleJpegError();
             return;
           }
             // RFC2435: "The data following the RTP/JPEG headers is an entropy-coded segment
