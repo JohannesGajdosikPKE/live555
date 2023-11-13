@@ -185,7 +185,7 @@ void MultiFramedRTPSink::buildAndSendPacket(Boolean isFirstPacket) {
 
   // Set up the RTP header:
   unsigned rtpHdr = 0x80000000; // RTP version 2; marker ('M') bit not set (by default; it can be set later)
-  // Set X-Bit:
+  // Set X-Bit for 0xABAC extension:
   rtpHdr |= 0x10000000;
   rtpHdr |= (fRTPPayloadType<<16);
   rtpHdr |= fSeqNo; // sequence number

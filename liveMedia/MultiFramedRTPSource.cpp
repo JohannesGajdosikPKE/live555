@@ -299,7 +299,7 @@ void MultiFramedRTPSource::networkReadHandler1() {
       unsigned extHdr = ntohl(*(u_int32_t*)(bPacket->data())); ADVANCE(4);
       unsigned remExtSize = 4*(extHdr&0xFFFF);
       if (bPacket->dataSize() < remExtSize) break;
-        // check for NTP timestamp extension
+        // check for 0xABAC NTP timestamp extension
       if (remExtSize == 12 && (extHdr >> 16) == 0xABAC) {
         unsigned ntp_seconds = ntohl(*(u_int32_t*)(bPacket->data())); ADVANCE(4);
         unsigned ntp_fraction = ntohl(*(u_int32_t*)(bPacket->data())); ADVANCE(4);
