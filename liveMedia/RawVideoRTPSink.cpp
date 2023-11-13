@@ -130,7 +130,7 @@ unsigned RawVideoRTPSink
 ::getNumLinesInPacket(unsigned fragOffset, u_int16_t*& lengths, u_int16_t*& offsets) const {
   lengths = offsets = NULL; // initially
   
-  unsigned const rtpHeaderSize = 12;
+  unsigned const rtpHeaderSize = 12 + 16; // +16 bytes 0xABAC-Extension
   unsigned specialHeaderSize = 2; // Extended Sequence Number
   unsigned const packetMaxSize = ourMaxPacketSize();
   unsigned numLines = 0;

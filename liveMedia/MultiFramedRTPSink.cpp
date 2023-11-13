@@ -111,6 +111,14 @@ void MultiFramedRTPSink::setMarkerBit() {
 }
 
 void MultiFramedRTPSink::setTimestamp(struct timeval framePresentationTime) {
+  // fill in the 0xABAC header extension
+  const unsigned header_extension[3] = {
+     htonl(framePresentationTime.tv_sec + 0x83AA7E80), // 1/1/1970 -> 1/1/1900
+     htonl((((u_int64_t)framePresentationTime.tv_usec) << 32) / 1000000ULL),
+     htonl(0x00000000)
+  };
+  fOutBuf->insert((unsigned char const*)header_extension, 12, fTimestampPosition + 12);
+
   // First, convert the presentation time to a 32-bit RTP timestamp:
   fCurrentTimestamp = convertToRTPTimestamp(framePresentationTime);
 
@@ -177,6 +185,8 @@ void MultiFramedRTPSink::buildAndSendPacket(Boolean isFirstPacket) {
 
   // Set up the RTP header:
   unsigned rtpHdr = 0x80000000; // RTP version 2; marker ('M') bit not set (by default; it can be set later)
+  // Set X-Bit:
+  rtpHdr |= 0x10000000;
   rtpHdr |= (fRTPPayloadType<<16);
   rtpHdr |= fSeqNo; // sequence number
   fOutBuf->enqueueWord(rtpHdr);
@@ -187,6 +197,10 @@ void MultiFramedRTPSink::buildAndSendPacket(Boolean isFirstPacket) {
   fOutBuf->skipBytes(4); // leave a hole for the timestamp
 
   fOutBuf->enqueueWord(SSRC());
+
+  // 0xABAC-RTP header extension
+  fOutBuf->enqueueWord(0xABAC0003);
+  fOutBuf->skipBytes(12); // leave a hole for the header extension
 
   // Allow for a special, payload-format-specific header following the
   // RTP header:
@@ -354,7 +368,7 @@ void MultiFramedRTPSink
   }
 }
 
-static unsigned const rtpHeaderSize = 12;
+static unsigned const rtpHeaderSize = 12 + 16; // +16 bytes 0xABAC-Extension
 
 Boolean MultiFramedRTPSink::isTooBigForAPacket(unsigned numBytes) const {
   // Check whether a 'numBytes'-byte frame - together with a RTP header and

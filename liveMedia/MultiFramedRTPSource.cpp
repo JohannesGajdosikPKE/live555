@@ -299,7 +299,18 @@ void MultiFramedRTPSource::networkReadHandler1() {
       unsigned extHdr = ntohl(*(u_int32_t*)(bPacket->data())); ADVANCE(4);
       unsigned remExtSize = 4*(extHdr&0xFFFF);
       if (bPacket->dataSize() < remExtSize) break;
-      ADVANCE(remExtSize);
+        // check for NTP timestamp extension
+      if (remExtSize == 12 && (extHdr >> 16) == 0xABAC) {
+        unsigned ntp_seconds = ntohl(*(u_int32_t*)(bPacket->data())); ADVANCE(4);
+        unsigned ntp_fraction = ntohl(*(u_int32_t*)(bPacket->data())); ADVANCE(4);
+          // ignore flags and padding:
+        ADVANCE(4);
+          // pretend we have received an RTCP Sender Report:
+        receptionStatsDB()
+          .noteIncomingSR(rtpSSRC,ntp_seconds,ntp_fraction,rtpTimestamp);
+      } else {
+        ADVANCE(remExtSize);
+      }
     }
 
     // Discard any padding bytes:
