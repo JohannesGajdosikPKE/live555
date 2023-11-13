@@ -376,9 +376,10 @@ void RTPReceptionStats::noteIncomingSR(u_int32_t ntpTimestampMSW,
 
   // Use this SR to update time synchronization information:
   fSyncTimestamp = rtpTimestamp;
-  fSyncTime.tv_sec = ntpTimestampMSW - 0x83AA7E80; // 1/1/1900 -> 1/1/1970
-  double microseconds = (ntpTimestampLSW*15625.0)/0x04000000; // 10^6/2^32
-  fSyncTime.tv_usec = (unsigned)(microseconds+0.5);
+    // roll over at 1970, dont allow dates before 1970:
+  ntpTimestampMSW -= 0x83AA7E80; // 1/1/1900 -> 1/1/1970
+  fSyncTime.tv_sec = ntpTimestampMSW;
+  fSyncTime.tv_usec = (ntpTimestampLSW * 1000000ULL) >> 32;
   fHasBeenSynchronized = True;
 }
 

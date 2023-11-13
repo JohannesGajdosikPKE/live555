@@ -484,8 +484,7 @@ MIKEYPayload::MIKEYPayload(MIKEYState& ourMIKEYState, u_int8_t payloadType)
       gettimeofday(&timeNow, NULL);
       u_int32_t ntpSeconds = timeNow.tv_sec + 0x83AA7E80; // 1970 epoch -> 1900 epoch
       addWord(p, ntpSeconds);
-      double fractionalPart = (timeNow.tv_usec/15625.0)*0x04000000; // 2^32/10^6
-      u_int32_t ntpFractionOfSecond = (u_int32_t)(fractionalPart+0.5); // round
+      u_int32_t ntpFractionOfSecond = (((u_int64_t)timeNow.tv_usec) << 32) / 1000000ULL; // 2^32/10^6
       addWord(p, ntpFractionOfSecond);
       break;
     }

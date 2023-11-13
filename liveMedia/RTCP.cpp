@@ -1039,8 +1039,7 @@ void RTCPInstance::addSR() {
 
   fOutBuf->enqueueWord(timeNow.tv_sec + 0x83AA7E80);
       // NTP timestamp most-significant word (1970 epoch -> 1900 epoch)
-  double fractionalPart = (timeNow.tv_usec/15625.0)*0x04000000; // 2^32/10^6
-  fOutBuf->enqueueWord((unsigned)(fractionalPart+0.5));
+  fOutBuf->enqueueWord((((u_int64_t)timeNow.tv_usec) << 32) / 1000000ULL); // 2^32/10^6
       // NTP timestamp least-significant word
   unsigned rtpTimestamp = fSink->getLastRtpTime()
 //    + timestampIncrement

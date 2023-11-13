@@ -355,9 +355,9 @@ unsigned RTPTransmissionStats::roundTripDelay() const {
   // in units of 1/65536 (2^-16) seconds:
   unsigned lastReceivedTimeNTP_high
     = fTimeReceived.tv_sec + 0x83AA7E80; // 1970 epoch -> 1900 epoch
-  double fractionalPart = (fTimeReceived.tv_usec*0x0400)/15625.0; // 2^16/10^6
+  unsigned fractionalPart = (((u_int64_t)fTimeReceived.tv_usec)<<16)/1000000ULL; // 2^16/10^6
   unsigned lastReceivedTimeNTP
-    = (unsigned)((lastReceivedTimeNTP_high<<16) + fractionalPart + 0.5);
+    = (unsigned)((lastReceivedTimeNTP_high<<16) + fractionalPart);
 
   int rawResult = lastReceivedTimeNTP - fLastSRTime - fDiffSR_RRTime;
   if (rawResult < 0) {
