@@ -1639,6 +1639,7 @@ void RTSPServer::RTSPClientSession
       if (!fOurServerMediaSession) {
 	// We're accessing the "ServerMediaSession" for the first time.
 	fOurServerMediaSession = sms;
+	informClientConnect();
 #ifdef NOT_NEEDED
 	fOurServerMediaSession->incrementReferenceCount();
 #endif

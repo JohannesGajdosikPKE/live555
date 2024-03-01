@@ -227,10 +227,12 @@ class MediaServerPluginRTSPServer::MyRTSPClientSession : public RTSPServer::RTSP
 public:
   MyRTSPClientSession(UsageEnvironment& env, RTSPServer& ourServer, u_int32_t sessionId)
     : RTSPClientSession(env, ourServer, sessionId) {}
-  ~MyRTSPClientSession(void) {}
-  int getSocket(void) const { return socket; }
+  ~MyRTSPClientSession(void);
+  int getSocket(void) const {return socket;}
   using RTSPClientSession::fOurServerMediaSession;
 protected:
+  void informClientConnect(void) override;
+    // informClientDisconnect not needed: this is done in ~RTSPClientSession
   void handleCmd_SETUP(RTSPClientConnection* ourClientConnection,
     char const* urlPreSuffix, char const* urlSuffix, char const* fullRequestStr) override {
     const int s = ourClientConnection ? ourClientConnection->getSocket() : 0;
@@ -241,6 +243,7 @@ protected:
     RTSPClientSession::handleCmd_SETUP(ourClientConnection, urlPreSuffix, urlSuffix, fullRequestStr);
   }
   int socket = 0;
+  std::shared_ptr<IMStream> stream;
 };
 
 std::shared_ptr<GenericMediaServer::ClientSession> MediaServerPluginRTSPServer::createNewClientSession(UsageEnvironment& env, u_int32_t sessionId) {
@@ -265,8 +268,8 @@ public:
   MediaServerPluginRTSPServer &server;
   UsageEnvironment &env(void) const {return server.envir();}
   const std::string name;
-private:
   const std::shared_ptr<IMStream> stream;
+private:
   std::mutex on_close_mutex;
   std::function<void(const std::string&)> on_close;
   std::mutex delayed_keep_task_mutex;
@@ -286,6 +289,87 @@ private:
   mutable std::mutex sms_map_mutex;
   std::map<UsageEnvironment*,std::shared_ptr<ServerMediaSession> > sms_map;
 };
+
+
+MediaServerPluginRTSPServer::MyRTSPClientSession::~MyRTSPClientSession(void) {
+  if (stream) {
+    struct sockaddr_storage sock_addr;
+    socklen_t sock_addrlen = sizeof(sock_addr);
+    unsigned int src_ip = 0;
+    unsigned int src_port = 0;
+    if (0 == getpeername(getSocket(),(struct sockaddr*)&sock_addr,&sock_addrlen)) {
+      if (((struct sockaddr*)&sock_addr)->sa_family == AF_INET) { // no AF_INET6
+        src_ip = ntohl(((struct sockaddr_in*)&sock_addr)->sin_addr.s_addr);
+        src_port = ntohs(((struct sockaddr_in*)&sock_addr)->sin_port);
+      }
+    }
+    sock_addrlen = sizeof(sock_addr);
+    unsigned int dst_ip = 0;
+    unsigned int dst_port = 0;
+    if (0 == getsockname(getSocket(),(struct sockaddr*)&sock_addr,&sock_addrlen)) {
+      if (((struct sockaddr*)&sock_addr)->sa_family == AF_INET) { // no AF_INET6
+        dst_ip = ntohl(((struct sockaddr_in*)&sock_addr)->sin_addr.s_addr);
+        dst_port = ntohs(((struct sockaddr_in*)&sock_addr)->sin_port);
+      }
+    }
+    stream->connectionOpened(src_ip,src_port,dst_ip,dst_port);
+    envir() << "MyRTSPClientSession::~MyRTSPClientSession: disconnected "
+            << (src_ip>>24)
+            << "." << ((src_ip>>16)&0xFF)
+            << "." << ((src_ip>>8)&0xFF)
+            << "." << (src_ip&0xFF)
+            << ":" << src_port
+            << " -> "
+            << (dst_ip>>24)
+            << "." << ((dst_ip>>16)&0xFF)
+            << "." << ((dst_ip>>8)&0xFF)
+            << "." << (dst_ip&0xFF)
+            << ":" << dst_port
+            << "\n";
+  }
+}
+
+void MediaServerPluginRTSPServer::MyRTSPClientSession::informClientConnect(void) {
+  std::shared_ptr<StreamMapEntry> e(static_cast<MediaServerPluginRTSPServer&>(fOurServer).
+                                      getStreamMapEntry(fOurServerMediaSession->streamName()));
+  if (e && e->stream) {
+    struct sockaddr_storage sock_addr;
+    socklen_t sock_addrlen = sizeof(sock_addr);
+    unsigned int src_ip = 0;
+    unsigned int src_port = 0;
+    if (0 == getpeername(getSocket(),(struct sockaddr*)&sock_addr,&sock_addrlen)) {
+      if (((struct sockaddr*)&sock_addr)->sa_family == AF_INET) { // no AF_INET6
+        src_ip = ntohl(((struct sockaddr_in*)&sock_addr)->sin_addr.s_addr);
+        src_port = ntohs(((struct sockaddr_in*)&sock_addr)->sin_port);
+      }
+    }
+    sock_addrlen = sizeof(sock_addr);
+    unsigned int dst_ip = 0;
+    unsigned int dst_port = 0;
+    if (0 == getsockname(getSocket(),(struct sockaddr*)&sock_addr,&sock_addrlen)) {
+      if (((struct sockaddr*)&sock_addr)->sa_family == AF_INET) { // no AF_INET6
+        dst_ip = ntohl(((struct sockaddr_in*)&sock_addr)->sin_addr.s_addr);
+        dst_port = ntohs(((struct sockaddr_in*)&sock_addr)->sin_port);
+      }
+    }
+    stream = e->stream;
+    stream->connectionOpened(src_ip,src_port,dst_ip,dst_port);
+    envir() << "MyRTSPClientSession::informClientConnect: connected "
+            << (src_ip>>24)
+            << "." << ((src_ip>>16)&0xFF)
+            << "." << ((src_ip>>8)&0xFF)
+            << "." << (src_ip&0xFF)
+            << ":" << src_port
+            << " -> "
+            << (dst_ip>>24)
+            << "." << ((dst_ip>>16)&0xFF)
+            << "." << ((dst_ip>>8)&0xFF)
+            << "." << (dst_ip&0xFF)
+            << ":" << dst_port
+            << " to " << e->name.c_str() << "\n";
+  }
+}
+
 
 static
 std::shared_ptr<uint8_t> CreateSharedArray(
@@ -1122,6 +1206,155 @@ private:
   bool nal_unit_ends_access_unit = true;
 };
 
+void DecomposeDay(int day,int &y,int &m,int &d) {
+    // day.. number of days since 1970.01.01
+  day += (5*(400*365+97) -(30*365+7) -(31+29));
+    // number of days since 0000.03.01
+  y = day / (400*365+97);
+  day -= (400*365+97) * y;
+  if (day < 0) {day += (400*365+97);--y;}
+  y *= 400;
+  {
+    const int c = day / (100*365+24);
+    y += 100 * c;
+    if (c > 3) {
+      m = 1;
+      d = 28;
+      return;
+    }
+    day -= (100*365+24) * c;
+  }
+  {
+    const int h = day / (4*365+1);
+    day -= (4*365+1) * h;
+    y += 4 * h;
+  }
+  {
+    const int h = day / 365;
+    y += h;
+    if (h > 3) {
+      m = 1;
+      d = 28;
+      return;
+    }
+    day -= 365 * h;
+  }
+  if (day < 31+30+31+30+31+31)
+    if (day < 31+30+31)
+      if (day < 31)
+        {m = 2; d = day;} // mar
+      else
+       if (day < 31+30)
+         {m = 3; d = day-31;} // apr
+       else
+         {m = 4; d = day-(31+30);} // may
+    else
+      if (day < 31+30+31+30)
+        {m = 5; d = day-(31+30+31);} // jun
+      else
+        if (day < 31+30+31+30+31)
+          {m = 6; d = day-(31+30+31+30);} // jul
+        else
+          {m = 7; d = day-(31+30+31+30+31);} // aug
+  else
+    if (day < 31+30+31+30+31+31+30+31+30)
+      if (day < 31+30+31+30+31+31+30)
+        {m = 8; d = day-(31+30+31+30+31+31);} // sep
+      else
+        if (day < 31+30+31+30+31+31+30+31)
+          {m = 9; d = day-(31+30+31+30+31+31+30);} // oct
+        else
+          {m = 10; d = day-(31+30+31+30+31+31+30+31);} // nov
+    else
+      if (day < 31+30+31+30+31+31+30+31+30+31)
+        {m = 11; d = day-(31+30+31+30+31+31+30+31+30);} // dec
+      else {
+        if (day < 31+30+31+30+31+31+30+31+30+31+31)
+          {m = 0; d = day-(31+30+31+30+31+31+30+31+30+31);} // jan
+        else
+          {m = 1; d = day-(31+30+31+30+31+31+30+31+30+31+31);} // feb
+        ++y;
+      }
+}
+
+void DecomposeDay(const int64_t us_since_1970,int &Y,int &M,int &D,int &h,int &m,int &s,int &us) {
+  int64_t x = (us_since_1970 -  ((us_since_1970<0) ? (86400000000LL-1LL) : 0)) / 86400000000LL;
+  DecomposeDay(x,Y,M,D);
+  x = us_since_1970 - 86400000000LL * x; // microseconds in this day
+  h = x / 1000000LL;                     // seconds in this day
+  us = x - h * 1000000LL;                // final microseconds
+  m = h / 60;                            // minutes in this day
+  s = h - m * 60;                        // final seconds
+  h = m / 60;                            // final hours
+  m -= h * 60;                           // final minutes
+}
+
+static
+void DecomposeYear(int y,int &A,unsigned int &B,unsigned int &C,unsigned int &D) {
+  if (y < 0) {
+    A = (y-3) / 4;   // A < 0
+    D = y - 4 * A;   // D >= 0
+    y = (A-24) / 25; // y < 0
+    C = A - 25 * y;  // C >= 0
+    A = (y-3) / 4;   // A < 0
+    B = y - 4 * A;   // B >= 0
+  } else {
+    A = y / 4;
+    D = y - 4 * A;
+    y = A / 25;
+    C = A - 25 * y;
+    A = y / 4;
+    B = y - 4 * A;
+  }
+}
+
+static const int max_days_in_month[12] = {31,29,31,30,31,30,31,31,30,31,30,31};
+static const int min_days_before_month[12] = {
+  0,
+  31,
+  31+28,
+  31+28+31,
+  31+28+31+30,
+  31+28+31+30+31,
+  31+28+31+30+31+30,
+  31+28+31+30+31+30+31,
+  31+28+31+30+31+30+31+31,
+  31+28+31+30+31+30+31+31+30,
+  31+28+31+30+31+30+31+31+30+31,
+  31+28+31+30+31+30+31+31+30+31+30
+};
+
+
+bool ComposeDay(const int y,const int m,const int d,int &day) {
+  if (m < 0 || m >= 12 || d < 0 || d >= max_days_in_month[m]) return false;
+  int A;
+  unsigned int B,C,D;
+  DecomposeYear(y,A,B,C,D);
+  if (m < 2) {
+      // no leap year: check for Feb 29th:
+    if ((m == 1) && (d == 28) && !((D == 0) && ((C != 0) || (B == 0)))) return false;
+    if (D != 0) D--;
+    else {
+      D = 3;
+      if (C != 0) C--;
+      else {
+        C = 24;
+        if (B != 0) B--;
+        else {
+          B = 3;
+          A--;
+        }
+      }
+    }
+  }
+  day = 365*y + 97*A + 24*B + C + min_days_before_month[m] + d + 1
+      + (30*365+7)-5*(400*365+97); // 1970
+  return true;
+}
+
+
+
+
 
 class MyServerMediaSubsession : public OnDemandServerMediaSubsession, public IdContainer {
 public:
@@ -1137,10 +1370,152 @@ public:
     envir() << ")::~MyServerMediaSubsession\n";
   }
 protected:
+    float duration() const override { // Returns the file's duration, in seconds
+      float rval = 0.f;
+      std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> e(entry.lock());
+      if (e) {
+        std::chrono::time_point<std::chrono::system_clock, DurationType> start,end;
+        e->stream->getTrickplayStartEnd(start,end);
+        if (start == std::chrono::time_point<std::chrono::system_clock, DurationType>(DurationType(0))) {
+            // playback of a file
+          rval = 1e-6f*std::chrono::duration_cast<std::chrono::microseconds>(end.time_since_epoch()).count();
+        }
+      }
+      std::cout << "MyServerMediaSubsession(" << SubsessionInfoToString(*info) << ")::duration: " << rval << " \n";
+      return rval;
+    }
+    static char *NewAbsTime(std::chrono::time_point<std::chrono::system_clock, DurationType> t) {
+      int Y,M,D,h,m,s,us;
+      DecomposeDay(std::chrono::duration_cast<std::chrono::microseconds>(t.time_since_epoch()).count(),
+                   Y,M,D,h,m,s,us);
+      char *abs_time = new char[64];
+      snprintf(abs_time,63,"%04d%02d%02dT%02d%02d%02d.%06dZ",
+               Y,M,D,h,m,s,us);
+      abs_time[63] = '\0';
+      return abs_time;
+    }
+    static int ParseDec(const char *&str,unsigned int &x,int max_size=0x7FFFFFFF) {
+      int rval = 0;
+      x = 0;
+      while ('0' <= *str && *str <= '9' && rval < max_size) {
+        const unsigned int h = 10u*x + (unsigned int)((*str)-'0');
+        if (h < x) return -1; // overflow
+        x = h;
+        ++str;
+        ++rval;
+      }
+      return rval;
+    }
+    static void ParseAfterComma(const char *&str,double &x) {
+      x = 0.0;
+      double h = 1.0;
+      while ('0' <= *str && *str <= '9') {
+        h *= 0.1;
+        x += h*((*str)-'0');
+        ++str;
+      }
+    }
+
+    static bool ParseAbsTime(const char *str,std::chrono::time_point<std::chrono::system_clock, DurationType> &t) {
+      unsigned int Y,M,D,h,m,s;
+      if (4 == ParseDec(str,Y,4) &&
+          2 == ParseDec(str,M,2) &&
+          2 == ParseDec(str,D,2) &&
+          *str++ == 'T' &&
+          2 == ParseDec(str,h,2) &&
+          2 == ParseDec(str,m,2) &&
+          2 == ParseDec(str,s,2)) {
+        double secs;
+        if (*str == '.') {
+          ++str;
+          ParseAfterComma(str,secs);
+        } else {
+          secs = 0.0;
+        }
+        if (*str++ == 'Z' && *str == '\0') {
+          int day;
+          if (ComposeDay(Y,M,D,day)) {
+            day += 70*365 + 16; // since 1900
+            t = std::chrono::time_point<std::chrono::system_clock, DurationType>( DurationType((int64_t)(1e6*(day*86400.0 + (s+60*(m+60*h)) + secs))));
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+    void getAbsoluteTimeRange(char *&absStartTime, char *&absEndTime) const override {
+      absStartTime = nullptr;
+      absEndTime = nullptr;
+      std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> e(entry.lock());
+      if (e) {
+        std::chrono::time_point<std::chrono::system_clock, DurationType> start,end;
+        e->stream->getTrickplayStartEnd(start,end);
+        if (start > std::chrono::time_point<std::chrono::system_clock, DurationType>(DurationType(0)) &&
+            start < end) {
+          absStartTime = NewAbsTime(start);
+          if (end != std::chrono::time_point<std::chrono::system_clock, DurationType>::max()) absEndTime = NewAbsTime(end);
+        }
+      }
+      std::cout << "MyServerMediaSubsession(" << SubsessionInfoToString(*info) << ")::getAbsoluteTimeRange: "
+                << (absStartTime?absStartTime:"NULL") << ", "
+                << (absEndTime?absEndTime:"NULL") << std::endl;
+    }
+    void seekStreamSource(FramedSource *inputSource, double &seekNPT,
+                          double streamDuration, u_int64_t &numBytes) override {
+      std::cout << "MyServerMediaSubsession(" << SubsessionInfoToString(*info) << ")::seekStreamSource ntp: "
+                << seekNPT << ", dur: " << streamDuration << "\n";
+      // (Attempts to) seek within the input source.
+      std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> e(entry.lock());
+      if (e) {
+        std::chrono::time_point<std::chrono::system_clock, DurationType> start(DurationType((int64_t)(1e6*seekNPT)));
+        std::chrono::time_point<std::chrono::system_clock, DurationType> end(DurationType((int64_t)(1e6*(seekNPT+streamDuration))));
+        e->stream->seekTrickplay(start,end);
+          // give back real start time to caller
+        seekNPT = 1e-6f*std::chrono::duration_cast<std::chrono::microseconds>(start.time_since_epoch()).count();
+      }
+    }
+    void seekStreamSource(FramedSource *inputSource, char *&absStart, char *&absEnd) {
+      std::cout << "MyServerMediaSubsession(" << SubsessionInfoToString(*info)
+                << ")::seekStreamSource abs start: " << (absStart?absStart:"NULL") << ", end: "
+                << (absEnd?absEnd:"NULL") << "\n";
+      std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> e(entry.lock());
+      if (e) {
+        if (absStart) {
+          std::chrono::time_point<std::chrono::system_clock, DurationType> start;
+          if (ParseAbsTime(absStart,start)) {
+            std::chrono::time_point<std::chrono::system_clock, DurationType> end = std::chrono::time_point<std::chrono::system_clock, DurationType>::max();
+            if (absEnd) {
+              if (!ParseAbsTime(absEnd,end)) {
+                  // failure
+                delete[] absStart;absStart = nullptr;
+                if (absEnd) {delete[] absEnd;absEnd = nullptr;}
+                return;
+              }
+            }
+            e->stream->seekTrickplay(start,end);
+              // give back real start time to caller
+              // TODO
+          }
+        }
+      }
+    }
+
+    void testScaleFactor(float& scale) {
+      // Inspects the input value of "scale", and, if necessary,
+      // changes it to a nearby value that we support. (E.g., if the input value of "scale" is 3.3, you might change it to 3 (an integer).)
+      // If there's no 'nearby' value that you support, just set "scale" to 1 (the default value).
+      std::cout << "MyServerMediaSubsession(" << SubsessionInfoToString(*info) << ")::testScaleFactor(" << scale;
+      scale *= 1.1f;
+      std::cout << "): " << scale << "\n";
+    }
+    void setStreamSourceScale(FramedSource* inputSource, float scale) {
+      std::cout << "MyServerMediaSubsession(" << SubsessionInfoToString(*info) << ")::setStreamSourceScale(" << scale << ")\n";
+    }
+
   MyServerMediaSubsession(UsageEnvironment &env,
                           const std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> &entry,
                           const SubsessionInfo *info)
-    : OnDemandServerMediaSubsession(env,True), // reuseFirstSource, meaning createNewStreamSource will not be called excessively
+    : OnDemandServerMediaSubsession(env,entry->stream->hasNoTrickplay()), // reuseFirstSource
       entry(entry),
       info(info) {
     envir() << "MyServerMediaSubsession(" << id << ")::MyServerMediaSubsession(" << entry->name.c_str() << "," << SubsessionInfoToString(*info) << ")\n";

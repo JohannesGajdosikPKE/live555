@@ -70,6 +70,31 @@ public:
     // until RegisterOnFrame is called again.
   virtual void RegisterOnFrame(void *callerId, TOnFrameCallbackPtr onFrameCallback) = 0;
 
+    // inform about opened and closed RTSP-Connections for this stream.
+    // no SubsesionInfo (yet)
+  virtual void connectionOpened(unsigned int src_ip,unsigned short int src_port,
+                                unsigned int dst_ip,unsigned short int dst_port) {}
+  virtual void connectionClosed(unsigned int src_ip,unsigned short int src_port,
+                                unsigned int dst_ip,unsigned short int dst_port) {}
+
+    // If you want to offer trickplay for a stream, you must override these two functions
+    // and then supply the corresponding frames:
+  virtual void getTrickplayStartEnd(std::chrono::time_point<std::chrono::system_clock, DurationType> &start,
+                                    std::chrono::time_point<std::chrono::system_clock, DurationType> &end) const {
+      // default: no trickplay
+    start = std::chrono::time_point<std::chrono::system_clock, DurationType>::max();
+    end = std::chrono::time_point<std::chrono::system_clock, DurationType>::min();
+      // for playback of a file:
+    // start = std::chrono::time_point<std::chrono::system_clock, DurationType>(DurationType(0));
+  }
+  bool hasNoTrickplay(void) const {
+    std::chrono::time_point<std::chrono::system_clock, DurationType> start,end;
+    getTrickplayStartEnd(start,end);
+    return (start == std::chrono::time_point<std::chrono::system_clock, DurationType>::max());
+  }
+  virtual void seekTrickplay(std::chrono::time_point<std::chrono::system_clock, DurationType> &start,
+                             std::chrono::time_point<std::chrono::system_clock, DurationType> &end) {
+  }
 };
 
 typedef std::shared_ptr<IMStream> TStreamPtr;
@@ -86,19 +111,26 @@ public:
 class MPluginParams {
 public:
   typedef void (*LogCallbackPtr)(void *context, const std::string &message);
+  typedef void (*LogCallbackPtr2)(void *context, int loglevel, const std::string &message);
   typedef void (*StatusCallbackPtr)(void *context, const std::string &message);
   MPluginParams(void) {}
   MPluginParams(LogCallbackPtr log_cb,void *log_cb_context,
+                LogCallbackPtr2 log_cb2,void *log_cb_context2,
                 StatusCallbackPtr status_cb,void *status_cb_context)
     :log_cb(log_cb),log_cb_context(log_cb_context),
+     log_cb2(log_cb2),log_cb_context2(log_cb_context2),
      status_cb(status_cb),status_cb_context(status_cb_context) {
     if (!log_cb) abort();
+    if (!log_cb2) abort();
     if (!status_cb) abort();
   }
   void log(const std::string &message) const {log_cb(log_cb_context,message);}
+  void log(int loglevel, const std::string &message) const {log_cb2(log_cb_context2,loglevel,message);}
   void status(const std::string &message) const {status_cb(status_cb_context,message);}
   LogCallbackPtr log_cb = nullptr;
   void *log_cb_context = nullptr;
+  LogCallbackPtr2 log_cb2 = nullptr;
+  void *log_cb_context2 = nullptr;
   StatusCallbackPtr status_cb = nullptr;
   void *status_cb_context = nullptr;
 };
@@ -107,6 +139,7 @@ class RTSPParameters : public MPluginParams {
 public:
   RTSPParameters(void) {}
   RTSPParameters(LogCallbackPtr log_cb,void *log_cb_context,
+                 LogCallbackPtr2 log_cb2,void *log_cb_context2,
                  StatusCallbackPtr status_cb,void *status_cb_context,
                  uint16_t rtspPort,uint16_t httpPort,
                  uint16_t httpsPort,uint16_t rtspsPort,
@@ -115,7 +148,7 @@ public:
                  bool use_ipv6_rtsp,bool use_ipv6_http,bool use_ipv6_https,bool use_ipv6_rtsps,
                  bool rtsp_is_optional,bool http_is_optional,bool https_is_optional,bool rtsps_is_optional,
                  const std::string &tls_cert_file,const std::string &tls_key_file)
-    : MPluginParams(log_cb,log_cb_context,status_cb,status_cb_context),
+    : MPluginParams(log_cb,log_cb_context,log_cb2,log_cb_context2,status_cb,status_cb_context),
       rtspPort(rtspPort),httpPort(httpPort),httpsPort(httpsPort),rtspsPort(rtspsPort),
       bind_to_interface_rtsp(bind_to_interface_rtsp),
       bind_to_interface_http(bind_to_interface_http),
@@ -227,7 +260,7 @@ typedef const char *(InitializeMPluginFunc)(
                     IMStreamFactory *streamManager,
                     const MPluginParams &params);
 
-#define RTCMEDIALIB_API_VERSION "0.12"
+#define RTCMEDIALIB_API_VERSION "0.13"
     // will return the API version of the Library.
     // when the interface_api_version_of_caller does not match,
     // the library will not call the stream_factory.

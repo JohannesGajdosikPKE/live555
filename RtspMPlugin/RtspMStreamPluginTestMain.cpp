@@ -68,7 +68,7 @@ private:
 static const char *prog_name = nullptr;
 static FILE *log_file = nullptr;
 
-static void OnLog(void *context,const std::string &message) {
+static void OnLog2(void *context,int loglevel,const std::string &message) {
   static std::mutex m;
   std::lock_guard<std::mutex> lock(m);
   static bool log_start_of_line = true;
@@ -94,6 +94,10 @@ static void OnLog(void *context,const std::string &message) {
     fflush(log_file);
     log_start_of_line = true;
   }
+}
+
+static void OnLog(void *context,const std::string &message) {
+  OnLog2(context,5,message);
 }
 
 static
@@ -560,6 +564,7 @@ int main(int argc,char **argv) {
                   << "\" from plugin " << plugin_name << std::endl;
       } else {
         RTSPParameters params(&OnLog,nullptr,
+                              &OnLog2,nullptr,
                               &OnStatusInfo,nullptr,
                               rtsp,http,https,rtsps,
                               0,0,0,0,

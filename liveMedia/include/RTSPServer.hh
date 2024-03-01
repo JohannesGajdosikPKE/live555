@@ -263,6 +263,8 @@ public: // should be protected, but some old compilers complain otherwise
   public:
     RTSPClientSession(UsageEnvironment& env, RTSPServer& ourServer, u_int32_t sessionId);
       virtual ~RTSPClientSession();
+      virtual void informClientConnect(void) {}
+        // informClientDisconnect not needed: this is done in ~RTSPClientSession
 
     // Make the handler functions for each command virtual, to allow subclasses to redefine them:
   public:
