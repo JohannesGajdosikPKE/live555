@@ -243,6 +243,10 @@ protected:
     RTSPClientSession::handleCmd_SETUP(ourClientConnection, urlPreSuffix, urlSuffix, fullRequestStr);
   }
   int socket = 0;
+  unsigned int src_ip = 0;
+  unsigned short int src_port = 0;
+  unsigned int dst_ip = 0;
+  unsigned short int dst_port = 0;
   std::shared_ptr<IMStream> stream;
 };
 
@@ -293,26 +297,7 @@ private:
 
 MediaServerPluginRTSPServer::MyRTSPClientSession::~MyRTSPClientSession(void) {
   if (stream) {
-    struct sockaddr_storage sock_addr;
-    socklen_t sock_addrlen = sizeof(sock_addr);
-    unsigned int src_ip = 0;
-    unsigned int src_port = 0;
-    if (0 == getpeername(getSocket(),(struct sockaddr*)&sock_addr,&sock_addrlen)) {
-      if (((struct sockaddr*)&sock_addr)->sa_family == AF_INET) { // no AF_INET6
-        src_ip = ntohl(((struct sockaddr_in*)&sock_addr)->sin_addr.s_addr);
-        src_port = ntohs(((struct sockaddr_in*)&sock_addr)->sin_port);
-      }
-    }
-    sock_addrlen = sizeof(sock_addr);
-    unsigned int dst_ip = 0;
-    unsigned int dst_port = 0;
-    if (0 == getsockname(getSocket(),(struct sockaddr*)&sock_addr,&sock_addrlen)) {
-      if (((struct sockaddr*)&sock_addr)->sa_family == AF_INET) { // no AF_INET6
-        dst_ip = ntohl(((struct sockaddr_in*)&sock_addr)->sin_addr.s_addr);
-        dst_port = ntohs(((struct sockaddr_in*)&sock_addr)->sin_port);
-      }
-    }
-    stream->connectionOpened(src_ip,src_port,dst_ip,dst_port);
+    stream->connectionClosed(src_ip,src_port,dst_ip,dst_port);
     envir() << "MyRTSPClientSession::~MyRTSPClientSession: disconnected "
             << (src_ip>>24)
             << "." << ((src_ip>>16)&0xFF)
@@ -325,18 +310,32 @@ MediaServerPluginRTSPServer::MyRTSPClientSession::~MyRTSPClientSession(void) {
             << "." << ((dst_ip>>8)&0xFF)
             << "." << (dst_ip&0xFF)
             << ":" << dst_port
-            << "\n";
+            << " from " << fOurServerMediaSession->streamName() << "\n";
   }
 }
 
 void MediaServerPluginRTSPServer::MyRTSPClientSession::informClientConnect(void) {
+  if (src_ip || src_port || dst_ip || dst_port) {
+    envir() << "MyRTSPClientSession::informClientConnect: FATAL: assertion failed, already connected: "
+            << (src_ip>>24)
+            << "." << ((src_ip>>16)&0xFF)
+            << "." << ((src_ip>>8)&0xFF)
+            << "." << (src_ip&0xFF)
+            << ":" << src_port
+            << " -> "
+            << (dst_ip>>24)
+            << "." << ((dst_ip>>16)&0xFF)
+            << "." << ((dst_ip>>8)&0xFF)
+            << "." << (dst_ip&0xFF)
+            << ":" << dst_port
+            << " to " << fOurServerMediaSession->streamName() << "\n";
+    abort();
+  }
   std::shared_ptr<StreamMapEntry> e(static_cast<MediaServerPluginRTSPServer&>(fOurServer).
                                       getStreamMapEntry(fOurServerMediaSession->streamName()));
   if (e && e->stream) {
     struct sockaddr_storage sock_addr;
     socklen_t sock_addrlen = sizeof(sock_addr);
-    unsigned int src_ip = 0;
-    unsigned int src_port = 0;
     if (0 == getpeername(getSocket(),(struct sockaddr*)&sock_addr,&sock_addrlen)) {
       if (((struct sockaddr*)&sock_addr)->sa_family == AF_INET) { // no AF_INET6
         src_ip = ntohl(((struct sockaddr_in*)&sock_addr)->sin_addr.s_addr);
@@ -344,8 +343,6 @@ void MediaServerPluginRTSPServer::MyRTSPClientSession::informClientConnect(void)
       }
     }
     sock_addrlen = sizeof(sock_addr);
-    unsigned int dst_ip = 0;
-    unsigned int dst_port = 0;
     if (0 == getsockname(getSocket(),(struct sockaddr*)&sock_addr,&sock_addrlen)) {
       if (((struct sockaddr*)&sock_addr)->sa_family == AF_INET) { // no AF_INET6
         dst_ip = ntohl(((struct sockaddr_in*)&sock_addr)->sin_addr.s_addr);
@@ -366,7 +363,7 @@ void MediaServerPluginRTSPServer::MyRTSPClientSession::informClientConnect(void)
             << "." << ((dst_ip>>8)&0xFF)
             << "." << (dst_ip&0xFF)
             << ":" << dst_port
-            << " to " << e->name.c_str() << "\n";
+            << " to " << fOurServerMediaSession->streamName() << "\n";
   }
 }
 
