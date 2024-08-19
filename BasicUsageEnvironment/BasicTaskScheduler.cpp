@@ -158,16 +158,6 @@ bool BasicTaskScheduler::cancelCommand(const uint64_t token) {
     }
   }
   return false;
-
-  auto it(command_queue.end());
-  while (it != command_queue.begin()) {
-    --it;
-    if (it->seq == token) {
-      command_queue.erase(it);
-      return true;
-    }
-  }
-  return false;
 }
 
 void BasicTaskScheduler::CommandRequestHandler(void* instance, int /*mask*/) {
