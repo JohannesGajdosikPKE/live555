@@ -719,6 +719,7 @@ Boolean RTSPServer::RTSPClientConnection
   if (fOurRTSPServer.fClientConnectionsForHTTPTunneling == NULL) {
     fOurRTSPServer.fClientConnectionsForHTTPTunneling = HashTable::create(STRING_HASH_KEYS);
   }
+    // TODO: prevClientConnection must be protected against deletion in other thread
   RTSPServer::RTSPClientConnection* prevClientConnection
     = (RTSPServer::RTSPClientConnection*)(fOurRTSPServer.fClientConnectionsForHTTPTunneling->Lookup(sessionCookie));
   if (prevClientConnection == NULL || prevClientConnection == this) {
@@ -730,8 +731,9 @@ Boolean RTSPServer::RTSPClientConnection
 #ifdef DEBUG
   fprintf(stderr, "Handled HTTP \"POST\" request (client input socket: %d)\n", fClientInputSocket);
 #endif
-  envir() << "RTSPServer::RTSPClientConnection("  << this << ")::handleHTTPCmd_TunnelingPOST: "
-             "transfering socket " << fClientInputSocket << " and handling to " << prevClientConnection->getId() << "\n";
+  envir() << "RTSPServer::RTSPClientConnection("  << getId() << ")::handleHTTPCmd_TunnelingPOST: "
+             "transfering socket " << fClientInputSocket << " and handling from thread " << envir().taskScheduler().my_thread_id
+          << " to " << prevClientConnection->getId() << " in thread " << prevClientConnection->envir().taskScheduler().my_thread_id << "\n";
   // Change the previous "RTSPClientSession" object's input socket to ours.  It will be used for subsequent requests:
   prevClientConnection->changeClientInputSocket(fClientInputSocket, fInputTLS,
 						envir(), extraData, extraDataSize);
