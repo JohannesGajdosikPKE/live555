@@ -272,8 +272,7 @@ UsageEnvironment &GenericMediaServer::getBestThreadedUsageEnvironment(void) {
   int best_load = 0x7FFFFFFF;
   for (int i=nr_of_workers-1;i>=0;i--) {
     const int load = workers[i] ? workers[i]->getLoad() : 0;
-    if (load < best_load ||
-        (load == best_load && (workers[i] || !workers[best_i]))) {
+    if (load <= best_load) {
       best_load = load;
       best_i = i;
     }
