@@ -197,7 +197,6 @@ RTSPServer::RTSPServer(UsageEnvironment& env,
 		       unsigned reclamationSeconds)
   : GenericMediaServer(env, ourSocketIPv4, ourSocketIPv6, ourPort, reclamationSeconds),
     fHTTPServerSocketIPv4(-1), fHTTPServerSocketIPv6(-1), fHTTPServerPort(0),
-    fClientConnectionsForHTTPTunneling(NULL), // will get created if needed
     fTCPStreamingDatabase(HashTable::create(ONE_WORD_HASH_KEYS)),
     fPendingRegisterOrDeregisterRequests(HashTable::create(ONE_WORD_HASH_KEYS)),
     fRegisterOrDeregisterRequestCounter(0), fAuthDB(authDatabase),
@@ -231,7 +230,6 @@ RTSPServer::~RTSPServer() {
   ::closeSocket(fHTTPServerSocketIPv6);
   
   cleanup(); // Removes all "ClientSession" and "ClientConnection" objects, and their tables.
-  delete fClientConnectionsForHTTPTunneling;
   
   // Delete any pending REGISTER requests:
   RTSPRegisterOrDeregisterSender* r;
@@ -378,9 +376,9 @@ void RTSPServer::stopTCPStreamingOnSocket(int socketNum) {
 
 ////////// RTSPServer::RTSPClientConnection implementation //////////
 
-RTSPServer::RTSPClientConnection*
+std::shared_ptr<RTSPServer::RTSPClientConnection>
 RTSPServer::RTSPClientConnection::create(UsageEnvironment& threaded_env, RTSPServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr, Boolean useTLS) {
-  RTSPClientConnection* rval = new RTSPClientConnection(threaded_env, ourServer, clientSocket, clientAddr, useTLS);
+  auto rval = std::make_shared<RTSPClientConnection>(threaded_env, ourServer, clientSocket, clientAddr, useTLS);
   char tmp[256];
   threaded_env << "RTSPServer::RTSPClientConnection::create: "
                   "new RTSPClientConnection created for socket "
@@ -408,7 +406,10 @@ RTSPServer::RTSPClientConnection::~RTSPClientConnection() {
   envir().taskScheduler().assertSameThread();
   if (fOurSessionCookie != NULL) {
     // We were being used for RTSP-over-HTTP tunneling. Also remove ourselves from the 'session cookie' hash table before we go:
-    fOurRTSPServer.fClientConnectionsForHTTPTunneling->Remove(fOurSessionCookie);
+    {
+      std::lock_guard<std::mutex> lock(fOurRTSPServer.fClientConnectionsForHTTPTunneling_mutex);
+      fOurRTSPServer.fClientConnectionsForHTTPTunneling.erase(fOurSessionCookie);
+    }
     delete[] fOurSessionCookie;
   }
   
@@ -479,8 +480,8 @@ void RTSPServer::RTSPClientConnection
 void RTSPServer::RTSPClientConnection
 ::DESCRIBELookupCompletionFunction(void* clientData, const std::shared_ptr<ServerMediaSession> &sessionLookedUp) {
   LookupContext *context(reinterpret_cast<LookupContext*>(clientData));
-  RTSPServer::RTSPClientConnection *const connection
-    = static_cast<RTSPServer::RTSPClientConnection*>(context->server.getClientConnection(context->connection_id));
+  const std::shared_ptr<RTSPServer::RTSPClientConnection> connection
+    = std::static_pointer_cast<RTSPServer::RTSPClientConnection>(context->server.getClientConnection(context->connection_id));
   if (connection) {
     connection->envir().taskScheduler().assertSameThread();
     connection->handleCmd_DESCRIBE_afterLookup(sessionLookedUp);
@@ -692,11 +693,17 @@ void RTSPServer::RTSPClientConnection::handleHTTPCmd_OPTIONS() {
 void RTSPServer::RTSPClientConnection::handleHTTPCmd_TunnelingGET(char const* sessionCookie) {
   // Record ourself as having this 'session cookie', so that a subsequent HTTP "POST" command (with the same 'session cookie')
   // can find us:
-  if (fOurRTSPServer.fClientConnectionsForHTTPTunneling == NULL) {
-    fOurRTSPServer.fClientConnectionsForHTTPTunneling = HashTable::create(STRING_HASH_KEYS);
-  }
   delete[] fOurSessionCookie; fOurSessionCookie = strDup(sessionCookie);
-  fOurRTSPServer.fClientConnectionsForHTTPTunneling->Add(sessionCookie, (void*)this);
+
+  std::lock_guard<std::mutex> lock(fOurRTSPServer.fClientConnectionsForHTTPTunneling_mutex);
+  if (!fOurRTSPServer.fClientConnectionsForHTTPTunneling.insert(
+         std::pair<std::string, std::weak_ptr<RTSPClientConnection> >(
+           sessionCookie, std::static_pointer_cast<RTSPClientConnection>(shared_from_this()))).second) {
+    envir() << "RTSPServer::RTSPClientConnection(" << getId() << ")::handleHTTPCmd_TunnelingGET(" << sessionCookie << "): double sessionCookie\n";
+    fIsActive = False; // triggers deletion of ourself
+    handleHTTPCmd_notFound();
+    return;
+  }
 #ifdef DEBUG
   fprintf(stderr, "Handled HTTP \"GET\" request (client output socket: %d)\n", fClientOutputSocket);
 #endif
@@ -716,13 +723,15 @@ Boolean RTSPServer::RTSPClientConnection
 ::handleHTTPCmd_TunnelingPOST(char const* sessionCookie, unsigned char const* extraData, unsigned extraDataSize) {
   // Use the "sessionCookie" string to look up the separate "RTSPClientConnection" object that should have been used to handle
   // an earlier HTTP "GET" request:
-  if (fOurRTSPServer.fClientConnectionsForHTTPTunneling == NULL) {
-    fOurRTSPServer.fClientConnectionsForHTTPTunneling = HashTable::create(STRING_HASH_KEYS);
+  std::shared_ptr<RTSPServer::RTSPClientConnection> prevClientConnection;
+  {
+    std::lock_guard<std::mutex> lock(fOurRTSPServer.fClientConnectionsForHTTPTunneling_mutex);
+    const auto it(fOurRTSPServer.fClientConnectionsForHTTPTunneling.find(sessionCookie));
+    if (it != fOurRTSPServer.fClientConnectionsForHTTPTunneling.end()) {
+      prevClientConnection = it->second.lock();
+    }
   }
-    // TODO: prevClientConnection must be protected against deletion in other thread
-  RTSPServer::RTSPClientConnection* prevClientConnection
-    = (RTSPServer::RTSPClientConnection*)(fOurRTSPServer.fClientConnectionsForHTTPTunneling->Lookup(sessionCookie));
-  if (prevClientConnection == NULL || prevClientConnection == this) {
+  if (!prevClientConnection || prevClientConnection.get() == this) {
     // Either there was no previous HTTP "GET" request, or it was on the same connection; treat this "POST" request as bad:
     handleHTTPCmd_notSupported();
     fIsActive = False; // triggers deletion of ourself
@@ -740,6 +749,12 @@ Boolean RTSPServer::RTSPClientConnection
     // revoke ownership of the socket:
   fClientInputSocket = fClientOutputSocket = -1; // so the socket doesn't get closed when we get deleted
   fInputTLS->nullify(); // so that our destructor doesn't reset the copied TLS state
+
+    // defer the potential destruction *prevClientConnection to the owning thread
+  UsageEnvironment &env(prevClientConnection->envir());
+  auto lambda([p=std::move(prevClientConnection)](uint64_t) {});
+  if (prevClientConnection) abort();
+  env.taskScheduler().executeCommand(std::move(lambda));
 
   return True;
 }
@@ -1129,11 +1144,12 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesEndOfLoop(Boolean playA
 }
 
 void RTSPServer::RTSPClientConnection::handleRequestBytesFinish(void) {
+  envir().taskScheduler().assertSameThread();
   --fRecursionCount;
 //  envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: fIsActive: " << (int)fIsActive << "\n";
   // If it has a scheduledDelayedTask, don't delete the instance or close the sockets. The sockets can be reused in the task.
   if (!fIsActive && fScheduledDelayedTask <= 0) {
-    if (fRecursionCount > 0) closeSockets(); else delete this;
+    if (fRecursionCount > 0) closeSockets(); else removeFromServer();
     // Note: The "fRecursionCount" test is for a pathological situation where we reenter the event loop and get called recursively
     // while handling a command (e.g., while handling a "DESCRIBE", to get a SDP description).
     // In such a case we don't want to actually delete ourself until we leave the outermost call.
@@ -2233,7 +2249,7 @@ void RTSPServer::RTSPClientSession
   setRTSPResponse(ourClientConnection, "200 OK", fOurSessionId);
 }
 
-GenericMediaServer::ClientConnection*
+std::shared_ptr<GenericMediaServer::ClientConnection>
 RTSPServer::createNewClientConnection(int clientSocket, struct sockaddr_storage const& clientAddr) {
   return RTSPClientConnection::create(getBestThreadedUsageEnvironment(), *this, clientSocket, clientAddr, fOurConnectionsUseTLS);
 }

@@ -137,7 +137,7 @@ protected:
 
 public: // should be protected, but some old compilers complain otherwise
   // The state of a TCP connection used by a client:
-  class ClientConnection {
+  class ClientConnection : public std::enable_shared_from_this<ClientConnection> {
   protected:
     ClientConnection(UsageEnvironment& threaded_env,GenericMediaServer& ourServer,
 		     int clientSocket, struct sockaddr_storage const& clientAddr,
@@ -167,6 +167,9 @@ public: // should be protected, but some old compilers complain otherwise
     }
     void removeServerMediaSession(const ServerMediaSession &serverMediaSession) {
       fOurServer.removeServerMediaSession(serverMediaSession);
+    }
+    void removeFromServer(void) {
+      fOurServer.removeClientConnection(this);
     }
   private:
       // tread safety: do not allow wild access to fOurServer
@@ -213,7 +216,7 @@ public: // should be protected, but some old compilers complain otherwise
   };
 
 protected:
-  virtual ClientConnection* createNewClientConnection(int clientSocket, struct sockaddr_storage const& clientAddr) = 0;
+  virtual std::shared_ptr<ClientConnection> createNewClientConnection(int clientSocket, struct sockaddr_storage const& clientAddr) = 0;
   virtual std::shared_ptr<ClientSession> createNewClientSession(UsageEnvironment& env, u_int32_t sessionId) = 0;
 
   std::shared_ptr<ClientSession> createNewClientSessionWithId(UsageEnvironment& env);
@@ -239,11 +242,11 @@ protected:
     // The basic, synchronous "ServerMediaSession" lookup operation; only for subclasses:
   std::shared_ptr<ServerMediaSession> getServerMediaSession(UsageEnvironment &env,char const* streamName);
   
-  ClientConnection *getClientConnection(ClientConnection::IdType id) const {
+  std::shared_ptr<ClientConnection> getClientConnection(ClientConnection::IdType id) const {
     std::lock_guard<std::recursive_mutex> lock(fClientConnections_mutex);
     auto it(fClientConnections.find(id));
     if (it != fClientConnections.end()) return it->second;
-    return nullptr;
+    return std::shared_ptr<ClientConnection>();
   }
 
 protected:
@@ -254,11 +257,10 @@ protected:
 
   UsageEnvironment& getBestThreadedUsageEnvironment(void);
 
-private:
   virtual UsageEnvironment *createNewUsageEnvironment(TaskScheduler &scheduler);
-  void addClientConnection(ClientConnection *c) {
+  void addClientConnection(const std::shared_ptr<ClientConnection> &c) {
     std::lock_guard<std::recursive_mutex> guard(fClientConnections_mutex);
-    auto rc(fClientConnections.insert(std::pair<ClientConnection::IdType,ClientConnection*>(c->getId(),c)));
+    auto rc(fClientConnections.insert(std::pair<ClientConnection::IdType,std::shared_ptr<ClientConnection> >(c->getId(),c)));
     if (!rc.second) {
       envir() << "GenericMediaServer::addClientConnection(" << c->getId() << "): fatal: double id\n";
       abort();
@@ -269,13 +271,12 @@ private:
     fClientConnections.erase(c->getId());
   }
   
-protected:
   typedef std::map<std::string,std::weak_ptr<ServerMediaSession> > ServerMediaSessionMap;
   typedef std::map<UsageEnvironment*,ServerMediaSessionMap> ServerMediaSessionEnvMap;
   ServerMediaSessionEnvMap fServerMediaSessions; // maps 'stream name' strings to "ServerMediaSession" objects
-  mutable std::recursive_mutex sms_mutex; // protectes fServerMediaSessions only
-  std::map<ClientConnection::IdType,ClientConnection*> fClientConnections; // the "ClientConnection" objects that we're using
-  mutable std::recursive_mutex fClientConnections_mutex; // protectes fClientConnections
+  mutable std::recursive_mutex sms_mutex; // protects fServerMediaSessions only
+  std::map<ClientConnection::IdType, std::shared_ptr<ClientConnection> > fClientConnections; // the "ClientConnection" objects that we're using
+  mutable std::recursive_mutex fClientConnections_mutex; // protects fClientConnections
     // maps 'session id' strings to "ClientSession" objects
   mutable std::recursive_mutex fClientSessions_mutex; // protects fClientSessions
   std::map<std::string,std::shared_ptr<ClientSession> > fClientSessions;

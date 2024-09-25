@@ -217,7 +217,8 @@ RTSPServer::RTSPClientConnection::ParamsForREGISTER
 ::ParamsForREGISTER(char const* cmd/*"REGISTER" or "DEREGISTER"*/,
 		    RTSPServer::RTSPClientConnection* ourConnection, char const* url, char const* urlSuffix,
 		    Boolean reuseConnection, Boolean deliverViaTCP, char const* proxyURLSuffix)
-  : fCmd(strDup(cmd)), fOurConnection(ourConnection), fURL(strDup(url)), fURLSuffix(strDup(urlSuffix)),
+  : connection_env(ourConnection->envir()), connection_id(ourConnection->getId()),
+    fCmd(strDup(cmd)), fOurConnection(std::static_pointer_cast<RTSPClientConnection>(ourConnection->shared_from_this())), fURL(strDup(url)), fURLSuffix(strDup(urlSuffix)),
     fReuseConnection(reuseConnection), fDeliverViaTCP(deliverViaTCP), fProxyURLSuffix(strDup(proxyURLSuffix)) {
 }
 
@@ -300,7 +301,16 @@ void parseTransportHeaderForREGISTER(char const* buf,
 }
 
 void RTSPServer::RTSPClientConnection::continueHandlingREGISTER(ParamsForREGISTER* params) {
-  params->fOurConnection->continueHandlingREGISTER1(params);
+  params->connection_env.taskScheduler().assertSameThread();
+  const auto connection(params->fOurConnection.lock());
+  if (connection) {
+    connection->continueHandlingREGISTER1(params);
+      // releasing connection may destruct *connection, which is in the correct thread.
+  } else {
+    params->connection_env << "RTSPServer::RTSPClientConnection(" << params->connection_id << ")::continueHandlingREGISTER: "
+                              "Connection has been closed in the meantime, "
+                              "cannot do anything\n";
+  }
 }
 
 void RTSPServer::RTSPClientConnection::continueHandlingREGISTER1(ParamsForREGISTER* params) {
@@ -310,18 +320,21 @@ void RTSPServer::RTSPClientConnection::continueHandlingREGISTER1(ParamsForREGIST
   int socketNumToBackEndServer = params->fReuseConnection ? fClientOutputSocket : -1;
 
   RTSPServer* ourServer = &fOurRTSPServer; // copy the pointer now, in case we "delete this" below
+  UsageEnvironment &env(envir());
   
   if (socketNumToBackEndServer >= 0) {
     // Because our socket will no longer be used by the server to handle incoming requests, we can now delete this
     // "RTSPClientConnection" object.  We do this now, in case the "implementCmd_REGISTER()" call below would also end up
     // deleting this.
     fClientInputSocket = fClientOutputSocket = -1; // so the socket doesn't get closed when we get deleted
-    delete this;
+      // may result in destructing of *this, thread is already ok.
+    ourServer->removeClientConnection(this);
   } else if (!fIsActive && fRecursionCount <= 0 && fScheduledDelayedTask <= 0) {
-    delete this;
+      // may result in destructing of *this, thread is already ok.
+    ourServer->removeClientConnection(this);
   }
   
-  ourServer->implementCmd_REGISTER(envir(), params->fCmd,
+  ourServer->implementCmd_REGISTER(env, params->fCmd,
 				   params->fURL, params->fURLSuffix, socketNumToBackEndServer,
 				   params->fDeliverViaTCP, params->fProxyURLSuffix);
   delete params;

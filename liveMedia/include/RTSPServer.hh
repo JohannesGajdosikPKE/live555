@@ -161,7 +161,7 @@ public: // should be protected, but some old compilers complain otherwise
   using GenericMediaServer::getClientConnection;
   class RTSPClientConnection: public GenericMediaServer::ClientConnection {
   public:
-    static RTSPClientConnection *create(UsageEnvironment &threaded_env, RTSPServer &ourServer, int clientSocket, struct sockaddr_storage const& clientAddr, Boolean useTLS);
+    static std::shared_ptr<RTSPClientConnection> create(UsageEnvironment &threaded_env, RTSPServer &ourServer, int clientSocket, struct sockaddr_storage const& clientAddr, Boolean useTLS);
     // A data structure that's used to implement the "REGISTER" command:
     class ParamsForREGISTER {
     public:
@@ -169,10 +169,12 @@ public: // should be protected, but some old compilers complain otherwise
 			RTSPClientConnection* ourConnection, char const* url, char const* urlSuffix,
 			Boolean reuseConnection, Boolean deliverViaTCP, char const* proxyURLSuffix);
       virtual ~ParamsForREGISTER();
+      UsageEnvironment &connection_env;
+      const ClientConnection::IdType connection_id;
     private:
       friend class RTSPClientConnection;
       char const* fCmd;
-      RTSPClientConnection* fOurConnection;
+      const std::weak_ptr<RTSPClientConnection> fOurConnection;
       char* fURL;
       char* fURLSuffix;
       Boolean fReuseConnection, fDeliverViaTCP;
@@ -188,12 +190,13 @@ public: // should be protected, but some old compilers complain otherwise
     void handleRequestBytesResume(void);
     int newBytesRead,numBytesRemaining;
     unsigned contentLength;
-  protected:
+  public:
     RTSPClientConnection(UsageEnvironment& threaded_env, RTSPServer& ourServer,
 			 int clientSocket, struct sockaddr_storage const& clientAddr,
 			 Boolean useTLS = False);
     virtual ~RTSPClientConnection();
 
+  protected:
     friend class RTSPClientSession;
 
     // Make the handler functions for each command virtual, to allow subclasses to reimplement them, if necessary:
@@ -324,7 +327,7 @@ public: // should be protected, but some old compilers complain otherwise
 protected: // redefined virtual functions
   // If you subclass "RTSPClientConnection", then you must also redefine this virtual function in order
   // to create new objects of your subclass:
-  virtual ClientConnection* createNewClientConnection(int clientSocket, struct sockaddr_storage const& clientAddr);
+  virtual std::shared_ptr<ClientConnection> createNewClientConnection(int clientSocket, struct sockaddr_storage const& clientAddr);
 
 protected:
   // If you subclass "RTSPClientSession", then you must also redefine this virtual function in order
@@ -348,7 +351,8 @@ private:
   friend class DeregisterRequestRecord;
   int fHTTPServerSocketIPv4, fHTTPServerSocketIPv6; // for optional RTSP-over-HTTP tunneling
   Port fHTTPServerPort; // ditto
-  HashTable* fClientConnectionsForHTTPTunneling; // maps client-supplied 'session cookie' strings to "RTSPClientConnection"s
+  std::map<std::string, std::weak_ptr<RTSPClientConnection> > fClientConnectionsForHTTPTunneling; // maps client-supplied 'session cookie' strings to "RTSPClientConnection"s
+  std::mutex fClientConnectionsForHTTPTunneling_mutex;
     // (used only for optional RTSP-over-HTTP tunneling)
   HashTable* fTCPStreamingDatabase;
   mutable std::recursive_mutex fTCPStreamingDatabase_mutex; // protectes fTCPStreamingDatabase only

@@ -323,27 +323,24 @@ void GenericMediaServer::cleanup() {
     std::lock_guard<std::recursive_mutex> lock(fClientConnections_mutex);
     // Close all client connection objects:
     for (auto it(fClientConnections.begin());it!=fClientConnections.end();) {
-      GenericMediaServer::ClientConnection *connection(it->second);
+      std::shared_ptr<GenericMediaServer::ClientConnection> connection(it->second);
       if (connection->envir().taskScheduler().isSameThread()) {
-        ++it;
-        delete connection;
+        fClientConnections.erase(it++);
       } else {
         auto id(it->first);
         ++it;
         connection->envir().taskScheduler().executeCommand([this,id,&sem](uint64_t) {
-            std::lock_guard<std::recursive_mutex> guard(fClientConnections_mutex);
-            auto it(fClientConnections.find(id));
-            if (it != fClientConnections.end()) delete it->second;
+            {
+              std::lock_guard<std::recursive_mutex> guard(fClientConnections_mutex);
+              fClientConnections.erase(id);
+            }
             sem.post();
           });
         post_count++;
       }
     }
   }
-  while (post_count) {
-    sem.wait();
-    post_count--;
-  }
+  while (post_count--) {sem.wait();}
 
   {
     std::lock_guard<std::recursive_mutex> lock(sms_mutex);
@@ -493,7 +490,7 @@ GenericMediaServer::ClientConnection
 
 void GenericMediaServer::ClientConnection::afterConstruction(void) {
   // Add ourself to our 'client connections' table:
-  fOurServer.addClientConnection(this);
+  fOurServer.addClientConnection(shared_from_this());
   
   // Arrange to handle incoming requests:
   resetRequestBuffer();
@@ -516,22 +513,33 @@ void GenericMediaServer::ClientConnection::afterConstruction(void) {
 }
 
 GenericMediaServer::ClientConnection::~ClientConnection() {
-    // may be called from another thread
+    // may NOT be called from another thread because closeSockets manipulate the owning threads backgroundhandling,
+    // the owning thread may actually executing some backgroundhandling for this socket right now
+  if (!envir().taskScheduler().isSameThread()) {
+    envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::~ClientConnection: "
+               "programming error, not called from thread " << envir().taskScheduler().my_thread_id << "\n";
+    abort();
+  }
   envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::~ClientConnection\n";
   envir().taskScheduler().cancelCommand(init_command);
   envir().taskScheduler().addNrOfUsers(-1);
-  // Remove ourself from the server's 'client connections' hash table before we go:
-  fOurServer.removeClientConnection(this);
   
   closeSockets();
 }
 
 void GenericMediaServer::ClientConnection::closeSockets() {
+  if (!envir().taskScheduler().isSameThread()) {
+    envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::closeSockets: "
+               "programming error, not called from thread " << envir().taskScheduler().my_thread_id << "\n";
+    abort();
+  }
   // Turn off background handling on our socket:
   if (fOurSocket>= 0) {
     envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::closeSockets: disableBackgroundHandling(" << fOurSocket << ") and close socket\n";
     envir().taskScheduler().disableBackgroundHandling(fOurSocket);
     ::closeSocket(fOurSocket);
+  } else {
+    envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::closeSockets: already closed\n";
   }
 
   if (fClientOutputSocket == fOurSocket) fClientOutputSocket = -1;
@@ -706,26 +714,6 @@ std::shared_ptr<ServerMediaSession> GenericMediaServer::getServerMediaSession(Us
   return it->second.lock();
 }
 
-
-////////// ServerMediaSessionIterator implementation //////////
-/*
-GenericMediaServer::ServerMediaSessionIterator
-::ServerMediaSessionIterator(GenericMediaServer& server)
-  : fOurIterator((server.fServerMediaSessions == NULL)
-		 ? NULL : HashTable::Iterator::create(*server.fServerMediaSessions)) {
-}
-
-GenericMediaServer::ServerMediaSessionIterator::~ServerMediaSessionIterator() {
-  delete fOurIterator;
-}
-
-ServerMediaSession* GenericMediaServer::ServerMediaSessionIterator::next() {
-  if (fOurIterator == NULL) return NULL;
-
-  char const* key; // dummy
-  return (ServerMediaSession*)(fOurIterator->next(key));
-}
-*/
 
 ////////// UserAuthenticationDatabase implementation //////////
 
