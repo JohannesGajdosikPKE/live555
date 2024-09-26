@@ -121,6 +121,7 @@ BasicTaskScheduler::BasicTaskScheduler(unsigned maxSchedulerGranularity)
 }
 
 uint64_t BasicTaskScheduler::executeCommand(std::function<void(uint64_t task_nr)> &&cmd) {
+  if (!cmd) return 0;
   uint64_t rval;
   {
     std::lock_guard<std::mutex> guard(command_queue_mutex);
