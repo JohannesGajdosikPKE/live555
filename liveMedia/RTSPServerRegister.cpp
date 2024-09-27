@@ -66,9 +66,11 @@ public:
       envir() << "RegisterRequestRecord::handleResponse: grabConnection() returned "
               << PrintSocket(tmp,sizeof(tmp),sock) << "\n";
       if (sock >= 0) {
-	increaseSendBufferTo(envir(), sock, 50*1024); // in anticipation of streaming over it
-	(void)fOurServer.createNewClientConnection(sock, remoteAddress);
+        increaseSendBufferTo(envir(), sock, 50*1024); // in anticipation of streaming over it
+        auto conn = fOurServer.createNewClientConnection(sock, remoteAddress);
         envir() << "RegisterRequestRecord::handleResponse: new ClientConnection(" << sock << ") created\n";
+        // if necessary destroy in correct thread
+        GenericMediaServer::ClientConnection::ReleaseInOwnThread(std::move(conn));
       }
     }
 

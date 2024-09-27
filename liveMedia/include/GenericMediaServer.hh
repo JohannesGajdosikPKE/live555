@@ -149,6 +149,14 @@ public: // should be protected, but some old compilers complain otherwise
     typedef void *IdType;
     IdType getId(void) const {return id;}
     int getSocket(void) const {return fOurSocket;}
+    template<class T>
+    static void ReleaseInOwnThread(std::shared_ptr<T> &&connection) {
+      if (!connection) return;
+      UsageEnvironment &env(connection->envir());
+      auto lambda([p = std::move(connection)](uint64_t) {});
+      if (connection) abort();
+      env.taskScheduler().executeCommand(std::move(lambda));
+    }
   protected:
     void closeSockets();
 

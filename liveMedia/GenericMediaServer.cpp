@@ -429,7 +429,9 @@ envir() << "GenericMediaServer::incomingConnectionHandlerOnSocket: accept(" << s
 #endif
   
   // Create a new object for handling this connection:
-  (void)createNewClientConnection(clientSocket, clientAddr);
+  auto conn = createNewClientConnection(clientSocket, clientAddr);
+  // if necessary destroy in correct thread
+  ClientConnection::ReleaseInOwnThread(std::move(conn));
 }
 
 void GenericMediaServer

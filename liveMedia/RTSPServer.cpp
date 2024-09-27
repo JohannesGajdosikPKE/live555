@@ -751,10 +751,7 @@ Boolean RTSPServer::RTSPClientConnection
   fInputTLS->nullify(); // so that our destructor doesn't reset the copied TLS state
 
     // defer the potential destruction *prevClientConnection to the owning thread
-  UsageEnvironment &env(prevClientConnection->envir());
-  auto lambda([p=std::move(prevClientConnection)](uint64_t) {});
-  if (prevClientConnection) abort();
-  env.taskScheduler().executeCommand(std::move(lambda));
+  ClientConnection::ReleaseInOwnThread(std::move(prevClientConnection));
 
   return True;
 }
