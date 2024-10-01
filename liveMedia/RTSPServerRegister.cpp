@@ -67,10 +67,8 @@ public:
               << PrintSocket(tmp,sizeof(tmp),sock) << "\n";
       if (sock >= 0) {
         increaseSendBufferTo(envir(), sock, 50*1024); // in anticipation of streaming over it
-        auto conn = fOurServer.createNewClientConnection(sock, remoteAddress);
-        envir() << "RegisterRequestRecord::handleResponse: new ClientConnection(" << sock << ") created\n";
-        // if necessary destroy in correct thread
-        GenericMediaServer::ClientConnection::ReleaseInOwnThread(std::move(conn));
+        envir() << "RegisterRequestRecord::handleResponse: creating new ClientConnection(" << sock << ")\n";
+        fOurServer.createNewClientConnection(sock, remoteAddress);
       }
     }
 

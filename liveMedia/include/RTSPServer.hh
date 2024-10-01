@@ -161,7 +161,7 @@ public: // should be protected, but some old compilers complain otherwise
   using GenericMediaServer::getClientConnection;
   class RTSPClientConnection: public GenericMediaServer::ClientConnection {
   public:
-    static std::shared_ptr<RTSPClientConnection> create(UsageEnvironment &threaded_env, RTSPServer &ourServer, int clientSocket, struct sockaddr_storage const& clientAddr, Boolean useTLS);
+    static void create(UsageEnvironment &threaded_env, RTSPServer &ourServer, int clientSocket, struct sockaddr_storage const& clientAddr, Boolean useTLS);
     // A data structure that's used to implement the "REGISTER" command:
     class ParamsForREGISTER {
     public:
@@ -236,7 +236,7 @@ public: // should be protected, but some old compilers complain otherwise
     void handleAlternativeRequestByte1(u_int8_t requestByte);
     Boolean authenticationOK(char const* cmdName, char const* urlSuffix, char const* fullRequestStr);
     void changeClientInputSocket(int newSocketNum, ServerTLSState const* newTLSState,
-				 UsageEnvironment &other_env, unsigned char const* extraData, unsigned extraDataSize);
+				 UsageEnvironment &new_env, unsigned char const* extraData, unsigned extraDataSize);
       // used to implement RTSP-over-HTTP tunneling
     static void continueHandlingREGISTER(ParamsForREGISTER* params);
     virtual void continueHandlingREGISTER1(ParamsForREGISTER* params);
@@ -327,7 +327,7 @@ public: // should be protected, but some old compilers complain otherwise
 protected: // redefined virtual functions
   // If you subclass "RTSPClientConnection", then you must also redefine this virtual function in order
   // to create new objects of your subclass:
-  virtual std::shared_ptr<ClientConnection> createNewClientConnection(int clientSocket, struct sockaddr_storage const& clientAddr);
+  void createNewClientConnectionImpl(UsageEnvironment& env, int clientSocket, struct sockaddr_storage const& clientAddr) override;
 
 protected:
   // If you subclass "RTSPClientSession", then you must also redefine this virtual function in order

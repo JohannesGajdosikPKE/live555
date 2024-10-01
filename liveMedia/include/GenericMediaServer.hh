@@ -149,14 +149,6 @@ public: // should be protected, but some old compilers complain otherwise
     typedef void *IdType;
     IdType getId(void) const {return id;}
     int getSocket(void) const {return fOurSocket;}
-    template<class T>
-    static void ReleaseInOwnThread(std::shared_ptr<T> &&connection) {
-      if (!connection) return;
-      UsageEnvironment &env(connection->envir());
-      auto lambda([p = std::move(connection)](uint64_t) {});
-      if (connection) abort();
-      env.taskScheduler().executeCommand(std::move(lambda));
-    }
   protected:
     void closeSockets();
 
@@ -183,7 +175,6 @@ public: // should be protected, but some old compilers complain otherwise
       // tread safety: do not allow wild access to fOurServer
     GenericMediaServer& fOurServer;
     const IdType id;
-    std::atomic<uint64_t> init_command;
   protected:
     int fOurSocket;
     int fClientOutputSocket; // for RTSPClientConnection only
@@ -224,7 +215,15 @@ public: // should be protected, but some old compilers complain otherwise
   };
 
 protected:
-  virtual std::shared_ptr<ClientConnection> createNewClientConnection(int clientSocket, struct sockaddr_storage const& clientAddr) = 0;
+  void createNewClientConnection(int clientSocket, struct sockaddr_storage const& clientAddr) {
+    UsageEnvironment &env(getBestThreadedUsageEnvironment());
+    env.taskScheduler().executeCommand(
+      [this,s=clientSocket,a=clientAddr,&env](uint64_t) {
+        createNewClientConnectionImpl(env,s,a);
+      });
+  }
+    // already called from env-thread
+  virtual void createNewClientConnectionImpl(UsageEnvironment& env, int clientSocket, struct sockaddr_storage const& clientAddr) = 0;
   virtual std::shared_ptr<ClientSession> createNewClientSession(UsageEnvironment& env, u_int32_t sessionId) = 0;
 
   std::shared_ptr<ClientSession> createNewClientSessionWithId(UsageEnvironment& env);

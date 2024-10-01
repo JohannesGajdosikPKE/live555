@@ -429,9 +429,7 @@ envir() << "GenericMediaServer::incomingConnectionHandlerOnSocket: accept(" << s
 #endif
   
   // Create a new object for handling this connection:
-  auto conn = createNewClientConnection(clientSocket, clientAddr);
-  // if necessary destroy in correct thread
-  ClientConnection::ReleaseInOwnThread(std::move(conn));
+  createNewClientConnection(clientSocket, clientAddr);
 }
 
 void GenericMediaServer
@@ -452,7 +450,8 @@ static GenericMediaServer::ClientConnection::IdType GenerateId(void) {
 
 GenericMediaServer::ClientConnection
 ::ClientConnection(UsageEnvironment &threaded_env, GenericMediaServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr, Boolean useTLS)
-  : threaded_env(threaded_env), fOurServer(ourServer), id(GenerateId()), init_command(0), fOurSocket(clientSocket), fClientOutputSocket(clientSocket), fClientAddr(clientAddr), fTLS(threaded_env) {
+  : threaded_env(threaded_env), fOurServer(ourServer), id(GenerateId()), fOurSocket(clientSocket), fClientOutputSocket(clientSocket), fClientAddr(clientAddr), fTLS(threaded_env) {
+  envir().taskScheduler().assertSameThread();
   fInputTLS = fOutputTLS = &fTLS;
     char peer_host_str[INET6_ADDRSTRLEN + 1];
     char peer_port_str[7 + 1];
@@ -491,27 +490,14 @@ GenericMediaServer::ClientConnection
 }
 
 void GenericMediaServer::ClientConnection::afterConstruction(void) {
+  envir().taskScheduler().assertSameThread();
   // Add ourself to our 'client connections' table:
   fOurServer.addClientConnection(shared_from_this());
   
   // Arrange to handle incoming requests:
   resetRequestBuffer();
-  if (envir().taskScheduler().isSameThread()) {
-    envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::afterConstruction: calling setBackgroundHandling(" << fOurSocket << ") in same thread\n";
-    envir().taskScheduler().setBackgroundHandling(fOurSocket, SOCKET_READABLE|SOCKET_EXCEPTION, incomingRequestHandler, this);
-  } else {
-    envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::afterConstruction: delegating setBackgroundHandling(" << fOurSocket << ") to thread " << envir().taskScheduler().my_thread_id << "\n";
-    init_command = envir().taskScheduler().executeCommand(
-      [this](uint64_t) {
-        envir().taskScheduler().setBackgroundHandling(fOurSocket, SOCKET_READABLE|SOCKET_EXCEPTION, incomingRequestHandler, this);
-        envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::afterConstruction::l: executed delegated setBackgroundHandling(" << fOurSocket << ")\n";
-          // Maybe this task will finish fast, and assigning init_command will happen after clearing.
-          // Never mind.
-          // There is no way cancelling a wrong task: even if there is a new task every nanosecond
-          // it will take hundreds of years to wrap around uint64_t.
-        init_command = 0;
-      });
-  }
+  envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::afterConstruction: calling setBackgroundHandling(" << fOurSocket << ")\n";
+  envir().taskScheduler().setBackgroundHandling(fOurSocket, SOCKET_READABLE|SOCKET_EXCEPTION, incomingRequestHandler, this);
 }
 
 GenericMediaServer::ClientConnection::~ClientConnection() {
@@ -523,7 +509,6 @@ GenericMediaServer::ClientConnection::~ClientConnection() {
     abort();
   }
   envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::~ClientConnection\n";
-  envir().taskScheduler().cancelCommand(init_command);
   envir().taskScheduler().addNrOfUsers(-1);
   
   closeSockets();
