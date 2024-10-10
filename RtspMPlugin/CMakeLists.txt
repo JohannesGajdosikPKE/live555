@@ -193,7 +193,6 @@ set(PLUGIN_SOURCES
   ../liveMedia/include/OnDemandServerMediaSubsession.hh
   ../liveMedia/include/OutputFile.hh
   ../liveMedia/include/PassiveServerMediaSubsession.hh
-  ../liveMedia/include/ProxyServerMediaSession.hh
   ../liveMedia/include/QCELPAudioRTPSource.hh
   ../liveMedia/include/QuickTimeFileSink.hh
   ../liveMedia/include/QuickTimeGenericRTPSource.hh
@@ -390,7 +389,6 @@ set(PLUGIN_SOURCES
   ../liveMedia/OnDemandServerMediaSubsession.cpp
   ../liveMedia/OutputFile.cpp
   ../liveMedia/PassiveServerMediaSubsession.cpp
-  ../liveMedia/ProxyServerMediaSession.cpp
   ../liveMedia/QCELPAudioRTPSource.cpp
   ../liveMedia/QuickTimeFileSink.cpp
   ../liveMedia/QuickTimeGenericRTPSource.cpp
@@ -444,6 +442,8 @@ target_include_directories(${PLUGIN} PRIVATE ${OPENSSL_INCLUDE_PATH})
 
 add_executable(${TESTPROG} RtspMStreamPluginTestMain.cpp)
 target_link_libraries(${TESTPROG} ${PLUGIN})
+
+target_compile_options(${PLUGIN} PRIVATE -DNO_PROXY_SERVER)
 
 if (WIN32)
   target_compile_options(${PLUGIN} PRIVATE -DLIVE555_FORCE_BOOLEAN_TYPE=char)

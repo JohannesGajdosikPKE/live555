@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2022 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2024 Live Networks, Inc.  All rights reserved.
 // An abstraction of a network interface used for RTP (or RTCP).
 // (This allows the RTP-over-TCP hack (RFC 2326, section 10.12) to
 // be implemented transparently.)
@@ -395,7 +395,7 @@ Boolean RTPInterface::sendDataOverTCP(int socketNum, TLSState* tlsState,
   if (dataSize <= 0) return True; // gaj: catch silly invocations
   int sendResult = (tlsState != NULL && tlsState->isNeeded)
     ? tlsState->write((char const*)data, dataSize)
-    : send(socketNum, (char const*)data, dataSize, 0/*flags*/);
+    : send(socketNum, (char const*)data, dataSize, MSG_NOSIGNAL/*flags*/);
   int err = (sendResult < 0) ? envir().getErrno() : 0;
   if (sendResult < (int)dataSize) {
     // The TCP send() failed - at least partially.
@@ -412,7 +412,7 @@ Boolean RTPInterface::sendDataOverTCP(int socketNum, TLSState* tlsState,
       makeSocketBlocking(socketNum, RTPINTERFACE_BLOCKING_WRITE_TIMEOUT_MS);
       sendResult = (tlsState != NULL && tlsState->isNeeded)
 	? tlsState->write((char const*)(&data[numBytesSentSoFar]), numBytesRemainingToSend)
-	: send(socketNum, (char const*)(&data[numBytesSentSoFar]), numBytesRemainingToSend, 0/*flags*/);
+	: send(socketNum, (char const*)(&data[numBytesSentSoFar]), numBytesRemainingToSend, MSG_NOSIGNAL/*flags*/);
       err = (sendResult < 0) ? envir().getErrno() : 0;
       makeSocketNonBlocking(socketNum);
       if ((unsigned)sendResult != numBytesRemainingToSend) {

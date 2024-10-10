@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2022 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2024 Live Networks, Inc.  All rights reserved.
 // A 'ServerMediaSubsession' object that represents an existing
 // 'RTPSink', rather than one that creates new 'RTPSink's on demand.
 // Implementation
@@ -70,11 +70,18 @@ Boolean PassiveServerMediaSubsession::rtcpIsMuxed() {
 
 char const*
 PassiveServerMediaSubsession::sdpLines(int /*addressFamily*/) {
+  if (fRTPSink.srtpROC() != fSRTP_ROC) {
+    // Hack: The SRTP ROC has changed, so we need to regenerate the SDP description.
+    delete fSDPLines; fSDPLines = NULL;
+    fSRTP_ROC = fRTPSink.srtpROC();
+  }
+
   if (fSDPLines == NULL ) {
     // Construct a set of SDP lines that describe this subsession:
     // Use the components from "rtpSink".
     if (fParentSession->streamingUsesSRTP) { // Hack to set up for SRTP/SRTCP
-      fRTPSink.setupForSRTP(fParentSession->streamingIsEncrypted);
+      fRTPSink.setupForSRTP(fParentSession->streamingIsEncrypted, fSRTP_ROC);
+
       if (fRTCPInstance != NULL) fRTCPInstance->setupForSRTCP();
     }
 
@@ -211,7 +218,7 @@ void PassiveServerMediaSubsession::startStream(unsigned clientSessionId,
   }
 }
 
-float PassiveServerMediaSubsession::getCurrentNPT(void* streamToken) {
+float PassiveServerMediaSubsession::getCurrentNPT(void* /*streamToken*/) {
   // Return the elapsed time between our "RTPSink"s creation time, and the current time:
   struct timeval const& creationTime  = fRTPSink.creationTime(); // alias
 
@@ -222,8 +229,8 @@ float PassiveServerMediaSubsession::getCurrentNPT(void* streamToken) {
 }
 
 void PassiveServerMediaSubsession
-::getRTPSinkandRTCP(void* streamToken,
-		    RTPSink const*& rtpSink, RTCPInstance const*& rtcp) {
+::getRTPSinkandRTCP(void* /*streamToken*/,
+		    RTPSink*& rtpSink, RTCPInstance*& rtcp) {
   rtpSink = &fRTPSink;
   rtcp = fRTCPInstance;
 }

@@ -13,7 +13,7 @@ You should have received a copy of the GNU Lesser General Public License
 along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
- // Copyright (c) 1996-2022, Live Networks, Inc.  All rights reserved
+ // Copyright (c) 1996-2024, Live Networks, Inc.  All rights reserved
 // Delay queue
 // C++ header
 
@@ -144,7 +144,7 @@ public:
   }
 
 protected: // abstract base class
-  DelayQueueEntry(DelayInterval delay);
+  DelayQueueEntry(DelayInterval delay, intptr_t token);
 
   virtual void handleTimeout();
 
@@ -155,7 +155,6 @@ private:
   DelayInterval fDeltaTimeRemaining;
 
   intptr_t fToken;
-  static std::atomic<intptr_t> tokenCounter;
 };
 
 ///// DelayQueue /////

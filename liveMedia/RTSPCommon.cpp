@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2022 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2024 Live Networks, Inc.  All rights reserved.
 // Common routines used by both RTSP clients and servers
 // Implementation
 
@@ -23,7 +23,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h> // for "isxdigit()
-#include <time.h> // for "strftime()" and "gmtime()"
+#include <time.h> // for "gmtime()"
 
 static void decodeURL(char* url) {
   // Replace (in place) any %<hex><hex> sequences with the appropriate 8-bit character.
@@ -355,9 +355,25 @@ char const* dateHeader() {
   static char buf[200];
 #if !defined(_WIN32_WCE)
   time_t tt = time(NULL);
-  strftime(buf, sizeof buf, "Date: %a, %b %d %Y %H:%M:%S GMT\r\n", gmtime(&tt));
+  tm time_tm;
+#ifdef _WIN32
+  if (gmtime_s(&time_tm, &tt) != 0) {
+      time_tm = tm{};
+  }
 #else
-  // WinCE apparently doesn't have "time()", "strftime()", or "gmtime()",
+  if (gmtime_r(&tt, &time_tm) == NULL) {
+    time_tm = tm();
+  }
+#endif
+  static const char* day[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+  static const char* month[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+  snprintf(buf, sizeof buf, "Date: %s, %s %02d %04d %02d:%02d:%02d GMT\r\n",
+          day[time_tm.tm_wday], month[time_tm.tm_mon], time_tm.tm_mday,
+          1900 + time_tm.tm_year,
+          time_tm.tm_hour, time_tm.tm_min, time_tm.tm_sec);
+#else
+  // WinCE apparently doesn't have "time()", or "gmtime()",
   // so generate the "Date:" header a different, WinCE-specific way.
   // (Thanks to Pierre l'Hussiez for this code)
   // RSF: But where is the "Date: " string?  This code doesn't look quite right...

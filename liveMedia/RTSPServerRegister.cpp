@@ -14,14 +14,16 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2022 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2024 Live Networks, Inc.  All rights reserved.
 // A RTSP server
 // Implementation of functionality related to the "REGISTER" and "DEREGISTER" commands
 
 #include "RTSPServer.hh"
 #include "RTSPCommon.hh"
 #include "RTSPRegisterSender.hh"
+#ifndef NO_PROXY_SERVER
 #include "ProxyServerMediaSession.hh"
+#endif
 #include "GroupsockHelper.hh"
 #include "BasicUsageEnvironment.hh"
 
@@ -340,7 +342,7 @@ void RTSPServer::RTSPClientConnection::continueHandlingREGISTER1(ParamsForREGIST
   delete params;
 }
 
-
+#ifndef NO_PROXY_SERVER
 ///////// RTSPServerWithREGISTERProxying implementation /////////
 
 RTSPServerWithREGISTERProxying* RTSPServerWithREGISTERProxying
@@ -454,3 +456,4 @@ UserAuthenticationDatabase* RTSPServerWithREGISTERProxying::getAuthenticationDat
 
   return RTSPServer::getAuthenticationDatabaseForCommand(cmdName);
 }
+#endif
