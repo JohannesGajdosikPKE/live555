@@ -45,6 +45,7 @@ typedef void ServerRequestAlternativeByteHandler(void* instance, u_int8_t reques
 
 class RTPInterface {
 public:
+  const unsigned int id;
   RTPInterface(Medium* owner, Groupsock* gs);
   virtual ~RTPInterface();
 
