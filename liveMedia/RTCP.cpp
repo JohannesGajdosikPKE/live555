@@ -167,6 +167,7 @@ RTCPInstance::RTCPInstance(UsageEnvironment& env, Groupsock* RTCPgs,
     fSource->registerForMultiplexedRTCPPackets(this);
   } else {
     // Arrange to handle incoming reports from the network:
+    env << "RTCPInstance::RTCPInstance: calling fRTCPInterface.startNetworkReading(incomingReportHandler)\n";
     TaskScheduler::BackgroundHandlerProc* handler
       = (TaskScheduler::BackgroundHandlerProc*)&incomingReportHandler;
     fRTCPInterface.startNetworkReading(handler);
@@ -389,6 +390,8 @@ void RTCPInstance::sendAppPacket(u_int8_t subtype, char const* name,
 
 void RTCPInstance::setStreamSocket(int sockNum, unsigned char streamChannelId,
 				   TLSState* tlsState) {
+  envir() << "RTCPInstance::setStreamSocket(" << sockNum << "," << ((int)streamChannelId) << "," << tlsState << ") start: "
+             "fRTCPInterface.stopNetworkReading/setStreamSocket/startNetworkReading(incomingReportHandler)\n";
   // Turn off background read handling:
   fRTCPInterface.stopNetworkReading();
 
@@ -399,10 +402,13 @@ void RTCPInstance::setStreamSocket(int sockNum, unsigned char streamChannelId,
   TaskScheduler::BackgroundHandlerProc* handler
     = (TaskScheduler::BackgroundHandlerProc*)&incomingReportHandler;
   fRTCPInterface.startNetworkReading(handler);
+  envir() << "RTCPInstance::setStreamSocket(" << sockNum << "," << ((int)streamChannelId) << "," << tlsState << "): end\n";
 }
 
 void RTCPInstance::addStreamSocket(int sockNum, unsigned char streamChannelId,
 				   TLSState* tlsState) {
+  envir() << "RTCPInstance::addStreamSocket(" << sockNum << "," << ((int)streamChannelId) << "," << tlsState << ") start: "
+             "fRTCPInterface.stopNetworkReading/setStreamSocket/startNetworkReading(incomingReportHandler)\n";
   // First, turn off background read handling for the default (UDP) socket:
   envir().taskScheduler().turnOffBackgroundReadHandling(fRTCPInterface.gs()->socketNum());
 
@@ -413,6 +419,7 @@ void RTCPInstance::addStreamSocket(int sockNum, unsigned char streamChannelId,
   TaskScheduler::BackgroundHandlerProc* handler
     = (TaskScheduler::BackgroundHandlerProc*)&incomingReportHandler;
   fRTCPInterface.startNetworkReading(handler);
+  envir() << "RTCPInstance::addStreamSocket(" << sockNum << "," << ((int)streamChannelId) << "," << tlsState << "): end\n";
 }
 
 void RTCPInstance
@@ -576,6 +583,7 @@ void RTCPInstance
 	reportSenderSSRC = fromAddressAndPort.sin_addr.s_addr^portNum(fromAddressAndPort);
       }
 #endif
+      envir() << "RTCPInstance::processIncomingReport(" << tcpSocketNum << "," << ((int)tcpStreamChannelId) << "): pt=" << ((int)pt) << "\n";
 
       Boolean subPacketOK = False;
       switch (pt) {

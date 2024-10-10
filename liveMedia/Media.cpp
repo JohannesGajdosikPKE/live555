@@ -189,6 +189,7 @@ Boolean Medium::isServerMediaSession() const {
 ////////// _Tables implementation //////////
 
 _Tables* _Tables::getOurTables(UsageEnvironment& env, Boolean createIfNotPresent) {
+  env.taskScheduler().assertSameThread();
   if (env.liveMediaPriv == NULL && createIfNotPresent) {
     env.liveMediaPriv = new _Tables(env);
   }
@@ -198,6 +199,7 @@ _Tables* _Tables::getOurTables(UsageEnvironment& env, Boolean createIfNotPresent
 #ifndef USE_LIVE555_MEDIATABLE
 
 void _Tables::reclaimIfPossible() {
+  fEnv.taskScheduler().assertSameThread();
   if (socketTable == NULL) {
     fEnv.liveMediaPriv = NULL;
     delete this;
@@ -206,6 +208,7 @@ void _Tables::reclaimIfPossible() {
 
 _Tables::_Tables(UsageEnvironment& env)
   : socketTable(NULL), fEnv(env) {
+  env.taskScheduler().assertSameThread();
 }
 
 _Tables::~_Tables() {
