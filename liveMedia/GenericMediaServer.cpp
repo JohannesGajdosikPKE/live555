@@ -223,10 +223,15 @@ private:
   GenericMediaServer::Semaphore sem,sem2;
 };
 
-static inline unsigned int GetNrOfCores(void) {
-  unsigned int rval = std::thread::hardware_concurrency();
-  if (rval == 0) rval = 32; // C++ does not know the nr of cores
-  else if (rval > 1024) rval = 1024; // sanity check
+static inline unsigned int GetNrOfCores(unsigned int nr = 0,float factor = 1.f) {
+  unsigned int rval = nr;
+  if (0 == rval) {
+    rval = std::thread::hardware_concurrency();
+    if (0 == rval) rval = 32; // C++ does not know the nr of cores
+  }
+  rval = 0.5f + rval * factor;
+  if (1024 < rval) rval = 1024; // sanity check
+  else if (0 == rval) rval = 1;
   return rval;
 }
 
@@ -410,14 +415,15 @@ void GenericMediaServer::incomingConnectionHandlerOnSocket(int serverSocket) {
   struct sockaddr_storage clientAddr;
   SOCKLEN_T clientAddrLen = sizeof clientAddr;
   int clientSocket = accept(serverSocket, (struct sockaddr*)&clientAddr, &clientAddrLen);
-envir() << "GenericMediaServer::incomingConnectionHandlerOnSocket: accept(" << serverSocket << ") returned " << clientSocket << "\n";
   if (clientSocket < 0) {
     int err = envir().getErrno();
     if (err != EWOULDBLOCK) {
       envir().setResultErrMsg("accept() failed: ");
+      envir() << "GenericMediaServer::incomingConnectionHandlerOnSocket: accept(" << serverSocket << ") failed: " << err << "\n";
     }
     return;
   }
+  envir() << "GenericMediaServer::incomingConnectionHandlerOnSocket: accept(" << serverSocket << ") returned " << clientSocket << "\n";
   ignoreSigPipeOnSocket(clientSocket); // so that clients on the same host that are killed don't also kill us
   makeSocketNonBlocking(clientSocket);
 // gaj: original 50*1024 is much too small

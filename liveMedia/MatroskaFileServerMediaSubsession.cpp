@@ -49,7 +49,7 @@ void MatroskaFileServerMediaSubsession
 }
 
 FramedSource* MatroskaFileServerMediaSubsession
-::createNewStreamSource(unsigned clientSessionId, unsigned& estBitrate) {
+::createNewStreamSource(unsigned clientSessionId, unsigned& estBitrate, void *rtsp_client_connection) {
   FramedSource* baseSource = fOurDemux.newDemuxedTrack(clientSessionId, fTrack->trackNumber);
   if (baseSource == NULL) return NULL;
   

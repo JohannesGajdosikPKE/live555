@@ -159,7 +159,8 @@ void PassiveServerMediaSubsession
 		      Boolean& isMulticast,
 		      Port& serverRTPPort,
 		      Port& serverRTCPPort,
-		      void*& streamToken) {
+		      void*& streamToken,
+		      void *rtsp_client_connection) {
   isMulticast = True;
   Groupsock& gs = fRTPSink.groupsockBeingUsed();
   if (destinationTTL == 255) destinationTTL = gs.ttl();

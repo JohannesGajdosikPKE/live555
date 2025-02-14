@@ -149,6 +149,7 @@ public: // should be protected, but some old compilers complain otherwise
     typedef void *IdType;
     IdType getId(void) const {return id;}
     int getSocket(void) const {return fOurSocket;}
+    const struct sockaddr_storage &getClientAddr(void) const {return fClientAddr;}
   protected:
     void closeSockets();
 

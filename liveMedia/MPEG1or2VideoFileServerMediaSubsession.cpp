@@ -49,7 +49,7 @@ MPEG1or2VideoFileServerMediaSubsession
 }
 
 FramedSource* MPEG1or2VideoFileServerMediaSubsession
-::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate) {
+::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate, void *rtsp_client_connection) {
   estBitrate = 500; // kbps, estimate
 
   ByteStreamFileSource* fileSource

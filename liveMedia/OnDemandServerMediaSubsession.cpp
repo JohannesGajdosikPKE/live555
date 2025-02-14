@@ -76,7 +76,7 @@ OnDemandServerMediaSubsession::sdpLines(int addressFamily) {
     // dummy (unused) source and "RTPSink" objects,
     // whose parameters we use for the SDP lines:
     unsigned estBitrate;
-    FramedSource* inputSource = createNewStreamSource(0, estBitrate);
+    FramedSource* inputSource = createNewStreamSource(0, estBitrate, nullptr);
     if (inputSource == NULL) return NULL; // file not found
 
     Groupsock* dummyGroupsock = createGroupsock(nullAddress(addressFamily), 0);
@@ -120,7 +120,8 @@ void OnDemandServerMediaSubsession
 		      Boolean& isMulticast,
 		      Port& serverRTPPort,
 		      Port& serverRTCPPort,
-		      void*& streamToken) {
+		      void*& streamToken,
+		      void *rtsp_client_connection) {
   if (addressIsNull(destinationAddress)) {
     // normal case - use the client address as the destination address:
     destinationAddress = clientAddress;
@@ -138,7 +139,7 @@ void OnDemandServerMediaSubsession
     // Normal case: Create a new media source:
     unsigned streamBitrate;
     FramedSource* mediaSource
-      = createNewStreamSource(clientSessionId, streamBitrate);
+      = createNewStreamSource(clientSessionId, streamBitrate, rtsp_client_connection);
 
     // Create 'groupsock' and 'sink' objects for the destination,
     // using previously unused server port numbers:

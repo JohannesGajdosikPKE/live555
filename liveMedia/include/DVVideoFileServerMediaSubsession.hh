@@ -40,7 +40,7 @@ private: // redefined virtual functions
   virtual char const* getAuxSDPLine(RTPSink* rtpSink, FramedSource* inputSource);
   virtual void seekStreamSource(FramedSource* inputSource, double& seekNPT, double streamDuration, u_int64_t& numBytes);
   virtual void setStreamSourceDuration(FramedSource* inputSource, double streamDuration, u_int64_t& numBytes);
-  virtual FramedSource* createNewStreamSource(unsigned clientSessionId, unsigned& estBitrate);
+  virtual FramedSource* createNewStreamSource(unsigned clientSessionId, unsigned& estBitrate, void *rtsp_client_connection) override;
   virtual RTPSink* createNewRTPSink(Groupsock* rtpGroupsock, unsigned char rtpPayloadTypeIfDynamic, FramedSource* inputSource);
   virtual float duration() const;
 

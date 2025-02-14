@@ -500,7 +500,7 @@ MediaServerPluginRTSPServer::StreamMapEntry::connect(const SubsessionInfo *info,
 
 void MediaServerPluginRTSPServer::StreamMapEntry::remember(Registration *reg) {
     // only called from the Registration constructor
-  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::remember(" << SubsessionInfoToString(*reg->info) << "): start\n";
+//  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::remember(" << SubsessionInfoToString(*reg->info) << "): start\n";
   if (!stream) abort();
   {
     std::lock_guard<std::recursive_mutex> lock(registration_mutex);
@@ -508,12 +508,12 @@ void MediaServerPluginRTSPServer::StreamMapEntry::remember(Registration *reg) {
     rs.e = this;
     if (!rs.insert(reg).second) abort();
   }
-  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::remember end\n";
+//  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::remember end\n";
 }
 
 void MediaServerPluginRTSPServer::StreamMapEntry::forget(Registration *reg) {
     // only called from the Registration destructor: from the worker threads, when MyFrameSource is destructed
-  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::forget(" << SubsessionInfoToString(*reg->info) << "): start\n";
+//  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::forget(" << SubsessionInfoToString(*reg->info) << "): start\n";
   std::lock_guard<std::recursive_mutex> lock(registration_mutex);
   auto it(registration_map.find(reg->info));
   if (it == registration_map.end()) abort();
@@ -531,14 +531,14 @@ void MediaServerPluginRTSPServer::StreamMapEntry::forget(Registration *reg) {
       }
     }
   }
-  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::forget(" << SubsessionInfoToString(*reg->info) << "): end\n";
+//  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::forget(" << SubsessionInfoToString(*reg->info) << "): end\n";
 }
 
 struct KeepTaskHelper : public std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> {
   KeepTaskHelper(std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> &&p)
     : std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry>(std::move(p)) {
-    get()->env() << "KeepTaskHelper::KeepTaskHelper(" << get()->id << "," << get()->name.c_str() << "): "
-                    "keeping shared_ptr, use_count: " << (int)(use_count()) << "\n";
+//    get()->env() << "KeepTaskHelper::KeepTaskHelper(" << get()->id << "," << get()->name.c_str() << "): "
+//                    "keeping shared_ptr, use_count: " << (int)(use_count()) << "\n";
     if (!get()->server.registerKeepTaskHelper(this)) {
       get()->env() << "FATAL KeepTaskHelper::KeepTaskHelper(" << get()->id << "," << get()->name.c_str() << "): "
                       "double registration\n";
@@ -555,8 +555,8 @@ struct KeepTaskHelper : public std::shared_ptr<MediaServerPluginRTSPServer::Stre
     const std::string name(get()->name);
     const int uc(use_count()-1);
     reset();
-    env << "KeepTaskHelper::~KeepTaskHelper(" << id << "," << name.c_str() << "): "
-           "shared_ptr released, use_count: " << uc << "\n";
+//    env << "KeepTaskHelper::~KeepTaskHelper(" << id << "," << name.c_str() << "): "
+//           "shared_ptr released, use_count: " << uc << "\n";
   }
   void finishWaiting(void) {
     if (get()->env().taskScheduler().isSameThread()) {
@@ -894,7 +894,7 @@ MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(ServerType type, UsageE
                              params(params), stream_factory(stream_factory),
                              m_urlPrefix(rtspURLPrefix(params.bind_to_interface_rtsp ? ourSocketIPv4 : -1)) // allocated with strDup, not strdup. free with delete[]
 {
-  env << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(" << ServerTypeToString(type) << "): start\n";
+  env << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(" << ServerTypeToString(type) << "): start: " << nr_of_workers << " threads\n";
   RTSPParameters::UserPassIterator it(params.getUserPass());
   if (it) {
     env << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(" << ServerTypeToString(type) << "): preparing auth_db\n";
@@ -988,7 +988,7 @@ void MediaServerPluginRTSPServer::IncomingConnectionHandlerHTTPIPv4(void *instan
 }
 
 void MediaServerPluginRTSPServer::incomingConnectionHandlerHTTPIPv4() {
-  envir() << "MediaServerPluginRTSPServer::incomingConnectionHandlerHTTPIPv4: calling incomingConnectionHandlerOnSocket(" << m_HTTPServerSocketIPv4 << ")\n";
+//  envir() << "MediaServerPluginRTSPServer::incomingConnectionHandlerHTTPIPv4: calling incomingConnectionHandlerOnSocket(" << m_HTTPServerSocketIPv4 << ")\n";
   incomingConnectionHandlerOnSocket(m_HTTPServerSocketIPv4);
 }
 
@@ -997,7 +997,7 @@ void MediaServerPluginRTSPServer::IncomingConnectionHandlerHTTPIPv6(void *instan
 }
 
 void MediaServerPluginRTSPServer::incomingConnectionHandlerHTTPIPv6() {
-  envir() << "MediaServerPluginRTSPServer::incomingConnectionHandlerHTTPIPv6: calling incomingConnectionHandlerOnSocket(" << m_HTTPServerSocketIPv6 << ")\n";
+//  envir() << "MediaServerPluginRTSPServer::incomingConnectionHandlerHTTPIPv6: calling incomingConnectionHandlerOnSocket(" << m_HTTPServerSocketIPv6 << ")\n";
   incomingConnectionHandlerOnSocket(m_HTTPServerSocketIPv6);
 }
 
@@ -1046,11 +1046,31 @@ class MyFrameSource : public FramedSource, public IdContainer, public TimeInform
 public:
   static MyFrameSource *createNew(UsageEnvironment &env,
                                   MediaServerPluginRTSPServer::StreamMapEntry &e,
-                                  const SubsessionInfo *info) {
-    MyFrameSource *rval = new MyFrameSource(env,e.name+","+info->getRtpPayloadFormatName());
+                                  const SubsessionInfo *info,
+                                  unsigned clientSessionId,
+                                  void *rtsp_client_connection) {
+    std::ostringstream o;
+    o << e.name << ',' << info->getRtpPayloadFormatName()
+      << ",0x" << std::hex << std::setw(8) << std::setfill('0')
+      << clientSessionId << std::dec;
+    RTSPServer::RTSPClientConnection *const client_connection
+      = reinterpret_cast<RTSPServer::RTSPClientConnection*>(rtsp_client_connection);
+    if (rtsp_client_connection) {
+      const struct sockaddr_storage& addr(client_connection->getClientAddr());
+      if (((struct sockaddr*)&addr)->sa_family == AF_INET) { // no AF_INET6
+        const unsigned int ip = ntohl(((struct sockaddr_in*)&addr)->sin_addr.s_addr);
+        const unsigned short port = ntohs(((struct sockaddr_in*)&addr)->sin_port);
+        o << ',' << (ip >> 24)
+          << '.' << ((ip >> 16) & 0xFF)
+          << '.' << ((ip >> 8) & 0xFF)
+          << '.' << (ip & 0xFF)
+          << ':' << port;
+      }
+    }
+    MyFrameSource *rval = new MyFrameSource(env,o.str(),client_connection);
 
     if (info->useRTPTimestampCorrection())
-      // set initial rtp time value for SDP information, in case we want to reuse ther RTP timestamp from source
+      // set initial rtp time value for SDP information, in case we want to reuse the RTP timestamp from source
       rval->setTimeVal(TimeType(std::chrono::time_point<std::chrono::system_clock, DurationType>(
         std::chrono::milliseconds(0)),
         info->getInitialRtpTimestamp(),
@@ -1066,7 +1086,9 @@ public:
 private:
   MyFrameSource(const MyFrameSource&);
   MyFrameSource &operator=(MyFrameSource&);
-  MyFrameSource(UsageEnvironment &env,const std::string &name) : FramedSource(env), name(name) {
+  MyFrameSource(UsageEnvironment &env,const std::string &name,
+                RTSPServer::RTSPClientConnection *client_connection)
+      : FramedSource(env),name(name),client_connection(client_connection) {
     env << "MyFrameSource(" << id << "," << name.c_str() << ")::MyFrameSource\n";
   }
   ~MyFrameSource(void) override {
@@ -1098,6 +1120,11 @@ private:
   }
   void connect(MediaServerPluginRTSPServer::StreamMapEntry &e,
                const SubsessionInfo *info) {
+    if (!client_connection) {
+      envir() << "MyFrameSource(" << id << "," << name.c_str() << ")::connect(" << e.name.c_str() << "," << SubsessionInfoToString(*info) << "): "
+                 "refusing to connect this dummy FrameSource\n";
+      return;
+    }
     envir() << "MyFrameSource(" << id << "," << name.c_str() << ")::connect(" << e.name.c_str() << "," << SubsessionInfoToString(*info) << ")\n";
     frame_registration = e.connect(info,
           [this](const Frame &f) {
@@ -1193,7 +1220,10 @@ private:
   void doGetNextFrame(void) override {
     deliverFrame();
   }
+public:
   const std::string name;
+private:
+  RTSPServer::RTSPClientConnection *const client_connection;
   std::deque<Frame> my_frame_queue;
   std::deque<uint64_t> registered_tasks;
   std::mutex registered_tasks_mutex;
@@ -1512,18 +1542,21 @@ protected:
   MyServerMediaSubsession(UsageEnvironment &env,
                           const std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> &entry,
                           const SubsessionInfo *info)
-    : OnDemandServerMediaSubsession(env,entry->stream->hasNoTrickplay()), // reuseFirstSource
+    : OnDemandServerMediaSubsession(env, False), // reuseFirstSource; never reuse the Framesource for another rtsp connection, because:
+        // 1) Probably the new rtsp connection for an existing source has been scheduled to a different thread anyway and uses a different source
+        // 2) In the end the source contains MyFrameSource which contains the frame queue, and I want different queues for different connections
       entry(entry),
       info(info) {
     envir() << "MyServerMediaSubsession(" << id << ")::MyServerMediaSubsession(" << entry->name.c_str() << "," << SubsessionInfoToString(*info) << ")\n";
     entry->keepAlive();
   }
-  MyFrameSource *createFrameSource(unsigned clientSessionId) {
+  MyFrameSource *createFrameSource(unsigned clientSessionId, void *rtsp_client_connection) {
     const std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> e(entry.lock());
     if (e) {
-      MyFrameSource *const rval = MyFrameSource::createNew(envir(),*e,info);
+      MyFrameSource *const rval = MyFrameSource::createNew(envir(),*e,info,
+                                                           clientSessionId,rtsp_client_connection);
       envir() << "MyServerMediaSubsession(" << id << ")::createFrameSource(" << clientSessionId
-              << "): returning MyFrameSource(" << rval->id << ")\n";
+              << "): returning MyFrameSource(" << rval->id << "," << rval->name.c_str() << ")\n";
       return rval;
     } else {
       envir() << "MyServerMediaSubsession(" << id << ")::createFrameSource(" << clientSessionId
@@ -1655,8 +1688,9 @@ public:
 protected:
   const char *getAuxSDPLine(RTPSink*,FramedSource*) override {return info->getExtraInfo();}
   FramedSource *createNewStreamSource(unsigned clientSessionId,
-                                      unsigned &estBitrate) override {
-    FramedSource *rval = createFrameSource(clientSessionId);
+                                      unsigned &estBitrate,
+                                      void *rtsp_client_connection) override {
+    FramedSource *rval = createFrameSource(clientSessionId, rtsp_client_connection);
     if (rval) {
       estBitrate = info->getEstBitrate(); // kbps, estimate
       rval = H264VideoStreamDiscreteFramer::createNew(envir(),rval);
@@ -1706,8 +1740,9 @@ protected:
   };
   const char *getAuxSDPLine(RTPSink*,FramedSource*) override {return info->getExtraInfo();}
   FramedSource *createNewStreamSource(unsigned clientSessionId,
-                                      unsigned &estBitrate) override {
-    FramedSource *rval = createFrameSource(clientSessionId);
+                                      unsigned &estBitrate,
+                                      void *rtsp_client_connection) override {
+    FramedSource *rval = createFrameSource(clientSessionId, rtsp_client_connection);
     if (rval) {
       estBitrate = info->getEstBitrate(); // kbps, estimate
       rval = new MyH265VideoStreamDiscreteFramer(envir(),static_cast<MyFrameSource*>(rval));
@@ -1748,8 +1783,9 @@ public:
     : MyServerMediaSubsession(env,e,info) {}
 protected:
   FramedSource *createNewStreamSource(unsigned clientSessionId,
-                                      unsigned &estBitrate) override {
-    FramedSource *rval = createFrameSource(clientSessionId);
+                                      unsigned &estBitrate,
+                                      void *rtsp_client_connection) override {
+    FramedSource *rval = createFrameSource(clientSessionId, rtsp_client_connection);
     if (rval) {
       estBitrate = info->getEstBitrate(); // kbps, estimate
       rval = MPEG4VideoStreamDiscreteFramer::createNew(envir(),rval);
@@ -2157,8 +2193,9 @@ public:
   }
 protected:
   FramedSource *createNewStreamSource(unsigned clientSessionId,
-                                      unsigned &estBitrate) override {
-    FramedSource *rval = createFrameSource(clientSessionId);
+                                      unsigned &estBitrate,
+                                      void *rtsp_client_connection) override {
+    FramedSource *rval = createFrameSource(clientSessionId, rtsp_client_connection);
     if (rval) {
       estBitrate = info->getEstBitrate(); // kbps, estimate
       rval = MyJPEGVideoFramer::createNew(envir(),rval);
@@ -2286,8 +2323,9 @@ public:
   }
 protected:
   FramedSource *createNewStreamSource(unsigned clientSessionId,
-                                      unsigned &estBitrate) override {
-    FramedSource *rval = createFrameSource(clientSessionId);
+                                      unsigned &estBitrate,
+                                      void *rtsp_client_connection) override {
+    FramedSource *rval = createFrameSource(clientSessionId, rtsp_client_connection);
     if (rval) {
       estBitrate = info->getEstBitrate(); // kbps, estimate
     } else {
@@ -2325,8 +2363,9 @@ public:
   }
 protected:
   FramedSource *createNewStreamSource(unsigned clientSessionId,
-                                      unsigned &estBitrate) override {
-    FramedSource *rval = createFrameSource(clientSessionId);
+                                      unsigned &estBitrate,
+                                      void *rtsp_client_connection) override {
+    FramedSource *rval = createFrameSource(clientSessionId, rtsp_client_connection);
     if (rval) {
       estBitrate = info->getEstBitrate();
     } else {

@@ -40,7 +40,8 @@ public:
 
 private: // redefined virtual functions
   virtual FramedSource* createNewStreamSource(unsigned clientSessionId,
-                                              unsigned& estBitrate);
+                                              unsigned& estBitrate,
+                                              void *rtsp_client_connection) override;
   virtual void closeStreamSource(FramedSource *inputSource);
   virtual RTPSink* createNewRTPSink(Groupsock* rtpGroupsock,
                                     unsigned char rtpPayloadTypeIfDynamic,
@@ -527,7 +528,8 @@ ProxyServerMediaSubsession::~ProxyServerMediaSubsession() {
   delete[] (char*)fCodecName;
 }
 
-FramedSource* ProxyServerMediaSubsession::createNewStreamSource(unsigned clientSessionId, unsigned& estBitrate) {
+FramedSource* ProxyServerMediaSubsession::createNewStreamSource(unsigned clientSessionId, unsigned& estBitrate,
+                                                                void *rtsp_client_connection) {
   ProxyServerMediaSession* const sms = (ProxyServerMediaSession*)fParentSession;
 
   if (verbosityLevel() > 0) {

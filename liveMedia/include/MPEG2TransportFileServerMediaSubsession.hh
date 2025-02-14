@@ -76,7 +76,7 @@ private: // redefined virtual functions
 
   // The virtual functions that are usually implemented by "ServerMediaSubsession"s:
   virtual FramedSource* createNewStreamSource(unsigned clientSessionId,
-					      unsigned& estBitrate);
+					      unsigned& estBitrate, void *rtsp_client_connection) override;
   virtual RTPSink* createNewRTPSink(Groupsock* rtpGroupsock,
                                     unsigned char rtpPayloadTypeIfDynamic,
 				    FramedSource* inputSource);

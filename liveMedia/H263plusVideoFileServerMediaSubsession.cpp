@@ -45,7 +45,7 @@ H263plusVideoFileServerMediaSubsession::~H263plusVideoFileServerMediaSubsession(
 }
 
 FramedSource* H263plusVideoFileServerMediaSubsession
-::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate) {
+::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate, void *rtsp_client_connection) {
   estBitrate = 500; // kbps, estimate ??
 
   // Create the video source:

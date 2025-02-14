@@ -39,7 +39,7 @@ DVVideoFileServerMediaSubsession::~DVVideoFileServerMediaSubsession() {
 }
 
 FramedSource* DVVideoFileServerMediaSubsession
-::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate) {
+::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate, void *rtsp_client_connection) {
   // Create the video source:
   ByteStreamFileSource* fileSource = ByteStreamFileSource::createNew(envir(), fFileName);
   if (fileSource == NULL) return NULL;

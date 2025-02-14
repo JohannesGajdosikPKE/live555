@@ -142,7 +142,7 @@ void MP3AudioFileServerMediaSubsession
 }
 
 FramedSource* MP3AudioFileServerMediaSubsession
-::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate) {
+::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate, void *rtsp_client_connection) {
   MP3FileSource* mp3Source = MP3FileSource::createNew(envir(), fFileName);
   if (mp3Source == NULL) return NULL;
   fFileDuration = mp3Source->filePlayTime();

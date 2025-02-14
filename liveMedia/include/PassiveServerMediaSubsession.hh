@@ -46,7 +46,7 @@ protected:
   virtual Boolean rtcpIsMuxed();
 
 protected: // redefined virtual functions
-  virtual char const* sdpLines(int addressFamily);
+  virtual char const* sdpLines(int addressFamily) override;
   virtual void getStreamParameters(unsigned clientSessionId,
 				   struct sockaddr_storage const& clientAddress,
                                    Port const& clientRTPPort,
@@ -60,7 +60,8 @@ protected: // redefined virtual functions
                                    Boolean& isMulticast,
                                    Port& serverRTPPort,
                                    Port& serverRTCPPort,
-                                   void*& streamToken);
+                                   void*& streamToken,
+                                   void* rtsp_client_connection) override;
   virtual void startStream(unsigned clientSessionId, void* streamToken,
 			   TaskFunc* rtcpRRHandler,
 			   void* rtcpRRHandlerClientData,

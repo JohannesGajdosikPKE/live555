@@ -1823,7 +1823,8 @@ void RTSPServer::RTSPClientSession
                                     &fOurClientConnection->fTLS,
 				    destinationAddress, destinationTTL, fIsMulticast,
 				    serverRTPPort, serverRTCPPort,
-				    fStreamStates[trackNum].streamToken);
+				    fStreamStates[trackNum].streamToken,
+				    fOurClientConnection);
     
     AddressString destAddrStr(destinationAddress);
     AddressString sourceAddrStr(sourceAddr);

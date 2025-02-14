@@ -156,7 +156,7 @@ ClientTrickPlayState* MPEG2TransportFileServerMediaSubsession::newClientTrickPla
 }
 
 FramedSource* MPEG2TransportFileServerMediaSubsession
-::createNewStreamSource(unsigned clientSessionId, unsigned& estBitrate) {
+::createNewStreamSource(unsigned clientSessionId, unsigned& estBitrate, void *rtsp_client_connection) {
   // Create the video source:
   unsigned const inputDataChunkSize
     = TRANSPORT_PACKETS_PER_NETWORK_PACKET*TRANSPORT_PACKET_SIZE;

@@ -95,7 +95,7 @@ void WAVAudioFileServerMediaSubsession
 }
 
 FramedSource* WAVAudioFileServerMediaSubsession
-::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate) {
+::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate, void *rtsp_client_connection) {
   FramedSource* resultSource = NULL;
   do {
     WAVAudioFileSource* wavSource = WAVAudioFileSource::createNew(envir(), fFileName);
