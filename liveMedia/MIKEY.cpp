@@ -21,6 +21,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "MIKEY.hh"
 #include <GroupsockHelper.hh> // for our_random32()
 
+void PrintBytes(UsageEnvironment& env, const unsigned char* const buffer, const unsigned int size);
+
 ////////// MIKEYPayload definition /////////
 
 class MIKEYPayload {
@@ -69,14 +71,14 @@ enum MIKEYPayloadType {
 		       HDR = 255
 };
 
-MIKEYState::MIKEYState(Boolean useEncryption)
+MIKEYState::MIKEYState(UsageEnvironment &env, Boolean useEncryption)
   : // Set default encryption/authentication parameters:
+  env(env),
   fEncryptSRTP(useEncryption),
   fEncryptSRTCP(useEncryption),
   fMKI(our_random32()),
   fInitialROC(0),
   fUseAuthentication(True),
-
   fHeaderPayload(NULL), fTailPayload(NULL), fTotalPayloadByteCount(0) {
   // Fill in our 'key data' (30 bytes) with (pseudo-)random bits:
   u_int8_t* p = &fKeyData[0];
@@ -97,6 +99,9 @@ MIKEYState::MIKEYState(Boolean useEncryption)
   *p++ = (random32>>24); *p++ = (random32>>16); *p++ = (random32>>8); *p++ = random32; // 24-27
   random32 = our_random32();
   *p++ = (random32>>24); *p++ = (random32>>16); // 28-29
+//  env << "MIKEYState::MIKEYState(nothing): random keyData: ";
+//  PrintBytes(env, fKeyData, sizeof(fKeyData));
+
 
   addNewPayload(new MIKEYPayload(*this, HDR));
   addNewPayload(new MIKEYPayload(*this, T));
@@ -109,17 +114,26 @@ MIKEYState::~MIKEYState() {
   delete fHeaderPayload; // which will delete all the other payloads as well
 }
 
-MIKEYState* MIKEYState::createNew(Boolean useEncryption) {
-  return new MIKEYState(useEncryption);
+MIKEYState* MIKEYState::createNew(UsageEnvironment &env, Boolean useEncryption) {
+//  env << "MIKEYState::createNew(useEncryption=" << (int)useEncryption << "): initializing from nothing\n";
+  MIKEYState *const newMIKEYState = new MIKEYState(env, useEncryption);
+//  env << "MIKEYState::createNew: keyData: ";
+//  PrintBytes(env, newMIKEYState->fKeyData, sizeof(newMIKEYState->fKeyData));
+  return newMIKEYState;
 }
 
-MIKEYState* MIKEYState::createNew(u_int8_t const* messageToParse, unsigned messageSize) {
+MIKEYState* MIKEYState::createNew(UsageEnvironment &env, u_int8_t const* messageToParse, unsigned messageSize) {
   Boolean parsedOK;
-  MIKEYState* newMIKEYState = new MIKEYState(messageToParse, messageSize, parsedOK);
+  MIKEYState* newMIKEYState = new MIKEYState(env, messageToParse, messageSize, parsedOK);
 
   if (!parsedOK) {
     delete newMIKEYState;
     newMIKEYState = NULL;
+  } else {
+//    env << "MIKEYState::createNew: initializing ok from ";
+//    PrintBytes(env, messageToParse, messageSize);
+//    env << "MIKEYState::createNew: keyData: ";
+//    PrintBytes(env, newMIKEYState->fKeyData, sizeof(newMIKEYState->fKeyData));
   }
 
   return newMIKEYState;
@@ -167,14 +181,16 @@ void MIKEYState::setROC(u_int32_t roc) {
   } while (0);
 }
 
-MIKEYState::MIKEYState(u_int8_t const* messageToParse, unsigned messageSize, Boolean& parsedOK)
+MIKEYState::MIKEYState(UsageEnvironment &env, u_int8_t const* messageToParse, unsigned messageSize, Boolean& parsedOK)
   : // Set encryption/authentication parameters to default values (that may be overwritten
     // later as we parse the message):
+  env(env),
   fEncryptSRTP(False),
   fEncryptSRTCP(False),
   fUseAuthentication(False),
 
   fHeaderPayload(NULL), fTailPayload(NULL), fTotalPayloadByteCount(0) {
+
   parsedOK = False; // unless we learn otherwise
 
   // Begin by parsing a HDR payload:
@@ -191,6 +207,13 @@ MIKEYState::MIKEYState(u_int8_t const* messageToParse, unsigned messageSize, Boo
 
   // We succeeded in parsing all the data:
   parsedOK = True;
+}
+
+MIKEYState::MIKEYState(UsageEnvironment &env,unsigned int ROC,const unsigned char *master_key)
+           : env(env), fEncryptSRTP(True), fEncryptSRTCP(False),
+             fMKI(0), fInitialROC(ROC), fUseAuthentication(True),
+             fHeaderPayload(NULL), fTailPayload(NULL), fTotalPayloadByteCount(0) {
+  memcpy(fKeyData,master_key,30);
 }
 
 void MIKEYState::addNewPayload(MIKEYPayload* newPayload) {
@@ -429,6 +452,8 @@ Boolean MIKEYState
 	  // Make sure we have enough space for the key data and the "SPI Length" field:
 	  if (4+keyDataLen+1 > encrDataLen) break;
 	  // Record the key data:
+//envir() << "MIKEYState::parseNonHDRPayload: initializing fKeyData: ";
+//PrintBytes(envir(), subPtr, keyDataLen);
 	  memmove(fKeyData, subPtr, keyDataLen);
 	  subPtr += keyDataLen;
 
@@ -580,6 +605,8 @@ MIKEYPayload
 	addHalfWord(p, keyDataLen);
 
 	// Key data:
+//  fOurMIKEYState.envir() << "MIKEYPayload::MIKEYPayload: using fOurMIKEYState.keyData(): ";
+//  PrintBytes(fOurMIKEYState.envir(), fOurMIKEYState.keyData(), keyDataLen);
 	memcpy(p, fOurMIKEYState.keyData(), keyDataLen);
 	p += keyDataLen;
 	

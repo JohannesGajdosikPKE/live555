@@ -133,11 +133,16 @@ void MultiFramedRTPSource::doGetNextFrame() {
 
 void MultiFramedRTPSource::doGetNextFrame1() {
   while (fNeedDelivery) {
+///    envir() << "MultiFramedRTPSource::doGetNextFrame1: check for next frame\n";
     // If we already have packet data available, then deliver it now.
     Boolean packetLossPrecededThis;
     BufferedPacket* nextPacket
       = fReorderingBuffer->getNextCompletedPacket(packetLossPrecededThis);
-    if (nextPacket == NULL) break;
+    if (nextPacket == NULL) {
+///      envir() << "MultiFramedRTPSource::doGetNextFrame1: nextPacket == NULL\n";
+      break;
+    }
+///    envir() << "MultiFramedRTPSource::doGetNextFrame1: there is a \"next packet\"\n";
 
     fNeedDelivery = False;
 
@@ -153,6 +158,7 @@ void MultiFramedRTPSource::doGetNextFrame1() {
       }
       nextPacket->skip(specialHeaderSize);
     }
+//    envir() << "GAJ3\n";
 
     // Check whether we're part of a multi-packet frame, and whether
     // there was packet loss that would render this packet unusable:
@@ -174,6 +180,7 @@ void MultiFramedRTPSource::doGetNextFrame1() {
       fNeedDelivery = True;
       continue;
     }
+//    envir() << "GAJ4\n";
 
     // The packet is usable. Deliver all or part of it to our caller:
     unsigned frameSize;
@@ -260,9 +267,19 @@ void MultiFramedRTPSource::networkReadHandler1() {
 
     if (fCrypto != NULL) { // The packet is SRTP; authenticate/decrypt it first
       unsigned newPacketSize;
-      if (!fCrypto->processIncomingSRTPPacket(bPacket->data(), bPacket->dataSize(), newPacketSize)) break;
+//      envir() << "GAJ MultiFramedRTPSource::networkReadHandler1 10\n";
+      const int rc = fCrypto->processIncomingSRTPPacket(bPacket->data(), bPacket->dataSize(), newPacketSize);
+      if (rc < 0) {
+        if (rc == -2) {
+          if (srtp_authentication_failed_cb) srtp_authentication_failed_cb();
+        }
+        break;
+      }
+//      envir() << "GAJ MultiFramedRTPSource::networkReadHandler1 11\n";
       if (newPacketSize > bPacket->dataSize()) break; // sanity check; shouldn't happen
+//      envir() << "GAJ MultiFramedRTPSource::networkReadHandler1 12\n";
       bPacket->removePadding(bPacket->dataSize() - newPacketSize); // treat MKI+auth as padding
+//      envir() << "GAJ MultiFramedRTPSource::networkReadHandler1 13\n";
     }
 
     // Check for the 12-byte RTP header:

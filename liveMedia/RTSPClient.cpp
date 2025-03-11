@@ -573,7 +573,7 @@ unsigned RTSPClient::sendRequest(RequestRecord* request) {
       // (However, we don't do this for the HTTP "GET" and "POST" commands that we use to set up the tunnel.)
       char* origCmd = cmd;
       cmd = base64Encode(origCmd, strlen(cmd));
-      if (fVerbosityLevel >= 1) envir() << "\tThe request was base-64 encoded to: " << cmd << "\n\n";
+      if (fVerbosityLevel >= 2) envir() << "\tThe request was base-64 encoded to: " << cmd << "\n\n";
       delete[] origCmd;
     }
 
@@ -639,7 +639,10 @@ static char* createScaleString(float scale, float currentScale) {
     buf[0] = '\0';
   } else {
     Locale l("C", Numeric);
-    sprintf(buf, "Scale: %f\r\n", scale);
+//    sprintf(buf, "Scale: %f\r\n", scale);
+//GAJ
+//sprintf(buf, "Rate-Control: no\r\nSpeed: %f\r\n", scale);
+sprintf(buf, "Speed: %f\r\n", scale);
   }
 
   return strDup(buf);
@@ -885,11 +888,15 @@ void RTSPClient::resetTCPSockets() {
   if (fInputSocketNum >= 0) {
     RTPInterface::clearServerRequestAlternativeByteHandler(envir(), fInputSocketNum); // in case we were receiving RTP-over-TCP
     envir().taskScheduler().disableBackgroundHandling(fInputSocketNum);
+//    envir() << "RTSPClient::resetTCPSockets: closing input socket " << fInputSocketNum << "\n";
     ::closeSocket(fInputSocketNum);
     if (fOutputSocketNum != fInputSocketNum) {
       envir().taskScheduler().disableBackgroundHandling(fOutputSocketNum);
+//      envir() << "RTSPClient::resetTCPSockets: closing output socket " << fOutputSocketNum << "\n";
       ::closeSocket(fOutputSocketNum);
     }
+  } else {
+    if (fOutputSocketNum >= 0) abort();
   }
   fInputSocketNum = fOutputSocketNum = -1;
 }
@@ -1739,7 +1746,7 @@ void RTSPClient::handleResponseBytes(int newBytesRead) {
   fResponseBufferBytesLeft -= newBytesRead;
   fResponseBytesAlreadySeen += newBytesRead;
   fResponseBuffer[fResponseBytesAlreadySeen] = '\0';
-  if (fVerbosityLevel >= 1 && newBytesRead > 1) envir() << "Received " << newBytesRead << " new bytes of response data.\n";
+  if (fVerbosityLevel >= 2 && newBytesRead > 1) envir() << "Received " << newBytesRead << " new bytes of response data.\n";
   
   unsigned numExtraBytesAfterResponse = 0;
   Boolean responseSuccess = False; // by default
@@ -1914,7 +1921,7 @@ void RTSPClient::handleResponseBytes(int newBytesRead) {
 	  break;
 	}
 	
-	if (fVerbosityLevel >= 1) {
+	if (fVerbosityLevel >= 2) {
 	  envir() << "Have received " << fResponseBytesAlreadySeen << " total bytes of a "
 		  << (foundRequest != NULL ? foundRequest->commandName() : "(unknown)")
 		  << " RTSP response; awaiting " << numExtraBytesNeeded << " bytes more.\n";
@@ -1934,6 +1941,7 @@ void RTSPClient::handleResponseBytes(int newBytesRead) {
 	envir() << "Received a complete "
 		<< (foundRequest != NULL ? foundRequest->commandName() : "(unknown)")
 		<< " response:\n" << fResponseBuffer << "\n";
+//GAJ  if (contentLength > 0) envir() << "body:\n" << bodyStart << "\n";
 	if (numExtraBytesAfterResponse > 0) envir() << "\t(plus " << numExtraBytesAfterResponse << " additional bytes)\n";
 	*responseEnd = saved;
       }

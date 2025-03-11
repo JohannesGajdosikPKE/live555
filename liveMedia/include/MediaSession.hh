@@ -97,6 +97,7 @@ public:
 
   MIKEYState* getMIKEYState() const { return fMIKEYState; }
   SRTPCryptographicContext* getCrypto() const { return fCrypto; }
+  void setMIKEY(MIKEYState *newMIKEYState);
 
 protected: // redefined virtual functions
   virtual Boolean isMediaSession() const;
@@ -289,6 +290,7 @@ public:
 
   MIKEYState* getMIKEYState() const { return fMIKEYState != NULL ? fMIKEYState : fParent.getMIKEYState(); }
   SRTPCryptographicContext* getCrypto() const { return fCrypto != NULL ? fCrypto : fParent.getCrypto(); }
+  void setMIKEY(MIKEYState *newMIKEYState);
 
 protected:
   friend class MediaSession;

@@ -43,7 +43,7 @@ Boolean RTPSink::lookupByName(UsageEnvironment& env, char const* sinkName,
 
 void RTPSink::setupForSRTP(Boolean useEncryption, u_int32_t roc) {
   // Set up keying state for streaming via SRTP:
-  if (fMIKEYState == NULL) fMIKEYState = MIKEYState::createNew(useEncryption);
+  if (fMIKEYState == NULL) fMIKEYState = MIKEYState::createNew(envir(), useEncryption);
   fMIKEYState->setROC(roc);
 
   delete fCrypto; fCrypto = new SRTPCryptographicContext(*fMIKEYState);
@@ -60,7 +60,7 @@ u_int8_t* RTPSink::setupForSRTP(Boolean useEncryption, u_int32_t roc,
 void RTPSink::setupForSRTP(u_int8_t const* MIKEYStateMessage, unsigned MIKEYStateMessageSize,
 			   u_int32_t roc) {
   // Set up keying state for streaming via SRTP:
-  delete fMIKEYState; fMIKEYState = MIKEYState::createNew(MIKEYStateMessage, MIKEYStateMessageSize);
+  delete fMIKEYState; fMIKEYState = MIKEYState::createNew(envir(), MIKEYStateMessage, MIKEYStateMessageSize);
   fMIKEYState->setROC(roc);
 
   delete fCrypto; fCrypto = new SRTPCryptographicContext(*fMIKEYState);

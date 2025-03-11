@@ -67,6 +67,7 @@ public:
   unsigned totSessionBW() const { return fTotSessionBW; }
 
   void setupForSRTCP();
+  void setCrypto(SRTPCryptographicContext *x) {fCrypto = x;}
   
   void setByeHandler(TaskFunc* handlerTask, void* clientData,
 		     Boolean handleActiveParticipantsOnly = True);

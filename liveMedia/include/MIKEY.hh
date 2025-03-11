@@ -27,16 +27,22 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #ifndef _BOOLEAN_HH
 #include "Boolean.hh"
 #endif
+#include "UsageEnvironment.hh"
 
 class MIKEYState {
 public:
-  static MIKEYState* createNew(Boolean useEncryption = True);
+  static MIKEYState* createNew(UsageEnvironment &env, Boolean useEncryption = True);
       // initialize with default parameters
-  static MIKEYState* createNew(u_int8_t const* messageToParse, unsigned messageSize);
+  static MIKEYState* createNew(UsageEnvironment &env, u_int8_t const* messageToParse, unsigned messageSize);
       // (Attempts to) parse a binary MIKEY message, returning a new "MIKEYState" if successful
       // (or NULL if unsuccessful).
+  static MIKEYState *createNew(UsageEnvironment &env,unsigned int ROC,const unsigned char *master_key) {
+    return new MIKEYState(env,ROC,master_key);
+  }
 
   virtual ~MIKEYState();
+
+  UsageEnvironment &envir() const {return env;}
 
   u_int8_t* generateMessage(unsigned& messageSize) const;
       // Returns a binary message representing the current MIKEY state, of size "messageSize" bytes.
@@ -53,16 +59,18 @@ public:
   Boolean useAuthentication() const { return fUseAuthentication; }
 
 protected:
-  MIKEYState(Boolean useEncryption);
+  MIKEYState(UsageEnvironment &env,Boolean useEncryption);
       // called only by "createNew()"
-  MIKEYState(u_int8_t const* messageToParse, unsigned messageSize, Boolean& parsedOK);
+  MIKEYState(UsageEnvironment &env, u_int8_t const* messageToParse, unsigned messageSize, Boolean& parsedOK);
       // called only by "createNew()"
+  MIKEYState(UsageEnvironment &env,unsigned int ROC,const unsigned char* master_key);
 
   void addNewPayload(class MIKEYPayload* newPayload);
   Boolean parseHDRPayload(u_int8_t const*& ptr, u_int8_t const* endPtr, u_int8_t& nextPayloadType);
   Boolean parseNonHDRPayload(u_int8_t const*& ptr, u_int8_t const* endPtr, u_int8_t& nextPayloadType);
   
 private:
+  UsageEnvironment &env;
   // Encryption/authentication parameters, either set by default
   // (if the first (parameterless) constructor is used), or set by parsing an input message
   // (if the second constructor is used):

@@ -583,7 +583,7 @@ void RTCPInstance
 	reportSenderSSRC = fromAddressAndPort.sin_addr.s_addr^portNum(fromAddressAndPort);
       }
 #endif
-      envir() << "RTCPInstance::processIncomingReport(" << tcpSocketNum << "," << ((int)tcpStreamChannelId) << "): pt=" << ((int)pt) << "\n";
+///      envir() << "RTCPInstance::processIncomingReport(" << tcpSocketNum << "," << ((int)tcpStreamChannelId) << "): pt=" << ((int)pt) << "\n";
 
       Boolean subPacketOK = False;
       switch (pt) {

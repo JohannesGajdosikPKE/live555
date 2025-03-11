@@ -30,9 +30,11 @@ public:
   virtual ~SRTPCryptographicContext();
 
   // Authenticate (if necessary) and decrypt (if necessary) incoming SRTP and SRTCP packets.
-  // Returns True iff the packet is well-formed and authenticates OK.
+  // Returns 0 if the packet is well-formed and authenticates OK.
+  // -1 if it is ill-formed
+  // -2 if authentication failed
   // ("outPacketSize" will be <= "inPacketSize".)
-  Boolean processIncomingSRTPPacket(u_int8_t* buffer, unsigned inPacketSize,
+  int processIncomingSRTPPacket(u_int8_t* buffer, unsigned inPacketSize,
 				    unsigned& outPacketSize);
   Boolean processIncomingSRTCPPacket(u_int8_t* buffer, unsigned inPacketSize,
 				     unsigned& outPacketSize);
@@ -148,6 +150,8 @@ private:
 
   // State used for handling the sending of SRTCP packets:
   u_int32_t fSRTCPIndex;
+
+  int unauthenticated_packet_count;
 #endif
 };
 

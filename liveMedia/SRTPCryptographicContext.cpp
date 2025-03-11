@@ -44,7 +44,29 @@ SRTPCryptographicContext
 SRTPCryptographicContext::~SRTPCryptographicContext() {
 }
 
-Boolean SRTPCryptographicContext
+static char NibbleToChar(unsigned char c) {
+  return ((c < 10) ? '0' : ('a'-10)) + c;
+}
+
+static const char *IntToHex(unsigned char c) {
+  static char rval[3];
+  rval[0] = NibbleToChar(c >> 4);
+  rval[1] = NibbleToChar(c & 15);
+  rval[2] = '\0';
+  return rval;
+}
+
+void PrintBytes(UsageEnvironment &env, const unsigned char *const buffer, const unsigned int size) {
+///return;
+  for (unsigned int i = 0; i < size;) {
+    env << ((i&3u) ? " " : "  ") << IntToHex(buffer[i]);
+    i++;
+    if (!(i&15u)) env << "\n";
+  }
+  if (size&15u) env << "\n";
+}
+
+int SRTPCryptographicContext
 ::processIncomingSRTPPacket(u_int8_t* buffer, unsigned inPacketSize,
 			    unsigned& outPacketSize) {
 #ifndef NO_OPENSSL
@@ -105,17 +127,95 @@ Boolean SRTPCryptographicContext
       }
     }
       
+    // Figure out the RTP header size.  This will tell us which bytes to decrypt:
+    unsigned rtpHeaderSize = 12; // at least the basic 12-byte header
+    rtpHeaderSize += (buffer[0] & 0x0F) * 4; // # CSRC identifiers
+
+    if (inPacketSize < rtpHeaderSize + 4) {
+#ifdef DEBUG
+      fprintf(stderr, "SRTPCryptographicContext::processIncomingSRTPPacket(): Error: Packet size %d is shorter than the minimum specified RTP header size %d!\n", inPacketSize, rtpHeaderSize + 4);
+#endif
+      break;
+    }
+
+    unsigned rtp_ext_size = 0;
+    if ((buffer[0] & 0x10) != 0) {
+      // There's a RTP extension header.  Add its size:
+      u_int16_t const hdrExtLength = (buffer[rtpHeaderSize + 2] << 8) | buffer[rtpHeaderSize + 3];
+      rtp_ext_size = (1 + hdrExtLength) * 4;
+      if (inPacketSize < rtpHeaderSize + rtp_ext_size) {
+#ifdef DEBUG
+        fprintf(stderr, "SRTPCryptographicContext::processIncomingSRTPPacket(): Error: Packet size %d is shorter than the minimum specified RTP header size %d!\n", inPacketSize, rtpHeaderSize + 4);
+#endif
+        break;
+      }
+    }
+
     if (weAuthenticate()) {
       // Authenticate the packet.
       unsigned const numBytesToAuthenticate
-	= inPacketSize - (SRTP_MKI_LENGTH + SRTP_AUTH_TAG_LENGTH); // ASSERT: > 0
+        = inPacketSize - (SRTP_MKI_LENGTH + SRTP_AUTH_TAG_LENGTH); // ASSERT: > 0
       u_int8_t const* authenticationTag = &buffer[inPacketSize - SRTP_AUTH_TAG_LENGTH];
 
-      if (!verifySRTPAuthenticationTag(buffer, numBytesToAuthenticate, thisPacketsROC, authenticationTag)) {
+      const bool tweak_SRTP_ABAC = true;
+      Boolean srtp_verification_result;
+      if (tweak_SRTP_ABAC &&
+          rtp_ext_size == 16 &&
+          buffer[rtpHeaderSize] == 0xAB && buffer[rtpHeaderSize + 1] == 0xAC) { // X-Bit and 16-Byte ABAC extension
+        uint8_t orig_header[12+15*4+16];
+        memcpy(orig_header, buffer, (size_t)rtpHeaderSize + 16u);
+        if (orig_header[rtpHeaderSize + 12u] & 0x80) { // C-Flag in ABAC extension
+          // replace ABAC extension
+          memcpy(buffer + 8, orig_header, rtpHeaderSize);
+          buffer[rtpHeaderSize + 8] = 0xBE;
+          buffer[rtpHeaderSize + 9] = 0xDE;
+          buffer[rtpHeaderSize + 10] = 0x00;
+          buffer[rtpHeaderSize + 11] = 0x01;
+          buffer[rtpHeaderSize + 12] = 0xE0;
+          buffer[rtpHeaderSize + 13] = 0x05;
+          buffer[rtpHeaderSize + 14] = 0x00;
+          buffer[rtpHeaderSize + 15] = 0x00;
+          srtp_verification_result = verifySRTPAuthenticationTag(buffer + 8, numBytesToAuthenticate - 8u, thisPacketsROC, authenticationTag);
+        } else {
+          // remove ABAC extension
+          memcpy(buffer + 16, orig_header, rtpHeaderSize);
+          // remove X-Bit
+          buffer[16] &= ~0x10;
+          srtp_verification_result = verifySRTPAuthenticationTag(buffer+16, numBytesToAuthenticate-16u, thisPacketsROC, authenticationTag);
+        }
+        memcpy(buffer, orig_header, (size_t)rtpHeaderSize + 16u);
+      } else {
+        srtp_verification_result = verifySRTPAuthenticationTag(buffer, numBytesToAuthenticate, thisPacketsROC, authenticationTag);
+      }
+
+      if (!srtp_verification_result) {
+        if (unauthenticated_packet_count < 0) {
+          fMIKEYState.envir() << "SRTPCryptographicContext::processIncomingSRTPPacket(): initial SRTP authentication failed\n";
+          unauthenticated_packet_count = 1;
+        } else if (unauthenticated_packet_count == 0) {
+          fMIKEYState.envir() << "SRTPCryptographicContext::processIncomingSRTPPacket(): SRTP authentication failed unexpectedly\n";
+          unauthenticated_packet_count = 1;
+        } else {
+          if (unauthenticated_packet_count >= 0x7FFFFFFF) {
+            unauthenticated_packet_count = 1;
+            fMIKEYState.envir() << "SRTPCryptographicContext::processIncomingSRTPPacket(): unauthenticated packet count overflow\n";
+          } else if ((++unauthenticated_packet_count & 1023) == 0) {
+            fMIKEYState.envir() << "SRTPCryptographicContext::processIncomingSRTPPacket(): received "
+                                << unauthenticated_packet_count << " unauthenticated packets\n";
+          }
+        }
+        return -2;
 #ifdef DEBUG
-	fprintf(stderr, "SRTPCryptographicContext::processIncomingSRTPPacket(): Failed to authenticate incoming SRTP packet!\n");
+        fprintf(stderr, "SRTPCryptographicContext::processIncomingSRTPPacket(): Failed to authenticate incoming SRTP packet!\n");
 #endif
-	break;
+      } else {
+        if (unauthenticated_packet_count < 0) {
+          fMIKEYState.envir() << "SRTPCryptographicContext::processIncomingSRTPPacket(): initial SRTP authentication succeeded\n";
+        } else if (unauthenticated_packet_count > 0) {
+          fMIKEYState.envir() << "SRTPCryptographicContext::processIncomingSRTPPacket(): SRTP authentication succeeded unexpectedly after receiving "
+                              << unauthenticated_packet_count << " unauthenticated packets\n";
+        }
+        unauthenticated_packet_count = 0;
       }
     }
 
@@ -128,20 +228,8 @@ Boolean SRTPCryptographicContext
       // Decrypt the SRTP packet.  It has the index "thisPacketsROC" with "rtpSeqNum":
       u_int64_t index = (thisPacketsROC<<16)|rtpSeqNum;
 
-      // Figure out the RTP header size.  This will tell us which bytes to decrypt:
-      unsigned rtpHeaderSize = 12; // at least the basic 12-byte header
-      rtpHeaderSize += (buffer[0]&0x0F)*4; // # CSRC identifiers
-      if ((buffer[0]&0x10) != 0) {
-	// There's a RTP extension header.  Add its size:
-	if (inPacketSize < rtpHeaderSize + 4) {
-#ifdef DEBUG
-	  fprintf(stderr, "SRTPCryptographicContext::processIncomingSRTPPacket(): Error: Packet size %d is shorter than the minimum specified RTP header size %d!\n", inPacketSize, rtpHeaderSize + 4);
-#endif
-	  break;
-	}
-	u_int16_t const hdrExtLength = (buffer[rtpHeaderSize+2]<<8)|buffer[rtpHeaderSize+3];
-	rtpHeaderSize += 4 + hdrExtLength*4;
-      }
+      // There's a RTP extension header.  Add its size:
+      rtpHeaderSize += rtp_ext_size;
 
       unsigned const offsetToEncryptedBytes = rtpHeaderSize;
       unsigned numEncryptedBytes = inPacketSize - numBytesPastEncryption; // ASSERT: > 0
@@ -158,12 +246,12 @@ Boolean SRTPCryptographicContext
       outPacketSize = inPacketSize - numBytesPastEncryption; // trim to what we use
     }
 
-    return True;
+    return 0;
   } while (0);
 #endif
 
   // An error occurred in the handling of the packet:
-  return False;
+  return -1;
 }
 
 Boolean SRTPCryptographicContext
@@ -513,7 +601,7 @@ Boolean SRTPCryptographicContext
       if (EVP_EncryptUpdate(ctx, keyStream, &numBytesEncrypted, iv, SRTP_CIPHER_KEY_LENGTH) != 1) break;
 
       unsigned numBytesToUse
-	= numDataBytes < numBytesEncrypted ? numDataBytes : numBytesEncrypted;
+	= numDataBytes < (unsigned)numBytesEncrypted ? numDataBytes : (unsigned)numBytesEncrypted;
       for (unsigned i = 0; i < numBytesToUse; ++i) data[i] ^= keyStream[i];
       data += numBytesToUse;
       numDataBytes -= numBytesToUse;
@@ -534,6 +622,7 @@ void SRTPCryptographicContext::performKeyDerivation() {
   // Perform a key derivation for the master key+salt, as defined
   // by RFC 3711, section 4.3:
   deriveKeysFromMaster(masterKey(), masterSalt(), fDerivedKeys);
+  unauthenticated_packet_count = -1;
 }
 
 #define deriveKey(label, resultKey) deriveSingleKey(masterKey, salt, label, sizeof resultKey, resultKey)
@@ -585,7 +674,7 @@ void SRTPCryptographicContext
       if (EVP_EncryptUpdate(ctx, ciphertext, &numBytesEncrypted, plaintext, KDF_PRF_CIPHER_BLOCK_LENGTH) != 1) break;
 
       unsigned numBytesToCopy
-	= numBytesRemaining < numBytesEncrypted ? numBytesRemaining : numBytesEncrypted;
+	= numBytesRemaining < (unsigned)numBytesEncrypted ? numBytesRemaining : (unsigned)numBytesEncrypted;
       memmove(resultKey, ciphertext, numBytesToCopy);
       resultKey += numBytesToCopy;
       numBytesRemaining -= numBytesToCopy;

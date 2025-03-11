@@ -318,24 +318,34 @@ static Boolean parseTwoStringValues(char const* sdpLine, char const* searchForma
   return parseSuccess;
 }
 
-static MIKEYState* parseSDPAttribute_key_mgmtToMIKEY(char const* sdpLine) {
+static MIKEYState* parseSDPAttribute_key_mgmtToMIKEY(UsageEnvironment &env, char const* sdpLine) {
   char* keyMgmtPrtclId = NULL;
   char* keyMgmtData = NULL;
   MIKEYState* resultMIKEYState = NULL;
 
   do {
     // Check for a "a=key-mgmt:<prtcl-id> <keymgmt-data>" line:
-    if (!parseTwoStringValues(sdpLine, "a=key-mgmt:%s %s", keyMgmtPrtclId, keyMgmtData)) break;
+    if (!parseTwoStringValues(sdpLine, "a=key-mgmt:%s %s", keyMgmtPrtclId, keyMgmtData)) {
+//      env << "parseSDPAttribute_key_mgmtToMIKEY: no a=key-mgmt\n";
+      break;
+    }
 
     // We understand only the 'protocol id' "mikey":
-    if (strcmp(keyMgmtPrtclId, "mikey") != 0) break;
+    if (strcmp(keyMgmtPrtclId, "mikey") != 0) {
+//      env << "parseSDPAttribute_key_mgmtToMIKEY: a=key-mgmt is not mikey\n";
+      break;
+    }
 
     // Base64-decode the "keyMgmtData" string:
     unsigned keyMgmtData_decodedSize;
     u_int8_t* keyMgmtData_decoded = base64Decode(keyMgmtData, keyMgmtData_decodedSize);
-    if (keyMgmtData_decoded == NULL) break;
+    if (keyMgmtData_decoded == NULL) {
+//      env << "parseSDPAttribute_key_mgmtToMIKEY: base64Decode failed\n";
+      break;
+    }
 
-    resultMIKEYState = MIKEYState::createNew(keyMgmtData_decoded, keyMgmtData_decodedSize);
+    resultMIKEYState = MIKEYState::createNew(env, keyMgmtData_decoded, keyMgmtData_decodedSize);
+//    env << "parseSDPAttribute_key_mgmtToMIKEY: MIKEYState::createNew " << (resultMIKEYState?"ok":"failed") << "\n";
     delete[] keyMgmtData_decoded;
   } while (0);
 
@@ -458,8 +468,18 @@ Boolean MediaSession
   return parseSourceFilterAttribute(sdpLine, fSourceFilterAddr);
 }
 
+void MediaSession::setMIKEY(MIKEYState *newMIKEYState) {
+  delete fCrypto; delete fMIKEYState;
+  fMIKEYState = newMIKEYState;
+  if (newMIKEYState) {
+    fCrypto = new SRTPCryptographicContext(*fMIKEYState);
+  } else {
+    fCrypto = nullptr;
+  }
+}
+
 Boolean MediaSession::parseSDPAttribute_key_mgmt(char const* sdpLine) {
-  MIKEYState* newMIKEYState = parseSDPAttribute_key_mgmtToMIKEY(sdpLine);
+  MIKEYState* newMIKEYState = parseSDPAttribute_key_mgmtToMIKEY(envir(), sdpLine);
   if (newMIKEYState == NULL) return False;
 
   delete fCrypto; delete fMIKEYState;
@@ -864,7 +884,7 @@ Boolean MediaSubsession::initiate(int useSpecialRTPoffset) {
       // to us in the SDP description, then create it now:
       ourCrypto = getCrypto();
       if (ourCrypto == NULL) { // then fMIKEYState is also NULL; create both
-	fMIKEYState = MIKEYState::createNew();
+	fMIKEYState = MIKEYState::createNew(env());
 	ourCrypto = fCrypto = new SRTPCryptographicContext(*fMIKEYState);
       }
 
@@ -1226,8 +1246,18 @@ Boolean MediaSubsession::parseSDPAttribute_framerate(char const* sdpLine) {
   return parseSuccess;
 }
 
+void MediaSubsession::setMIKEY(MIKEYState *newMIKEYState) {
+  delete fCrypto; delete fMIKEYState;
+  fMIKEYState = newMIKEYState;
+  if (newMIKEYState) {
+    fCrypto = new SRTPCryptographicContext(*fMIKEYState);
+  } else {
+    fCrypto = nullptr;
+  }
+}
+
 Boolean MediaSubsession::parseSDPAttribute_key_mgmt(char const* sdpLine) {
-  MIKEYState* newMIKEYState = parseSDPAttribute_key_mgmtToMIKEY(sdpLine);
+  MIKEYState* newMIKEYState = parseSDPAttribute_key_mgmtToMIKEY(env(), sdpLine);
   if (newMIKEYState == NULL) return False;
 
   delete fCrypto; delete fMIKEYState;

@@ -26,6 +26,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "RTPSource.hh"
 #endif
 
+#include <functional>
+
 class BufferedPacket; // forward
 class BufferedPacketFactory; // forward
 
@@ -76,6 +78,8 @@ private:
 
   // A buffer to (optionally) hold incoming pkts that have been reorderered
   class ReorderingPacketBuffer* fReorderingBuffer;
+public:
+  std::function<void(void)> srtp_authentication_failed_cb;
 };
 
 
