@@ -48,24 +48,80 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include <functional>
 #include <atomic>
+#include <stack>
 
 #ifdef _WIN32
-#include <windows.h>
-#include <processthreadsapi.h>
-static inline
-unsigned int Live555CurrentThreadId(void) {return GetCurrentThreadId();}
+  #include <windows.h>
+  #include <processthreadsapi.h>
+  static inline
+  unsigned int Live555CurrentThreadId(void) {return GetCurrentThreadId();}
 #else
-#include <unistd.h>
-#include <sys/syscall.h>
-static inline
-unsigned int Live555CurrentThreadId(void) {return syscall(SYS_gettid);}
+  #include <unistd.h>
+  #include <sys/syscall.h>
+  static inline
+  unsigned int Live555CurrentThreadId(void) {return syscall(SYS_gettid);}
 #endif
+
+extern const unsigned int account_id_misc;
+extern const unsigned int account_id_send;
+extern const unsigned int account_id_recv;
+extern const unsigned int account_id_SSLw;
+extern const unsigned int account_id_SSLr;
+
+class TimeAccounter {
+public:
+  static uint64_t GetNow(void);
+  TimeAccounter(void) {reset();}
+  void reset(void);
+  class Guard {
+    TimeAccounter &acc;
+  public:
+    Guard(unsigned int id,class UsageEnvironment &env);
+    ~Guard(void) {
+      acc.account(acc.accounter_stack.top());
+      acc.accounter_stack.pop();
+    }
+  };
+  static unsigned int GetNewId(const char *name);
+  void transferValues(uint64_t values[],unsigned int nr);
+  static unsigned int GetNrOfAccounts(void) {return nr_of_counters;}
+  static const char *GetAccountName(unsigned int id) {return counter_names[id];}
+private:
+  void account(const unsigned int id);
+  static constexpr unsigned int NR_OF_IDS = 256;
+  std::atomic<uint64_t> counter[NR_OF_IDS];
+  static std::atomic<unsigned int> nr_of_counters;
+  static const char *counter_names[NR_OF_IDS];
+  uint64_t last_now;
+  std::stack<unsigned int> accounter_stack;
+};
+
+#define GAJ_CAT(A, B) A ## B
+#define GAJ_XCAT(A, B) GAJ_CAT(A, B)
+#define GAJ_UNIQUE_VAR_NAME(COUNTER) GAJ_XCAT(_private_var_name_, COUNTER)
+
+#define GAJ_ACCOUNT_GUARD_IMPL(COUNTER,name,env) \
+  static const unsigned int GAJ_UNIQUE_VAR_NAME(COUNTER) = TimeAccounter::GetNewId(name); \
+  TimeAccounter::Guard guard(GAJ_UNIQUE_VAR_NAME(COUNTER),env)
+
+#define ACCOUNT_GUARD(name,env) GAJ_ACCOUNT_GUARD_IMPL(__COUNTER__,name,env)
+
+#define GAJ_STRINGIFY2(X) #X
+#define GAJ_STRINGIFY(X) GAJ_STRINGIFY2(X)
+#define GAJ_FILE_LINE __FILE__ "@" GAJ_STRINGIFY(__LINE__)
+
+#define ANON_ACCOUNT_GUARD(env) ACCOUNT_GUARD(GAJ_FILE_LINE, env)
+
+
 
 class TaskScheduler; // forward
 
 // An abstract base class, subclassed for each use of the library
 
 class UsageEnvironment {
+  mutable TimeAccounter accounter;
+  friend class TimeAccounter::Guard;
+  friend class GenericMediaServer;
 public:
   Boolean reclaim();
       // returns True iff we were actually able to delete our object
@@ -112,6 +168,12 @@ protected:
 private:
   TaskScheduler& fScheduler;
 };
+
+inline
+TimeAccounter::Guard::Guard(unsigned int id,UsageEnvironment &env) : acc(env.accounter) {
+  acc.account(acc.accounter_stack.empty() ? account_id_misc : acc.accounter_stack.top());
+  acc.accounter_stack.push(id);
+}
 
 
 typedef void TaskFunc(void* clientData);
@@ -199,6 +261,7 @@ private:
   std::atomic<int> nr_of_users;
 protected:
   TaskScheduler(); // abstract base class
+public:
   bool envirInitialized(void) const {return env;}
   UsageEnvironment &envir(void) const {return *env;}
 };

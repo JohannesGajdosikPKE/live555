@@ -25,19 +25,24 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 class AlarmHandler: public DelayQueueEntry {
 public:
-  AlarmHandler(TaskFunc* proc, void* clientData, DelayInterval timeToDelay, intptr_t token)
-    : DelayQueueEntry(timeToDelay, token), fProc(proc), fClientData(clientData) {
+  AlarmHandler(TaskScheduler &sched, TaskFunc* proc, void* clientData, DelayInterval timeToDelay, intptr_t token)
+    : DelayQueueEntry(timeToDelay, token), fProc(proc), fClientData(clientData), sched(sched) {
   }
   void *getClientData(void) const {return fClientData;}
 private: // redefined virtual functions
   virtual void handleTimeout() {
-    (*fProc)(fClientData);
+    sched.assertSameThread();
+    {
+      ANON_ACCOUNT_GUARD(sched.envir());
+      (*fProc)(fClientData);
+    }
     DelayQueueEntry::handleTimeout();
   }
 
 private:
   TaskFunc* fProc;
   void* fClientData;
+  TaskScheduler &sched;
 };
 
 
@@ -69,7 +74,7 @@ TaskToken BasicTaskScheduler0::scheduleDelayedTask(int64_t microseconds,
   if (!proc) return nullptr;
   if (microseconds < 0) microseconds = 0;
   DelayInterval timeToDelay((long)(microseconds/1000000), (long)(microseconds%1000000));
-  AlarmHandler* alarmHandler = new AlarmHandler(proc, clientData, timeToDelay, ++fTokenCounter);
+  AlarmHandler* alarmHandler = new AlarmHandler(*this, proc, clientData, timeToDelay, ++fTokenCounter);
   fDelayQueue.addEntry(alarmHandler);
 
   return (void*)(alarmHandler->token());

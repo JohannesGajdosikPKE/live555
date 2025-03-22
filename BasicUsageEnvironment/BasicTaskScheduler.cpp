@@ -244,8 +244,11 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
     tv_timeToDelay.tv_sec = maxDelayTime/MILLION;
     tv_timeToDelay.tv_usec = maxDelayTime%MILLION;
   }
-
-  int selectResult = select(fMaxNumSockets, &readSet, &writeSet, &exceptionSet, &tv_timeToDelay);
+  int selectResult;
+  {
+    ACCOUNT_GUARD("select",envir());
+    selectResult = select(fMaxNumSockets, &readSet, &writeSet, &exceptionSet, &tv_timeToDelay);
+  }
   if (selectResult < 0) {
 #if defined(__WIN32__) || defined(_WIN32)
     int err = WSAGetLastError();
@@ -315,7 +318,9 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
   }
   }
 
-  {
+{
+  ANON_ACCOUNT_GUARD(envir());
+
   // Call the handler function for one readable socket:
   HandlerIterator iter(*fHandlers);
   HandlerDescriptor* handler;
@@ -340,6 +345,7 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
       fLastHandledSocketNum = sock;
           // Note: we set "fLastHandledSocketNum" before calling the handler,
           // in case the handler calls "doEventLoop()" reentrantly.
+      ANON_ACCOUNT_GUARD(envir());
       (*handler->handlerProc)(handler->clientData, resultConditionSet);
       break;
     }
@@ -358,14 +364,16 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
 	fLastHandledSocketNum = sock;
 	    // Note: we set "fLastHandledSocketNum" before calling the handler,
             // in case the handler calls "doEventLoop()" reentrantly.
+	ANON_ACCOUNT_GUARD(envir());
 	(*handler->handlerProc)(handler->clientData, resultConditionSet);
 	break;
       }
     }
     if (handler == NULL) fLastHandledSocketNum = -1;//because we didn't call a handler
   }
-  }
+}
   continue_without_sockets:
+  ANON_ACCOUNT_GUARD(envir());
   // Also handle any newly-triggered event (Note that we do this *after* calling a socket handler,
   // in case the triggered event handler modifies The set of readable sockets.)
   if (fEventTriggersAreBeingUsed) {

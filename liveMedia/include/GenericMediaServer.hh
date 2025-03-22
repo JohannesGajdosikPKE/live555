@@ -36,6 +36,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #define RESPONSE_BUFFER_SIZE 20000
 #endif
 
+#include <string>
 #include <mutex>
 #include <condition_variable>
 #include <memory>
@@ -115,6 +116,8 @@ public:
           --count_;
       }
   };
+
+  std::string workerPerformance(void);
 
 protected:
   GenericMediaServer(UsageEnvironment& env, int ourSocketIPv4, int ourSocketIPv6, Port ourPort,
@@ -292,6 +295,7 @@ protected:
   char const* fTLSCertificateFileName;
   char const* fTLSPrivateKeyFileName;
 
+  uint64_t last_performance_query_time;
   const unsigned int nr_of_workers;
   class Worker;
   std::mutex workers_mutex;

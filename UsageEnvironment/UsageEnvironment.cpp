@@ -19,12 +19,82 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include "UsageEnvironment.hh"
 
+#ifndef _WIN32
+  #if defined(__GLIBC__) && defined (__GLIBC_MINOR__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 17))
+    #include <time.h>
+  #else
+    #include <sys/time.h>
+  #endif
+#endif
+
 #include <iostream>
 
 ////////// library version constants //////////
 
 extern char const* const UsageEnvironmentLibraryVersionStr = USAGEENVIRONMENT_LIBRARY_VERSION_STRING;
 extern int const UsageEnvironmentLibraryVersionInt = USAGEENVIRONMENT_LIBRARY_VERSION_INT;
+
+
+uint64_t TimeAccounter::GetNow(void) {
+#ifdef _WIN32
+  LARGE_INTEGER v;
+  QueryPerformanceCounter(&v);
+  return v.QuadPart;
+#else
+  #if defined(__GLIBC__) && defined (__GLIBC_MINOR__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 17))
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return 1000000000LL * ts.tv_sec + ts.tv_nsec;
+  #else
+    struct timeval tv;
+    gettimeofday(&tv,0);
+    return 1000000LL * ts.tv_sec + ts.tv_usec;
+  #endif
+#endif
+}
+
+const char *LastPartOfName(const char *name) {
+  const char *rval = name;
+  for (const char *p=name;*p;p++) {
+    if (*p == '/' || *p == '\\') rval = p+1;
+  }
+  return rval;
+}
+
+unsigned int TimeAccounter::GetNewId(const char *name) {
+  const unsigned int rval = nr_of_counters++;
+  if (rval >= NR_OF_IDS) abort();
+  counter_names[rval] = LastPartOfName(name);
+  return rval;
+}
+
+const char *TimeAccounter::counter_names[TimeAccounter::NR_OF_IDS];
+static inline unsigned int SetZero(const char **array,unsigned int size) {while (size--) *array++=nullptr;return 0;}
+std::atomic<unsigned int> TimeAccounter::nr_of_counters(SetZero(TimeAccounter::counter_names,TimeAccounter::NR_OF_IDS));
+
+const unsigned int account_id_misc = TimeAccounter::GetNewId("misc");
+const unsigned int account_id_send = TimeAccounter::GetNewId("send");
+const unsigned int account_id_recv = TimeAccounter::GetNewId("recv");
+const unsigned int account_id_SSLw = TimeAccounter::GetNewId("SSLw");
+const unsigned int account_id_SSLr = TimeAccounter::GetNewId("SSLr");
+
+
+void TimeAccounter::reset(void) {
+  last_now = GetNow();
+  for (unsigned int i=0;i<NR_OF_IDS;++i) counter[i] = 0;
+}
+
+void TimeAccounter::account(const unsigned int id) {
+  const uint64_t now = GetNow();
+  const uint64_t elapsed = now - last_now;
+  last_now = now;
+  counter[id] += elapsed;
+}
+
+void TimeAccounter::transferValues(uint64_t values[],unsigned int nr) {
+  for (unsigned int i=0;i<nr;++i) values[i] += counter[i].exchange(0);
+}
+
 
 ////////// UsageEnvironment //////////
 

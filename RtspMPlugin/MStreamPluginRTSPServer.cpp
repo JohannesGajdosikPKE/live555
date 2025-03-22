@@ -2646,38 +2646,42 @@ private:
   }
   class ThreadLogger {
     const MPluginParams &params;
+    int min_log_level;
     std::string content;
   public:
     ThreadLogger(const MPluginParams &params) : params(params) {}
     ~ThreadLogger(void) {
       if (!content.empty()) {
-        params.log(content);
+        params.log(min_log_level,content);
         content.clear();
       }
     }
-    void log(std::string &&msg) {
+    void log(int log_level,std::string &&msg) {
       if (!msg.empty()) {
         if (content.empty()) {
           if (msg.back() == '\n') {
-            params.log(msg);
+            params.log(log_level,msg);
           } else {
             content = msg;
+            min_log_level = log_level;
           }
         } else {
           content += msg;
+          if (min_log_level > log_level) min_log_level = log_level;
           if (msg.back() == '\n') {
-            params.log(content);
+            params.log(min_log_level,content);
             content.clear();
           }
         }
       }
     }
   };
-  void log(std::string &&msg) {
+  void log(int log_level,std::string &&msg) {
     std::unique_ptr<ThreadLogger> &l(loggers[Live555CurrentThreadId()]);
     if (!l) l = std::make_unique<ThreadLogger>(params);
-    l->log(std::move(msg));
+    l->log(log_level,std::move(msg));
   }
+  void log(std::string &&msg) {log(4,std::move(msg));}
   std::map<unsigned int,std::unique_ptr<ThreadLogger> > loggers;
 };
 
@@ -2813,10 +2817,10 @@ public:
     return rval;
   }
   ~PluginInstance(void) {
-    params.log("PluginInstance::~PluginInstance: start\n");
+    params.log(3,"PluginInstance::~PluginInstance: start\n");
     watchVariable = 1;
     worker_thread.join();
-    params.log("PluginInstance::~PluginInstance: end\n");
+    params.log(3,"PluginInstance::~PluginInstance: end\n");
   }
 private:
   PluginInstance(IMStreamFactory *stream_factory,const RTSPParameters &params)
@@ -2876,9 +2880,9 @@ private:
           watchVariable = 0;
         }
       }) {
-    params.log("PluginInstance::PluginInstance(" + std::to_string(PluginInstance::params.rtspPort) + "): start\n");
+    params.log(3,"PluginInstance::PluginInstance(" + std::to_string(PluginInstance::params.rtspPort) + "): start\n");
     sem.wait();
-    params.log("PluginInstance::PluginInstance: end\n");
+    params.log(3,"PluginInstance::PluginInstance: end\n");
   }
   bool isRunning(void) const {return scheduler;}
   static void GenerateInfoString(void *context) {
@@ -2897,19 +2901,28 @@ private:
   GenericMediaServer::Semaphore sem;
 };
 
-
 void PluginInstance::generateInfoString(void) {
+  {
+    for (int i=0;i<3;i++) if (server[i]) {
+      std::string perf_string(server[i]->workerPerformance());
+      if (!perf_string.empty()) {
+        std::ostringstream o;
+        o << "perf(Server" << i << "):" << perf_string << '\n';
+        params.log(3,o.str());
+  std::cout << o.str();
+      }
+    }
+  }
+
   std::stringstream o;
   o << "---- RtspMStreamPlugin(" PLUGIN_VERSION "(" __DATE__ " " __TIME__ "), api:" RTCMEDIALIB_API_VERSION ")\n"
        "URIs (0.0.0.0: the port is bound to all interfaces):\n";
 
   MediaServerPluginRTSPServer::InfoMap connection_info,stream_info;
   MediaServerPluginRTSPServer::SubsessionMap subsessions;
-  for (int i=0;i<3;i++) {
-    if (server[i]) {
-      server[i]->printPortInfo(o);
-      server[i]->generateConnectionStreamInfo(connection_info,stream_info,subsessions);
-    }
+  for (int i=0;i<3;i++) if (server[i]) {
+    server[i]->printPortInfo(o);
+    server[i]->generateConnectionStreamInfo(connection_info,stream_info,subsessions);
   }
 
   o << "\n" << connection_info.size() << " connections:\n"

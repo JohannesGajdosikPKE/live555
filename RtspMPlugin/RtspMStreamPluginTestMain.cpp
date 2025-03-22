@@ -84,8 +84,8 @@ static void OnLog2(void *context,int loglevel,const std::string &message) {
     micros -= minutes *    (60*1000000ULL);
     const unsigned int seconds = micros /        1000000ULL;
     micros -= seconds *        1000000ULL;
-    fprintf(log_file,"%u %02u:%02u:%02u.%06u, %u: ",
-            days,hours,minutes,seconds,(unsigned int)micros,
+    fprintf(log_file,"L%d %u %02u:%02u:%02u.%06u, %u: ",
+            loglevel,days,hours,minutes,seconds,(unsigned int)micros,
             CurrentThreadId());
     log_start_of_line = false;
   }
@@ -97,7 +97,7 @@ static void OnLog2(void *context,int loglevel,const std::string &message) {
 }
 
 static void OnLog(void *context,const std::string &message) {
-  OnLog2(context,5,message);
+  OnLog2(context,9,message);
 }
 
 static

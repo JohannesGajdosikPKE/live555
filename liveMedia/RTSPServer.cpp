@@ -1123,8 +1123,10 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesEndOfLoop(Boolean playA
 #endif
     unsigned const numBytesToWrite = strlen((char*)fResponseBuffer);
     if (fOutputTLS->isNeeded) {
+        TimeAccounter::Guard guard(account_id_SSLw,envir());
         fOutputTLS->write((char const*)fResponseBuffer, numBytesToWrite);
     } else {
+        TimeAccounter::Guard guard(account_id_send,envir());
         send(fClientOutputSocket, (char const*)fResponseBuffer, numBytesToWrite, MSG_NOSIGNAL);
    }
     

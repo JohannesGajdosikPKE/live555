@@ -2033,18 +2033,22 @@ void RTSPClient::handleResponseBytes(int newBytesRead) {
 }
 
 int RTSPClient::write(const char* data, unsigned count) {
-      if (fOutputTLS->isNeeded) {
-	return fOutputTLS->write(data, count);
-      } else {
-	return send(fOutputSocketNum, data, count, MSG_NOSIGNAL);
-      }
+  if (fOutputTLS->isNeeded) {
+    TimeAccounter::Guard guard(account_id_SSLw,envir());
+    return fOutputTLS->write(data, count);
+  } else {
+    TimeAccounter::Guard guard(account_id_send,envir());
+    return send(fOutputSocketNum, data, count, MSG_NOSIGNAL);
+  }
 }
 
 int RTSPClient::read(u_int8_t* buffer, unsigned bufferSize) {
   if (fInputTLS->isNeeded) {
+    TimeAccounter::Guard guard(account_id_SSLr,envir());
     return fInputTLS->read(buffer, bufferSize);
   } else {
     struct sockaddr_storage dummy; // 'from' address - not used
+    TimeAccounter::Guard guard(account_id_recv,envir());
     return readSocket(envir(), fInputSocketNum, buffer, bufferSize, dummy);
   }
 }

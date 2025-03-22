@@ -430,10 +430,16 @@ Boolean RTPInterface::sendDataOverTCP(int socketNum, TLSState* tlsState,
 				      u_int8_t const* data, unsigned dataSize,
 				      Boolean forceSendToSucceed) {
   envir().taskScheduler().assertSameThread();
+  ANON_ACCOUNT_GUARD(envir());
   if (dataSize <= 0) return True; // gaj: catch silly invocations
-  int sendResult = (tlsState != NULL && tlsState->isNeeded)
-    ? tlsState->write((char const*)data, dataSize)
-    : send(socketNum, (char const*)data, dataSize, MSG_NOSIGNAL/*flags*/);
+  int sendResult;
+  if (tlsState != NULL && tlsState->isNeeded) {
+    TimeAccounter::Guard guard(account_id_SSLw,envir());
+    sendResult = tlsState->write((char const*)data, dataSize);
+  } else {
+    TimeAccounter::Guard guard(account_id_send,envir());
+    sendResult = send(socketNum, (char const*)data, dataSize, MSG_NOSIGNAL/*flags*/);
+  }
   int err = (sendResult < 0) ? envir().getErrno() : 0;
   if (sendResult < (int)dataSize) {
     // The TCP send() failed - at least partially.
@@ -448,9 +454,13 @@ Boolean RTPInterface::sendDataOverTCP(int socketNum, TLSState* tlsState,
       fprintf(stderr, "sendDataOverTCP: resending %d-byte send (blocking)\n", numBytesRemainingToSend); fflush(stderr);
 #endif
       makeSocketBlocking(socketNum, RTPINTERFACE_BLOCKING_WRITE_TIMEOUT_MS);
-      sendResult = (tlsState != NULL && tlsState->isNeeded)
-	? tlsState->write((char const*)(&data[numBytesSentSoFar]), numBytesRemainingToSend)
-	: send(socketNum, (char const*)(&data[numBytesSentSoFar]), numBytesRemainingToSend, MSG_NOSIGNAL/*flags*/);
+      if (tlsState != NULL && tlsState->isNeeded) {
+        TimeAccounter::Guard guard(account_id_SSLw,envir());
+        sendResult = tlsState->write((char const*)(&data[numBytesSentSoFar]), numBytesRemainingToSend);
+      } else {
+        TimeAccounter::Guard guard(account_id_send,envir());;
+        sendResult = send(socketNum, (char const*)(&data[numBytesSentSoFar]), numBytesRemainingToSend, MSG_NOSIGNAL/*flags*/);
+      }
       err = (sendResult < 0) ? envir().getErrno() : 0;
       makeSocketNonBlocking(socketNum);
       if ((unsigned)sendResult != numBytesRemainingToSend) {
