@@ -162,7 +162,7 @@ private:
   }
   void clear(const std::function<void(void*)> &f) {
     std::lock_guard<std::mutex> lock(mutex);
-    for (auto it : lookup_map) {
+    for (const auto &it : lookup_map) {
       f(it.second);
     }
     lookup_map.clear();
