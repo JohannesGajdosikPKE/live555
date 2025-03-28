@@ -430,7 +430,7 @@ Boolean RTPInterface::sendDataOverTCP(int socketNum, TLSState* tlsState,
 				      u_int8_t const* data, unsigned dataSize,
 				      Boolean forceSendToSucceed) {
   envir().taskScheduler().assertSameThread();
-  ANON_ACCOUNT_GUARD(envir());
+  ACCOUNT_GUARD("RTPI:sendDataTCP",envir());
   if (dataSize <= 0) return True; // gaj: catch silly invocations
   int sendResult;
   if (tlsState != NULL && tlsState->isNeeded) {
@@ -606,7 +606,8 @@ Boolean SocketDescriptor::tcpReadHandler1(int mask) {
   //   a 2-byte packet size (in network byte order)
   //   the packet data.
   // However, because the socket is being read asynchronously, this data might arrive in pieces.
-  
+  ACCOUNT_GUARD("RTPInterface;tcpReadHandler1",fEnv);
+
   u_int8_t c;
   struct sockaddr_storage dummy; // not used
   if (fTCPReadingState != AWAITING_PACKET_DATA) {

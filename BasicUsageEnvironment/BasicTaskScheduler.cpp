@@ -166,6 +166,7 @@ void BasicTaskScheduler::CommandRequestHandler(void* instance, int /*mask*/) {
 }
 
 void BasicTaskScheduler::commandRequestHandler(void) {
+  ACCOUNT_GUARD("BTS:commandRH",envir());
   for (;;) {
     char data;
 #if defined(__WIN32__) || defined(_WIN32)
@@ -221,7 +222,8 @@ void BasicTaskScheduler::schedulerTickTask() {
 #endif
 
 void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
-  assertSameThread();
+  //assertSameThread(); already asserted in doEventLoop
+  ACCOUNT_GUARD("SingleStep", envir());
   fd_set readSet = fReadSet; // make a copy for this select() call
   fd_set writeSet = fWriteSet; // ditto
   fd_set exceptionSet = fExceptionSet; // ditto

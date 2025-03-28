@@ -99,10 +99,11 @@ private:
 #define GAJ_CAT(A, B) A ## B
 #define GAJ_XCAT(A, B) GAJ_CAT(A, B)
 #define GAJ_UNIQUE_VAR_NAME(COUNTER) GAJ_XCAT(_private_var_name_, COUNTER)
+#define GAJ_UNIQUE_GUARD_NAME(COUNTER) GAJ_XCAT(_private_guard_name_, COUNTER)
 
 #define GAJ_ACCOUNT_GUARD_IMPL(COUNTER,name,env) \
   static const unsigned int GAJ_UNIQUE_VAR_NAME(COUNTER) = TimeAccounter::GetNewId(name); \
-  TimeAccounter::Guard guard(GAJ_UNIQUE_VAR_NAME(COUNTER),env)
+  TimeAccounter::Guard GAJ_UNIQUE_GUARD_NAME(COUNTER)(GAJ_UNIQUE_VAR_NAME(COUNTER),env)
 
 #define ACCOUNT_GUARD(name,env) GAJ_ACCOUNT_GUARD_IMPL(__COUNTER__,name,env)
 

@@ -574,6 +574,7 @@ void GenericMediaServer::ClientConnection::incomingRequestHandler(void* instance
 void GenericMediaServer::ClientConnection::incomingRequestHandler() {
     // this is called from the tasksceduler, asserting does not hurt:
   envir().taskScheduler().assertSameThread();
+  ACCOUNT_GUARD("CC::incomingRequestHandler",envir());
   if (fInputTLS->tlsAcceptIsNeeded) { // we need to successfully call fInputTLS->accept() first:
     const int rc = fInputTLS->accept(fOurSocket);
     if (rc == 0) {

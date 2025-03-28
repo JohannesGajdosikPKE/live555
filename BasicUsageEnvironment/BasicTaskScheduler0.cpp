@@ -33,7 +33,7 @@ private: // redefined virtual functions
   virtual void handleTimeout() {
     sched.assertSameThread();
     {
-      ANON_ACCOUNT_GUARD(sched.envir());
+      ACCOUNT_GUARD("AH:timeout",sched.envir());
       (*fProc)(fClientData);
     }
     DelayQueueEntry::handleTimeout();
