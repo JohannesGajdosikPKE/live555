@@ -2611,39 +2611,6 @@ std::shared_ptr<ServerMediaSession> MediaServerPluginRTSPServer::StreamMapEntry:
 
 
 class LoggingUsageEnvironment : public BasicUsageEnvironment {
-public:
-  LoggingUsageEnvironment(TaskScheduler &scheduler,const MPluginParams &params)
-    : BasicUsageEnvironment(scheduler),params(params) {}
-private:
-  const MPluginParams &params;
-  UsageEnvironment& operator<<(char const* str) override {
-    log(std::string(str?str:"(NULL)"));
-    return *this;
-  }
-  UsageEnvironment& operator<<(int i) override {
-    std::ostringstream o;
-    o << i;
-    log(o.str());
-    return *this;
-  }
-  UsageEnvironment& operator<<(unsigned u) override {
-    std::ostringstream o;
-    o << u;
-    log(o.str());
-    return *this;
-  }
-  UsageEnvironment& operator<<(double d) override {
-    std::ostringstream o;
-    o << d;
-    log(o.str());
-    return *this;
-  }
-  UsageEnvironment& operator<<(void* p) override {
-    std::ostringstream o;
-    o << p;
-    log(o.str());
-    return *this;
-  }
   class ThreadLogger {
     const MPluginParams &params;
     int min_log_level;
@@ -2676,12 +2643,46 @@ private:
       }
     }
   };
+public:
+  LoggingUsageEnvironment(TaskScheduler &scheduler,const MPluginParams &params)
+    : BasicUsageEnvironment(scheduler),params(params) {}
+  using UsageEnvironment::accounter;
+  UsageEnvironment& operator<<(char const* str) override {
+    log(std::string(str?str:"(NULL)"));
+    return *this;
+  }
+  UsageEnvironment& operator<<(int i) override {
+    std::ostringstream o;
+    o << i;
+    log(o.str());
+    return *this;
+  }
+  UsageEnvironment& operator<<(unsigned u) override {
+    std::ostringstream o;
+    o << u;
+    log(o.str());
+    return *this;
+  }
+  UsageEnvironment& operator<<(double d) override {
+    std::ostringstream o;
+    o << d;
+    log(o.str());
+    return *this;
+  }
+  UsageEnvironment& operator<<(void* p) override {
+    std::ostringstream o;
+    o << p;
+    log(o.str());
+    return *this;
+  }
   void log(int log_level,std::string &&msg) {
     std::unique_ptr<ThreadLogger> &l(loggers[Live555CurrentThreadId()]);
     if (!l) l = std::make_unique<ThreadLogger>(params);
     l->log(log_level,std::move(msg));
   }
   void log(std::string &&msg) {log(4,std::move(msg));}
+private:
+  const MPluginParams& params;
   std::map<unsigned int,std::unique_ptr<ThreadLogger> > loggers;
 };
 
@@ -2817,15 +2818,16 @@ public:
     return rval;
   }
   ~PluginInstance(void) {
-    params.log(3,"PluginInstance::~PluginInstance: start\n");
+    params.log(4,"PluginInstance::~PluginInstance: start\n");
     watchVariable = 1;
-    worker_thread.join();
-    params.log(3,"PluginInstance::~PluginInstance: end\n");
+    plugin_main_thread.join();
+    params.log(4,"PluginInstance::~PluginInstance: end\n");
   }
 private:
   PluginInstance(IMStreamFactory *stream_factory,const RTSPParameters &params)
     : stream_factory(stream_factory),params(params),
-      worker_thread([this](void) {
+      last_performance_query_time(TimeAccounter::GetNow()),
+      plugin_main_thread([this](void) {
         scheduler = BasicTaskScheduler::createNew();
         scheduler->assert_threads = true;
         env = new LoggingUsageEnvironment(*scheduler,PluginInstance::params);
@@ -2867,7 +2869,7 @@ private:
         for (int i=0;i<3;i++) {
           if (server[i]) Medium::close(server[i]);
         }
-        *env << "PluginInstance::PluginInstance::l: end\n";
+        *env << "PluginInstance::PluginInstance::l: end: destroying UsageEnvironment and TaskScheduler\n";
         if (!env->reclaim()) {
           *env << "PluginInstance::PluginInstance::l: env->reclaim failed"
                   " and destruction in live555 is a mess. Prefer memleak over crash/abort\n";
@@ -2880,9 +2882,9 @@ private:
           watchVariable = 0;
         }
       }) {
-    params.log(3,"PluginInstance::PluginInstance(" + std::to_string(PluginInstance::params.rtspPort) + "): start\n");
+    params.log(4,"PluginInstance::PluginInstance(" + std::to_string(PluginInstance::params.rtspPort) + "): start\n");
     sem.wait();
-    params.log(3,"PluginInstance::PluginInstance: end\n");
+    params.log(4,"PluginInstance::PluginInstance: end\n");
   }
   bool isRunning(void) const {return scheduler;}
   static void GenerateInfoString(void *context) {
@@ -2893,23 +2895,42 @@ private:
   IMStreamFactory *const stream_factory;
   RTSPParameters params;
   BasicTaskScheduler *scheduler = nullptr;
-  UsageEnvironment *env = nullptr;
+  LoggingUsageEnvironment *env = nullptr;
   MediaServerPluginRTSPServer *server[3] = {nullptr,nullptr,nullptr};
   TaskToken generate_info_string_task;
   char volatile watchVariable = 1;
-  std::thread worker_thread;
+  uint64_t last_performance_query_time;
+  std::thread plugin_main_thread;
   GenericMediaServer::Semaphore sem;
 };
 
 void PluginInstance::generateInfoString(void) {
   {
+    uint64_t time_diff;
+    {
+      const uint64_t query_time = TimeAccounter::GetNow();
+      time_diff = query_time - last_performance_query_time;
+      last_performance_query_time = query_time;
+    }
+    if (env) {
+      const unsigned int actual_nr_of_accounts = TimeAccounter::GetNrOfAccounts();
+      std::unique_ptr<uint64_t[]> values = std::make_unique<uint64_t[]>(actual_nr_of_accounts);
+      for (unsigned int i=0;i<actual_nr_of_accounts;i++) values[i] = 0;
+      env->accounter.transferValues(*env,values.get(),actual_nr_of_accounts);
+      const float factor = 1000000.f / (float)time_diff;
+      std::ostringstream o;
+      o << "perf(MainThr):";
+      for (unsigned int i=0;i<actual_nr_of_accounts;i++) if (values[i]) {
+        o << " " << TimeAccounter::GetAccountName(i) << ": " << (unsigned int)((float)(values[i]) * factor);
+      }
+      params.log(3,o.str());
+    }
     for (int i=0;i<3;i++) if (server[i]) {
-      std::string perf_string(server[i]->workerPerformance());
+      std::string perf_string(server[i]->workerPerformance(time_diff));
       if (!perf_string.empty()) {
         std::ostringstream o;
         o << "perf(Server" << i << "):" << perf_string << '\n';
         params.log(3,o.str());
-  std::cout << o.str();
       }
     }
   }

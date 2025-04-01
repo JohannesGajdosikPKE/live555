@@ -28,6 +28,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #endif
 
 #include <iostream>
+#include <sstream>
 
 ////////// library version constants //////////
 
@@ -91,8 +92,15 @@ void TimeAccounter::account(const unsigned int id) {
   counter[id] += elapsed;
 }
 
-void TimeAccounter::transferValues(uint64_t values[],unsigned int nr) {
-  for (unsigned int i=0;i<nr;++i) values[i] += counter[i].exchange(0);
+void TimeAccounter::transferValues(UsageEnvironment &env,uint64_t values[],unsigned int nr) {
+  std::ostringstream o;
+  o << "TimeAccounter::transferValues:";
+  for (unsigned int i=0;i<nr;++i) {
+    const uint64_t v = counter[i].exchange(0);
+    o << ' ' << v;
+    values[i] += v;
+  }
+  env << o.str().c_str() << "\n";
 }
 
 

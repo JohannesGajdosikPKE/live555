@@ -225,28 +225,29 @@ private:
   GenericMediaServer::Semaphore sem,sem2;
 };
 
-std::string GenericMediaServer::workerPerformance(void) {
-  const uint64_t query_time = TimeAccounter::GetNow();
+std::string GenericMediaServer::workerPerformance(uint64_t time_diff) {
+  std::ostringstream o;
   const unsigned int actual_nr_of_accounts = TimeAccounter::GetNrOfAccounts();
   std::unique_ptr<uint64_t[]> values = std::make_unique<uint64_t[]>(actual_nr_of_accounts);
   for (unsigned int i=0;i<actual_nr_of_accounts;i++) values[i] = 0;
-  std::lock_guard<std::mutex> lock(workers_mutex);
   unsigned int actual_nr_of_workers = 0;
-  for (int i=nr_of_workers-1;i>=0;i--) {
-    const Worker *w = workers[i].get();
-    if (w) {
-      w->getEnv().accounter.transferValues(values.get(),actual_nr_of_accounts);
-      actual_nr_of_workers++;
+  {
+    std::lock_guard<std::mutex> lock(workers_mutex);
+    for (int i=nr_of_workers-1;i>=0;i--) {
+      const Worker *w = workers[i].get();
+      if (w) {
+        w->getEnv().accounter.transferValues(envir(),values.get(),actual_nr_of_accounts);
+        actual_nr_of_workers++;
+      }
     }
   }
-  std::ostringstream o;
-  if (actual_nr_of_workers > 0 && query_time != last_performance_query_time) {
-    const float factor = 1000000.f / (float)((query_time - last_performance_query_time) * actual_nr_of_workers);
+  if (actual_nr_of_workers > 0) {
+    o << "  threads: " << actual_nr_of_workers;
+    const float factor = 1000000.f / (float)(time_diff * actual_nr_of_workers);
     for (unsigned int i=0;i<actual_nr_of_accounts;i++) if (values[i]) {
       o << " " << TimeAccounter::GetAccountName(i) << ": " << (unsigned int)((float)(values[i]) * factor);
     }
   }
-  last_performance_query_time = query_time;
   return o.str();
 }
 
@@ -270,7 +271,6 @@ GenericMediaServer
     fServerPort(ourPort), fReclamationSeconds(reclamationSeconds),
     fPreviousClientSessionId(0),
     fTLSCertificateFileName(NULL), fTLSPrivateKeyFileName(NULL),
-    last_performance_query_time(TimeAccounter::GetNow()),
     nr_of_workers(GetNrOfCores()),
     workers(new std::unique_ptr<Worker>[nr_of_workers]),
     cleanup_called(false) {

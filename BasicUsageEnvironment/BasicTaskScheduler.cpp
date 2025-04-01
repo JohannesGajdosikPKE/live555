@@ -120,6 +120,15 @@ BasicTaskScheduler::BasicTaskScheduler(unsigned maxSchedulerGranularity)
   setBackgroundHandling(command_pipe[0], SOCKET_READABLE | SOCKET_EXCEPTION, CommandRequestHandler, this);
 }
 
+void BasicTaskScheduler::setUsageEnvironment(UsageEnvironment &e) {
+  BasicTaskScheduler0::setUsageEnvironment(e);
+  e << "BasicTaskScheduler::setUsageEnvironment: "
+       "construction of UsageEnvironment and TaskScheduler seems ok, commant_pipe: ";
+  char tmp[256];
+  e << PrintSocket(tmp,sizeof(tmp),command_pipe[0]) << ",";
+  e << PrintSocket(tmp,sizeof(tmp),command_pipe[1]) << "\n";
+}
+
 uint64_t BasicTaskScheduler::executeCommand(std::function<void(uint64_t task_nr)> &&cmd) {
   if (!cmd) return 0;
   uint64_t rval;
@@ -139,10 +148,13 @@ uint64_t BasicTaskScheduler::executeCommand(std::function<void(uint64_t task_nr)
     if (rc > 0) break;
     if (rc != 0) {
 #if defined(__WIN32__) || defined(_WIN32)
-      printf("send failed: %d\n", WSAGetLastError());
+      const int errnr = WSAGetLastError();
 #else
-      printf("send failed: %d\n", errno);
+      const int errnr = errno;
 #endif
+      envir() << "FATAL: BasicTaskScheduler::executeCommand: sending 1 byte on "
+              << command_pipe[1] << " failed: "
+              << errnr << "\n";
       abort();
     }
   }
@@ -177,14 +189,18 @@ void BasicTaskScheduler::commandRequestHandler(void) {
     if (rc == 0) break;
     if (rc < 0) {
 #if defined(__WIN32__) || defined(_WIN32)
-      if (WSAGetLastError() == WSAEWOULDBLOCK) break;
-      printf("recv failed: %d\n", WSAGetLastError());
+      const int errnr = WSAGetLastError();
+      if (errnr == WSAEWOULDBLOCK) break;
 #else
-      if (errno == EAGAIN || errno == EWOULDBLOCK) break;
-      printf("recv failed: %d\n", errno);
+      const int errnr = errno;
+      if (errnr == EAGAIN || errnr == EWOULDBLOCK) break;
 #endif
+      envir() << "FATAL: BasicTaskScheduler::commandRequestHandler: receiving 1 byte on "
+              << command_pipe[0] << " failed: "
+              << errnr << "\n";
       abort();
     }
+      // 1 byte receiveived, execute at most 1 command:
     std::function<void(uint64_t task_nr)> f;
     uint64_t task_nr;
     {
@@ -202,6 +218,7 @@ void BasicTaskScheduler::commandRequestHandler(void) {
 }
 
 BasicTaskScheduler::~BasicTaskScheduler() {
+  // env has already been destroyed, cannot log anymore
 #if defined(__WIN32__) || defined(_WIN32)
   if (fDummySocketNum >= 0) closeSocket(fDummySocketNum);
 #endif
@@ -228,10 +245,7 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
   fd_set writeSet = fWriteSet; // ditto
   fd_set exceptionSet = fExceptionSet; // ditto
 
-  DelayInterval const& timeToDelay = fDelayQueue.timeToNextAlarm();
-  struct timeval tv_timeToDelay;
-  tv_timeToDelay.tv_sec = timeToDelay.seconds();
-  tv_timeToDelay.tv_usec = timeToDelay.useconds();
+  struct timeval tv_timeToDelay = fDelayQueue.timeToNextAlarm();
   // Very large "tv_sec" values cause select() to fail.
   // Don't make it any larger than 1 million seconds (11.5 days)
   const long MAX_TV_SEC = MILLION;
@@ -252,6 +266,7 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
     selectResult = select(fMaxNumSockets, &readSet, &writeSet, &exceptionSet, &tv_timeToDelay);
   }
   if (selectResult < 0) {
+    ANON_ACCOUNT_GUARD(envir());
 #if defined(__WIN32__) || defined(_WIN32)
     int err = WSAGetLastError();
     // For some unknown reason, select() in Windoze sometimes fails with WSAEINVAL if
@@ -292,7 +307,8 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
       fLastHandledSocketNum = -1;//because we didn't call a handler
       goto continue_without_sockets;
     } else {
-        
+      ANON_ACCOUNT_GUARD(envir());
+
         // Unexpected error - treat this as fatal:
 	envir() << "FATAL: BasicTaskScheduler::SingleStep(): select() failed: " << err << "\n";
 	envir().setResultErrMsg("FATAL: BasicTaskScheduler::SingleStep(): select() failed: ",err);
@@ -375,10 +391,10 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
   }
 }
   continue_without_sockets:
-  ANON_ACCOUNT_GUARD(envir());
   // Also handle any newly-triggered event (Note that we do this *after* calling a socket handler,
   // in case the triggered event handler modifies The set of readable sockets.)
   if (fEventTriggersAreBeingUsed) {
+    ACCOUNT_GUARD("EventTriggers",envir());
     // Look for an event trigger that needs handling (making sure that we make forward progress through all possible triggers):
     unsigned i = fLastUsedTriggerNum;
     EventTriggerId mask = fLastUsedTriggerMask;
@@ -407,6 +423,7 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
   }
 
   // Also handle any delayed event that may have come due.
+  ACCOUNT_GUARD("DelayQueue",envir());
   fDelayQueue.handleAlarm();
 }
 

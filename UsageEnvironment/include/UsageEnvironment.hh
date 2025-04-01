@@ -83,7 +83,7 @@ public:
     }
   };
   static unsigned int GetNewId(const char *name);
-  void transferValues(uint64_t values[],unsigned int nr);
+  void transferValues(class UsageEnvironment &env,uint64_t values[],unsigned int nr);
   static unsigned int GetNrOfAccounts(void) {return nr_of_counters;}
   static const char *GetAccountName(unsigned int id) {return counter_names[id];}
 private:
@@ -120,6 +120,7 @@ class TaskScheduler; // forward
 // An abstract base class, subclassed for each use of the library
 
 class UsageEnvironment {
+protected:
   mutable TimeAccounter accounter;
   friend class TimeAccounter::Guard;
   friend class GenericMediaServer;
@@ -256,7 +257,7 @@ public:
   bool assert_threads;
   int addNrOfUsers(int x) {return (nr_of_users += x);}
   int passAndAssert(int x) {assertSameThread();return x;}
-  void setUsageEnvironment(UsageEnvironment &e) {env = &e;} // called in UsageEnvironment constructor
+  virtual void setUsageEnvironment(UsageEnvironment &e) {env = &e;} // called in UsageEnvironment constructor
 private:
   UsageEnvironment *env;
   std::atomic<int> nr_of_users;

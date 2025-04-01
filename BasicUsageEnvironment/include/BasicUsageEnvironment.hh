@@ -73,6 +73,7 @@ public:
 protected:
   BasicTaskScheduler(unsigned maxSchedulerGranularity);
       // called only by "createNew()"
+  void setUsageEnvironment(UsageEnvironment &e) override;
 
   static void schedulerTickTask(void* clientData);
   void schedulerTickTask();

@@ -37,6 +37,7 @@ typedef long time_base_seconds;
 
 class Timeval {
 public:
+  operator struct timeval() const {return fTv;}
   time_base_seconds seconds() const {
     return fTv.tv_sec;
   }
@@ -169,7 +170,7 @@ public:
 //  void updateEntry(intptr_t tokenToFind, DelayInterval newDelay);
   DelayQueueEntry* removeEntry(intptr_t tokenToFind); // but doesn't delete it
 
-  DelayInterval const& timeToNextAlarm();
+  struct timeval timeToNextAlarm();
   void handleAlarm();
 
 private:

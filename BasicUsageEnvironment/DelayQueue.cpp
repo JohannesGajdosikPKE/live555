@@ -171,7 +171,7 @@ DelayQueueEntry* DelayQueue::removeEntry(intptr_t tokenToFind) {
   return entry;
 }
 
-DelayInterval const& DelayQueue::timeToNextAlarm() {
+struct timeval DelayQueue::timeToNextAlarm() {
   std::lock_guard<std::mutex> lock(queue_mutex);
   if (head()->fDeltaTimeRemaining == DELAY_ZERO) return DELAY_ZERO; // a common case
 

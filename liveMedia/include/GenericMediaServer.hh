@@ -117,7 +117,7 @@ public:
       }
   };
 
-  std::string workerPerformance(void);
+  std::string workerPerformance(uint64_t time_diff);
 
 protected:
   GenericMediaServer(UsageEnvironment& env, int ourSocketIPv4, int ourSocketIPv6, Port ourPort,
@@ -295,7 +295,6 @@ protected:
   char const* fTLSCertificateFileName;
   char const* fTLSPrivateKeyFileName;
 
-  uint64_t last_performance_query_time;
   const unsigned int nr_of_workers;
   class Worker;
   std::mutex workers_mutex;
