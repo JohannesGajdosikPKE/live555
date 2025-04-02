@@ -46,7 +46,7 @@ public:
   virtual UsageEnvironment& operator<<(void* p);
 
 protected:
-  BasicUsageEnvironment(TaskScheduler& taskScheduler);
+  BasicUsageEnvironment(TaskScheduler& taskScheduler,std::ostream &log);
       // called only by "createNew()" (or subclass constructors)
   virtual ~BasicUsageEnvironment();
 private:
@@ -73,7 +73,7 @@ public:
 protected:
   BasicTaskScheduler(unsigned maxSchedulerGranularity);
       // called only by "createNew()"
-  void setUsageEnvironment(UsageEnvironment &e) override;
+  void setUsageEnvironment(UsageEnvironment &e,std::ostream &log) override;
 
   static void schedulerTickTask(void* clientData);
   void schedulerTickTask();

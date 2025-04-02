@@ -2644,8 +2644,19 @@ class LoggingUsageEnvironment : public BasicUsageEnvironment {
     }
   };
 public:
+  class LoggingLine : public std::ostringstream {
+    const int log_level;
+    const std::function<void(int level,const std::string &msg)> log_func;
+  public:
+    LoggingLine(int level,std::function<void(int level,const std::string &msg)> &&log_func)
+      : log_level(level), log_func(std::move(log_func)) {}
+    ~LoggingLine(void) {log_func(log_level,str());}
+  };
   LoggingUsageEnvironment(TaskScheduler &scheduler,const MPluginParams &params)
-    : BasicUsageEnvironment(scheduler),params(params) {}
+    : BasicUsageEnvironment(
+        scheduler,
+        LoggingLine(4,[&params](int level,const std::string &msg) {params.log(level,msg);})),
+      params(params) {}
   using UsageEnvironment::accounter;
   UsageEnvironment& operator<<(char const* str) override {
     log(std::string(str?str:"(NULL)"));

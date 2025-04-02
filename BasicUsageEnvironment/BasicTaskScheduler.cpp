@@ -120,13 +120,13 @@ BasicTaskScheduler::BasicTaskScheduler(unsigned maxSchedulerGranularity)
   setBackgroundHandling(command_pipe[0], SOCKET_READABLE | SOCKET_EXCEPTION, CommandRequestHandler, this);
 }
 
-void BasicTaskScheduler::setUsageEnvironment(UsageEnvironment &e) {
-  BasicTaskScheduler0::setUsageEnvironment(e);
-  e << "BasicTaskScheduler::setUsageEnvironment: "
-       "construction of UsageEnvironment and TaskScheduler seems ok, commant_pipe: ";
+void BasicTaskScheduler::setUsageEnvironment(UsageEnvironment &e,std::ostream &log) {
+  BasicTaskScheduler0::setUsageEnvironment(e,log);
+  log << "BasicTaskScheduler::setUsageEnvironment: "
+         "construction of UsageEnvironment and TaskScheduler seems ok, commant_pipe: ";
   char tmp[256];
-  e << PrintSocket(tmp,sizeof(tmp),command_pipe[0]) << ",";
-  e << PrintSocket(tmp,sizeof(tmp),command_pipe[1]) << "\n";
+  log << PrintSocket(tmp,sizeof(tmp),command_pipe[0]) << ",";
+  log << PrintSocket(tmp,sizeof(tmp),command_pipe[1]) << "\n";
 }
 
 uint64_t BasicTaskScheduler::executeCommand(std::function<void(uint64_t task_nr)> &&cmd) {

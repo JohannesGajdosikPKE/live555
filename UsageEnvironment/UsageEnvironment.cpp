@@ -120,9 +120,9 @@ Boolean UsageEnvironment::reclaim() {
   return False;
 }
 
-UsageEnvironment::UsageEnvironment(TaskScheduler& scheduler)
+UsageEnvironment::UsageEnvironment(TaskScheduler& scheduler,std::ostream &log)
   : liveMediaPriv(NULL), groupsockPriv(NULL), fScheduler(scheduler) {
-  fScheduler.setUsageEnvironment(*this);
+  fScheduler.setUsageEnvironment(*this,log);
 }
 
 UsageEnvironment::~UsageEnvironment() {

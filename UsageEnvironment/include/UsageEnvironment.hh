@@ -49,6 +49,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <functional>
 #include <atomic>
 #include <stack>
+#include <iostream>
 
 #ifdef _WIN32
   #include <windows.h>
@@ -164,7 +165,7 @@ public:
   void* groupsockPriv;
 
 protected:
-  UsageEnvironment(TaskScheduler& scheduler); // abstract base class
+  UsageEnvironment(TaskScheduler& scheduler,std::ostream &log); // abstract base class
   virtual ~UsageEnvironment(); // we are deleted only by reclaim()
 
 private:
@@ -257,7 +258,7 @@ public:
   bool assert_threads;
   int addNrOfUsers(int x) {return (nr_of_users += x);}
   int passAndAssert(int x) {assertSameThread();return x;}
-  virtual void setUsageEnvironment(UsageEnvironment &e) {env = &e;} // called in UsageEnvironment constructor
+  virtual void setUsageEnvironment(UsageEnvironment &e,std::ostream &log) {env = &e;} // called in UsageEnvironment constructor
 private:
   UsageEnvironment *env;
   std::atomic<int> nr_of_users;

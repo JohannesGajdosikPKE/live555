@@ -20,6 +20,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "BasicUsageEnvironment.hh"
 #include <stdio.h>
 
+#include <sstream>
+
 #ifdef _DEBUG
 #include <chrono>
 
@@ -46,8 +48,8 @@ extern int const BasicUsageEnvironmentLibraryVersionInt = BASICUSAGEENVIRONMENT_
 extern "C" int initializeWinsockIfNecessary();
 #endif
 
-BasicUsageEnvironment::BasicUsageEnvironment(TaskScheduler& taskScheduler)
-: BasicUsageEnvironment0(taskScheduler) {
+BasicUsageEnvironment::BasicUsageEnvironment(TaskScheduler& taskScheduler,std::ostream &log)
+: BasicUsageEnvironment0(taskScheduler,log) {
 #ifdef _DEBUG
   log_start_of_line = true;
   log_file = 0;
@@ -69,7 +71,10 @@ BasicUsageEnvironment::~BasicUsageEnvironment() {
 
 BasicUsageEnvironment*
 BasicUsageEnvironment::createNew(TaskScheduler& taskScheduler) {
-  return new BasicUsageEnvironment(taskScheduler);
+  std::ostringstream log;
+  BasicUsageEnvironment *rval = new BasicUsageEnvironment(taskScheduler,log);
+  *rval << log.str().c_str();
+  return rval;
 }
 
 int BasicUsageEnvironment::getErrno() const {

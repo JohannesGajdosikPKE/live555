@@ -26,8 +26,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 ////////// BasicUsageEnvironment //////////
 
-BasicUsageEnvironment0::BasicUsageEnvironment0(TaskScheduler& taskScheduler)
-  : UsageEnvironment(taskScheduler),
+BasicUsageEnvironment0::BasicUsageEnvironment0(TaskScheduler& taskScheduler,std::ostream &log)
+  : UsageEnvironment(taskScheduler,log),
     fBufferMaxSize(RESULT_MSG_BUFFER_MAX) {
   reset();
 }

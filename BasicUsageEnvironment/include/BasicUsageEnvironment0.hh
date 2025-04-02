@@ -60,7 +60,7 @@ public:
   virtual void reportBackgroundError();
 
 protected:
-  BasicUsageEnvironment0(TaskScheduler& taskScheduler);
+  BasicUsageEnvironment0(TaskScheduler& taskScheduler,std::ostream &log);
   virtual ~BasicUsageEnvironment0();
 
 private:
