@@ -338,11 +338,17 @@ Boolean RTPInterface::handleRead(unsigned char* buffer, unsigned bufferMaxSize,
     ((sockaddr_in&)fromAddress).sin_addr.s_addr = 0;
     ((sockaddr_in&)fromAddress).sin_port = 0;
     
-    while ((curBytesRead = (fNextTCPReadTLSState != NULL && fNextTCPReadTLSState->isNeeded)
-	    ? fNextTCPReadTLSState->read(&buffer[bytesRead], curBytesToRead)
-	    : readSocket(envir(), fNextTCPReadStreamSocketNum,
-			 &buffer[bytesRead], curBytesToRead,
-			 fromAddress)) > 0) {
+    for (;;) {
+      if (fNextTCPReadTLSState != NULL && fNextTCPReadTLSState->isNeeded) {
+        TimeAccounter::Guard guard(account_id_SSLr, envir());
+        curBytesRead = fNextTCPReadTLSState->read(&buffer[bytesRead], curBytesToRead);
+      } else {
+        TimeAccounter::Guard guard(account_id_recv, envir());
+        curBytesRead = readSocket(envir(), fNextTCPReadStreamSocketNum,
+                                  &buffer[bytesRead], curBytesToRead,
+                                  fromAddress);
+      }
+      if (curBytesRead <= 0) break;
       bytesRead += curBytesRead;
       if (bytesRead >= totBytesToRead) break;
       curBytesToRead -= curBytesRead;
@@ -611,9 +617,15 @@ Boolean SocketDescriptor::tcpReadHandler1(int mask) {
   u_int8_t c;
   struct sockaddr_storage dummy; // not used
   if (fTCPReadingState != AWAITING_PACKET_DATA) {
-    int result = (fTLSState != NULL && fTLSState->isNeeded)
-      ? fTLSState->read(&c, 1)
-      : readSocket(fEnv, fOurSocketNum, &c, 1, dummy);
+    ANON_ACCOUNT_GUARD(fEnv);
+    int result;
+    if (fTLSState != NULL && fTLSState->isNeeded) {
+      TimeAccounter::Guard guard(account_id_SSLr, fEnv);
+      result = fTLSState->read(&c, 1);
+    } else {
+      TimeAccounter::Guard guard(account_id_recv, fEnv);
+      result = readSocket(fEnv, fOurSocketNum, &c, 1, dummy);
+    }
     if (result == 0) { // There was no more data to read
       return False;
     } else if (result != 1) { // error reading TCP socket, so we will no longer handle it
@@ -629,6 +641,7 @@ Boolean SocketDescriptor::tcpReadHandler1(int mask) {
   Boolean callAgain = True;
   switch (fTCPReadingState) {
     case AWAITING_DOLLAR: {
+      ANON_ACCOUNT_GUARD(fEnv);
       if (c == '$') {
 #ifdef DEBUG_RECEIVE
 	fprintf(stderr, "SocketDescriptor(socket %d)::tcpReadHandler(): Saw '$'\n", fOurSocketNum);
@@ -645,6 +658,7 @@ Boolean SocketDescriptor::tcpReadHandler1(int mask) {
     }
     case AWAITING_STREAM_CHANNEL_ID: {
       // The byte that we read is the stream channel id.
+      ANON_ACCOUNT_GUARD(fEnv);
       if (lookupRTPInterface(c) != NULL) { // sanity check
 	fStreamChannelId = c;
 	fTCPReadingState = AWAITING_SIZE1;
@@ -659,12 +673,14 @@ Boolean SocketDescriptor::tcpReadHandler1(int mask) {
     }
     case AWAITING_SIZE1: {
       // The byte that we read is the first (high) byte of the 16-bit RTP or RTCP packet 'size'.
+      ANON_ACCOUNT_GUARD(fEnv);
       fSizeByte1 = c;
       fTCPReadingState = AWAITING_SIZE2;
       break;
     }
     case AWAITING_SIZE2: {
       // The byte that we read is the second (low) byte of the 16-bit RTP or RTCP packet 'size'.
+      ANON_ACCOUNT_GUARD(fEnv);
       unsigned short size = (fSizeByte1<<8)|c;
       
       // Record the information about the packet data that will be read next:
@@ -679,6 +695,7 @@ Boolean SocketDescriptor::tcpReadHandler1(int mask) {
       break;
     }
     case AWAITING_PACKET_DATA: {
+      ANON_ACCOUNT_GUARD(fEnv);
       callAgain = False;
       fTCPReadingState = AWAITING_DOLLAR; // the next state, unless we end up having to read more data in the current state
       // Call the appropriate read handler to get the packet data from the TCP stream:
@@ -698,9 +715,14 @@ Boolean SocketDescriptor::tcpReadHandler1(int mask) {
 #ifdef DEBUG_RECEIVE
 	  fprintf(stderr, "SocketDescriptor(socket %d)::tcpReadHandler(): No handler proc for \"rtpInterface\" for channel %d; need to skip %d remaining bytes\n", fOurSocketNum, fStreamChannelId, rtpInterface->fNextTCPReadSize);
 #endif
-	  int result = (fTLSState != NULL && fTLSState->isNeeded)
-	    ? fTLSState->read(&c, 1)
-	    : readSocket(fEnv, fOurSocketNum, &c, 1, dummy);
+	  int result;
+	  if (fTLSState != NULL && fTLSState->isNeeded) {
+	    TimeAccounter::Guard guard(account_id_SSLr, fEnv);
+	    result = fTLSState->read(&c, 1);
+	  } else {
+	    TimeAccounter::Guard guard(account_id_recv, fEnv);
+	    result = readSocket(fEnv, fOurSocketNum, &c, 1, dummy);
+	  }
 	  if (result < 0) { // error reading TCP socket, so we will no longer handle it
 #ifdef DEBUG_RECEIVE
 	    fprintf(stderr, "SocketDescriptor(socket %d)::tcpReadHandler(): readSocket(1 byte) returned %d (error)\n", fOurSocketNum, result);

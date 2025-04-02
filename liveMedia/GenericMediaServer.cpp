@@ -593,10 +593,12 @@ void GenericMediaServer::ClientConnection::incomingRequestHandler() {
 
   int bytesRead;
   if (fInputTLS->isNeeded) {
+    TimeAccounter::Guard guard(account_id_SSLr, envir());
     bytesRead = fInputTLS->read(&fRequestBuffer[fRequestBytesAlreadySeen], fRequestBufferBytesLeft);
   } else {
     struct sockaddr_storage dummy; // 'from' address, meaningless in this case
   
+    TimeAccounter::Guard guard(account_id_recv, envir());
     bytesRead = readSocket(envir(), fOurSocket, &fRequestBuffer[fRequestBytesAlreadySeen], fRequestBufferBytesLeft, dummy);
   }
   if (bytesRead < 0) {

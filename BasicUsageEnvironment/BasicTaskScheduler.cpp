@@ -241,24 +241,29 @@ void BasicTaskScheduler::schedulerTickTask() {
 void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
   //assertSameThread(); already asserted in doEventLoop
   ACCOUNT_GUARD("SingleStep", envir());
-  fd_set readSet = fReadSet; // make a copy for this select() call
-  fd_set writeSet = fWriteSet; // ditto
-  fd_set exceptionSet = fExceptionSet; // ditto
 
-  struct timeval tv_timeToDelay = fDelayQueue.timeToNextAlarm();
-  // Very large "tv_sec" values cause select() to fail.
-  // Don't make it any larger than 1 million seconds (11.5 days)
-  const long MAX_TV_SEC = MILLION;
-  if (tv_timeToDelay.tv_sec > MAX_TV_SEC) {
-    tv_timeToDelay.tv_sec = MAX_TV_SEC;
-  }
-  // Also check our "maxDelayTime" parameter (if it's > 0):
-  if (maxDelayTime > 0 &&
-      (tv_timeToDelay.tv_sec > (long)maxDelayTime/MILLION ||
-       (tv_timeToDelay.tv_sec == (long)maxDelayTime/MILLION &&
-	tv_timeToDelay.tv_usec > (long)maxDelayTime%MILLION))) {
-    tv_timeToDelay.tv_sec = maxDelayTime/MILLION;
-    tv_timeToDelay.tv_usec = maxDelayTime%MILLION;
+  fd_set readSet, writeSet, exceptionSet;
+  struct timeval tv_timeToDelay;
+  {
+    ANON_ACCOUNT_GUARD(envir());
+    readSet = fReadSet; // make a copy for this select() call
+    writeSet = fWriteSet; // ditto
+    exceptionSet = fExceptionSet; // ditto
+    tv_timeToDelay = fDelayQueue.timeToNextAlarm();
+    // Very large "tv_sec" values cause select() to fail.
+    // Don't make it any larger than 1 million seconds (11.5 days)
+    const long MAX_TV_SEC = MILLION;
+    if (tv_timeToDelay.tv_sec > MAX_TV_SEC) {
+      tv_timeToDelay.tv_sec = MAX_TV_SEC;
+    }
+    // Also check our "maxDelayTime" parameter (if it's > 0):
+    if (maxDelayTime > 0 &&
+        (tv_timeToDelay.tv_sec > (long)maxDelayTime/MILLION ||
+         (tv_timeToDelay.tv_sec == (long)maxDelayTime/MILLION &&
+  	tv_timeToDelay.tv_usec > (long)maxDelayTime%MILLION))) {
+      tv_timeToDelay.tv_sec = maxDelayTime/MILLION;
+      tv_timeToDelay.tv_usec = maxDelayTime%MILLION;
+    }
   }
   int selectResult;
   {
