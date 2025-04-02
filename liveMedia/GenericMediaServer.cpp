@@ -184,7 +184,6 @@ public:
         watchVariable = 0;
         sem.post();
         (*env) << "GenericMediaServer::Worker::mainThread: start\n";
-        env->accounter.reset();
         env->taskScheduler().doEventLoop(&watchVariable);
         (*env) << "GenericMediaServer::Worker::mainThread: end\n";
         sem.post();
@@ -228,8 +227,8 @@ private:
 std::string GenericMediaServer::workerPerformance(uint64_t time_diff) {
   std::ostringstream o;
   const unsigned int actual_nr_of_accounts = TimeAccounter::GetNrOfAccounts();
-  std::unique_ptr<uint64_t[]> values = std::make_unique<uint64_t[]>(actual_nr_of_accounts);
-  for (unsigned int i=0;i<actual_nr_of_accounts;i++) values[i] = 0;
+  const std::unique_ptr<TimeAccounter::Counter[]> values
+    = std::make_unique<TimeAccounter::Counter[]>(actual_nr_of_accounts);
   unsigned int actual_nr_of_workers = 0;
   {
     std::lock_guard<std::mutex> lock(workers_mutex);
@@ -244,8 +243,13 @@ std::string GenericMediaServer::workerPerformance(uint64_t time_diff) {
   if (actual_nr_of_workers > 0) {
     o << " threads: " << actual_nr_of_workers;
     const float factor = 1000000.f / (float)(time_diff * actual_nr_of_workers);
-    for (unsigned int i=0;i<actual_nr_of_accounts;i++) if (values[i]) {
-      o << " " << TimeAccounter::GetAccountName(i) << ": " << (unsigned int)((float)(values[i]) * factor);
+    for (unsigned int i=0;i<actual_nr_of_accounts;i++) {
+      TimeAccounter::Counter &c(values[i]);
+      if (c.nr_of_calls) {
+        o << " " << TimeAccounter::GetAccountName(i)
+          << ": " << c.nr_of_calls
+          << '/' << (unsigned int)((float)(c.duration) * factor);
+      }
     }
   }
   return o.str();

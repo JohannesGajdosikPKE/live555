@@ -72,8 +72,7 @@ extern const unsigned int account_id_SSLr;
 class TimeAccounter {
 public:
   static uint64_t GetNow(void);
-  TimeAccounter(void) {reset();}
-  void reset(void);
+  TimeAccounter(void) {}
   class Guard {
     TimeAccounter &acc;
   public:
@@ -84,13 +83,23 @@ public:
     }
   };
   static unsigned int GetNewId(const char *name);
-  void transferValues(class UsageEnvironment &env,uint64_t values[],unsigned int nr);
+  struct Counter {
+    Counter(void) : duration(0),nr_of_calls(0) {}
+    uint64_t duration;
+    uint64_t nr_of_calls;
+  };
+  void transferValues(class UsageEnvironment &env,Counter *values,unsigned int nr);
   static unsigned int GetNrOfAccounts(void) {return nr_of_counters;}
   static const char *GetAccountName(unsigned int id) {return counter_names[id];}
 private:
   void account(const unsigned int id);
   static constexpr unsigned int NR_OF_IDS = 256;
-  std::atomic<uint64_t> counter[NR_OF_IDS];
+  struct AtomicCounter {
+    AtomicCounter(void) : duration(0), nr_of_calls(0) {}
+    std::atomic<uint64_t> duration;
+    std::atomic<uint64_t> nr_of_calls;
+  };
+  AtomicCounter counter[NR_OF_IDS];
   static std::atomic<unsigned int> nr_of_counters;
   static const char *counter_names[NR_OF_IDS];
   uint64_t last_now;

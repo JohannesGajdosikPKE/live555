@@ -234,6 +234,7 @@ void MultiFramedRTPSource::networkReadHandler(MultiFramedRTPSource* source, int 
 }
 
 void MultiFramedRTPSource::networkReadHandler1() {
+  ACCOUNT_GUARD("MFRS:networkReadHandler",envir());
   BufferedPacket* bPacket = fPacketReadInProgress;
   if (bPacket == NULL) {
     // Normal case: Get a free BufferedPacket descriptor to hold the new network packet:

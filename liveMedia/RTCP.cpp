@@ -441,6 +441,7 @@ void RTCPInstance::incomingReportHandler(RTCPInstance* instance,
 }
 
 void RTCPInstance::incomingReportHandler1() {
+  ACCOUNT_GUARD("RCTPI:incomingReportHandler",envir());
   do {
     if (fNumBytesAlreadyRead >= maxRTCPPacketSize) {
       envir() << "RTCPInstance error: Hit limit when reading incoming packet over TCP. (fNumBytesAlreadyRead ("

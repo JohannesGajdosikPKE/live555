@@ -2925,14 +2925,19 @@ void PluginInstance::generateInfoString(void) {
     }
     if (env) {
       const unsigned int actual_nr_of_accounts = TimeAccounter::GetNrOfAccounts();
-      std::unique_ptr<uint64_t[]> values = std::make_unique<uint64_t[]>(actual_nr_of_accounts);
-      for (unsigned int i=0;i<actual_nr_of_accounts;i++) values[i] = 0;
+      std::unique_ptr<TimeAccounter::Counter[]> values
+        = std::make_unique<TimeAccounter::Counter[]>(actual_nr_of_accounts);
       env->accounter.transferValues(*env,values.get(),actual_nr_of_accounts);
       const float factor = 1000000.f / (float)time_diff;
       std::ostringstream o;
       o << "perf(MainThr):";
-      for (unsigned int i=0;i<actual_nr_of_accounts;i++) if (values[i]) {
-        o << " " << TimeAccounter::GetAccountName(i) << ": " << (unsigned int)((float)(values[i]) * factor);
+      for (unsigned int i=0;i<actual_nr_of_accounts;i++) {
+        TimeAccounter::Counter& c(values[i]);
+        if (c.nr_of_calls) {
+          o << " " << TimeAccounter::GetAccountName(i)
+            << ": " << c.nr_of_calls
+            << '/' << (unsigned int)((float)(c.duration) * factor);
+        }
       }
       params.log(3,o.str());
     }

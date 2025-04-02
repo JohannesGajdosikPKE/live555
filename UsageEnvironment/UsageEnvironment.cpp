@@ -80,25 +80,25 @@ const unsigned int account_id_SSLw = TimeAccounter::GetNewId("SSLw");
 const unsigned int account_id_SSLr = TimeAccounter::GetNewId("SSLr");
 
 
-void TimeAccounter::reset(void) {
-  last_now = GetNow();
-  for (unsigned int i=0;i<NR_OF_IDS;++i) counter[i] = 0;
-}
-
 void TimeAccounter::account(const unsigned int id) {
   const uint64_t now = GetNow();
   const uint64_t elapsed = now - last_now;
   last_now = now;
-  counter[id] += elapsed;
+  AtomicCounter &c(counter[id]);
+  c.duration += elapsed;
+  c.nr_of_calls++;
 }
 
-void TimeAccounter::transferValues(UsageEnvironment &env,uint64_t values[],unsigned int nr) {
+void TimeAccounter::transferValues(UsageEnvironment &env,Counter *values,unsigned int nr) {
   std::ostringstream o;
   o << "TimeAccounter::transferValues:";
-  for (unsigned int i=0;i<nr;++i) {
-    const uint64_t v = counter[i].exchange(0);
-    o << ' ' << v;
-    values[i] += v;
+  for (unsigned int i=0;i<nr;++i,++values) {
+    AtomicCounter &c(counter[i]);
+    const uint64_t v = c.duration.exchange(0);
+    const uint64_t n = c.nr_of_calls.exchange(0);
+    o << ' ' << n << '/' << v;
+    values->duration += v;
+    values->nr_of_calls += n;
   }
   env << o.str().c_str() << "\n";
 }
