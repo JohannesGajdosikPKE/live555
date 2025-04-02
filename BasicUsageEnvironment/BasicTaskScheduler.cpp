@@ -123,7 +123,7 @@ BasicTaskScheduler::BasicTaskScheduler(unsigned maxSchedulerGranularity)
 void BasicTaskScheduler::setUsageEnvironment(UsageEnvironment &e,std::ostream &log) {
   BasicTaskScheduler0::setUsageEnvironment(e,log);
   log << "BasicTaskScheduler::setUsageEnvironment: "
-         "construction of UsageEnvironment and TaskScheduler seems ok, commant_pipe: ";
+         "construction of UsageEnvironment and TaskScheduler seems ok, command_pipe: ";
   char tmp[256];
   log << PrintSocket(tmp,sizeof(tmp),command_pipe[0]) << ",";
   log << PrintSocket(tmp,sizeof(tmp),command_pipe[1]) << "\n";
