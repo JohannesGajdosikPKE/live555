@@ -245,10 +245,19 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
   fd_set readSet, writeSet, exceptionSet;
   struct timeval tv_timeToDelay;
   {
+    {
+      ANON_ACCOUNT_GUARD(envir());
+      readSet = fReadSet; // make a copy for this select() call
+    }
+    {
+      ANON_ACCOUNT_GUARD(envir());
+      writeSet = fWriteSet; // ditto
+    }
+    {
+      ANON_ACCOUNT_GUARD(envir());
+      exceptionSet = fExceptionSet; // ditto
+    }
     ANON_ACCOUNT_GUARD(envir());
-    readSet = fReadSet; // make a copy for this select() call
-    writeSet = fWriteSet; // ditto
-    exceptionSet = fExceptionSet; // ditto
     tv_timeToDelay = fDelayQueue.timeToNextAlarm();
     // Very large "tv_sec" values cause select() to fail.
     // Don't make it any larger than 1 million seconds (11.5 days)

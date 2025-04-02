@@ -242,7 +242,7 @@ std::string GenericMediaServer::workerPerformance(uint64_t time_diff) {
     }
   }
   if (actual_nr_of_workers > 0) {
-    o << "  threads: " << actual_nr_of_workers;
+    o << " threads: " << actual_nr_of_workers;
     const float factor = 1000000.f / (float)(time_diff * actual_nr_of_workers);
     for (unsigned int i=0;i<actual_nr_of_accounts;i++) if (values[i]) {
       o << " " << TimeAccounter::GetAccountName(i) << ": " << (unsigned int)((float)(values[i]) * factor);

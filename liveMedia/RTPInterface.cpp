@@ -710,7 +710,8 @@ Boolean SocketDescriptor::tcpReadHandler1(int mask) {
 	  fprintf(stderr, "SocketDescriptor(socket %d)::tcpReadHandler(): reading %d bytes on channel %d\n", fOurSocketNum, rtpInterface->fNextTCPReadSize, rtpInterface->fNextTCPReadStreamChannelId);
 #endif
 	  fTCPReadingState = AWAITING_PACKET_DATA;
-	  rtpInterface->fReadHandlerProc(rtpInterface->fOwner, mask);
+    ACCOUNT_GUARD("RI:fReadHandlerProc",fEnv);
+    rtpInterface->fReadHandlerProc(rtpInterface->fOwner, mask);
 	} else {
 #ifdef DEBUG_RECEIVE
 	  fprintf(stderr, "SocketDescriptor(socket %d)::tcpReadHandler(): No handler proc for \"rtpInterface\" for channel %d; need to skip %d remaining bytes\n", fOurSocketNum, fStreamChannelId, rtpInterface->fNextTCPReadSize);
@@ -724,6 +725,7 @@ Boolean SocketDescriptor::tcpReadHandler1(int mask) {
 	    result = readSocket(fEnv, fOurSocketNum, &c, 1, dummy);
 	  }
 	  if (result < 0) { // error reading TCP socket, so we will no longer handle it
+      ANON_ACCOUNT_GUARD(fEnv);
 #ifdef DEBUG_RECEIVE
 	    fprintf(stderr, "SocketDescriptor(socket %d)::tcpReadHandler(): readSocket(1 byte) returned %d (error)\n", fOurSocketNum, result);
 #endif
@@ -731,7 +733,8 @@ Boolean SocketDescriptor::tcpReadHandler1(int mask) {
 	    fDeleteMyselfNext = True;
 	    return False;
 	  } else {
-	    fTCPReadingState = AWAITING_PACKET_DATA;
+      ANON_ACCOUNT_GUARD(fEnv);
+      fTCPReadingState = AWAITING_PACKET_DATA;
 	    if (result == 1) {
 	      --rtpInterface->fNextTCPReadSize;
 	      callAgain = True;
