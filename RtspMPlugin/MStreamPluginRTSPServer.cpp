@@ -2643,20 +2643,16 @@ class LoggingUsageEnvironment : public BasicUsageEnvironment {
       }
     }
   };
-public:
-  class LoggingLine : public std::ostringstream {
-    const int log_level;
-    const std::function<void(int level,const std::string &msg)> log_func;
-  public:
-    LoggingLine(int level,std::function<void(int level,const std::string &msg)> &&log_func)
-      : log_level(level), log_func(std::move(log_func)) {}
-    ~LoggingLine(void) {log_func(log_level,str());}
-  };
-  LoggingUsageEnvironment(TaskScheduler &scheduler,const MPluginParams &params)
-    : BasicUsageEnvironment(
-        scheduler,
-        LoggingLine(4,[&params](int level,const std::string &msg) {params.log(level,msg);})),
+  LoggingUsageEnvironment(TaskScheduler &scheduler,std::ostream &log,const MPluginParams &params)
+    : BasicUsageEnvironment(scheduler,log),
       params(params) {}
+public:
+  static LoggingUsageEnvironment *Create(TaskScheduler &scheduler,const MPluginParams &params) {
+    std::ostringstream log;
+    LoggingUsageEnvironment *rval = new LoggingUsageEnvironment(scheduler,log,params);
+    (*rval) << log.str().c_str();
+    return rval;
+  }
   using UsageEnvironment::accounter;
   UsageEnvironment& operator<<(char const* str) override {
     log(std::string(str?str:"(NULL)"));
@@ -2698,7 +2694,7 @@ private:
 };
 
 UsageEnvironment *MediaServerPluginRTSPServer::createNewUsageEnvironment(TaskScheduler &scheduler) {
-  return new LoggingUsageEnvironment(scheduler,params);
+  return LoggingUsageEnvironment::Create(scheduler,params);
 }
 
 
@@ -2841,7 +2837,7 @@ private:
       plugin_main_thread([this](void) {
         scheduler = BasicTaskScheduler::createNew();
         scheduler->assert_threads = true;
-        env = new LoggingUsageEnvironment(*scheduler,PluginInstance::params);
+        env = LoggingUsageEnvironment::Create(*scheduler,PluginInstance::params);
         *env << "PluginInstance::PluginInstance::l: start: "
                 "rtsp: " << PluginInstance::params.rtspPort
              << "(bind:" << IpToString(PluginInstance::params.bind_to_interface_rtsp).c_str()
