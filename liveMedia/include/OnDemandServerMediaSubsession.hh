@@ -169,7 +169,7 @@ public:
   }
 
 public:
-  Boolean isTCP;
+  const Boolean isTCP;
   struct sockaddr_storage addr;
   Port rtpPort;
   Port rtcpPort;

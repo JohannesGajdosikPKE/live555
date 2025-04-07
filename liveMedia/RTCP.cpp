@@ -192,7 +192,7 @@ RTCPInstance::~RTCPInstance() {
   fTypeOfEvent = EVENT_BYE; // not used, but...
   sendBYE();
 
-  if (fSource != NULL && fSource->RTPgs() == fRTCPInterface.gs()) {
+  if (fSource != NULL && fSource->RTPgs() && fSource->RTPgs() == fRTCPInterface.gs()) {
     // We were receiving RTCP reports that were multiplexed with RTP, so tell the RTP source
     // to stop giving them to us:
     fSource->deregisterForMultiplexedRTCPPackets();
@@ -410,7 +410,7 @@ void RTCPInstance::addStreamSocket(int sockNum, unsigned char streamChannelId,
   envir() << "RTCPInstance::addStreamSocket(" << sockNum << "," << ((int)streamChannelId) << "," << tlsState << ") start: "
              "fRTCPInterface.stopNetworkReading/setStreamSocket/startNetworkReading(incomingReportHandler)\n";
   // First, turn off background read handling for the default (UDP) socket:
-  envir().taskScheduler().turnOffBackgroundReadHandling(fRTCPInterface.gs()->socketNum());
+  if (fRTCPInterface.gs()) envir().taskScheduler().turnOffBackgroundReadHandling(fRTCPInterface.gs()->socketNum());
 
   // Add the RTCP-over-TCP interface:
   fRTCPInterface.addStreamSocket(sockNum, streamChannelId, tlsState);

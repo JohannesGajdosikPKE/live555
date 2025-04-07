@@ -40,8 +40,8 @@ public:
 			      RTPSink*& resultSink);
 
   // used by RTSP servers:
-  Groupsock const& groupsockBeingUsed() const { return *(fRTPInterface.gs()); }
-  Groupsock& groupsockBeingUsed() { return *(fRTPInterface.gs()); }
+  Groupsock const *groupsockBeingUsed() const { return (fRTPInterface.gs()); }
+  Groupsock *groupsockBeingUsed() { return (fRTPInterface.gs()); }
 
   void setRTCPInstance(RTCPInstance *i) {rtcp_instance = i;}
 

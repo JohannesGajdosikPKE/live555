@@ -65,7 +65,7 @@ Boolean PassiveServerMediaSubsession::rtcpIsMuxed() {
   if (fRTCPInstance == NULL) return False;
 
   // Check whether RTP and RTCP use the same "groupsock" object:
-  return &(fRTPSink.groupsockBeingUsed()) == fRTCPInstance->RTCPgs();
+  return fRTPSink.groupsockBeingUsed() && fRTPSink.groupsockBeingUsed() == fRTCPInstance->RTCPgs();
 }
 
 char const*
@@ -85,10 +85,17 @@ PassiveServerMediaSubsession::sdpLines(int /*addressFamily*/) {
       if (fRTCPInstance != NULL) fRTCPInstance->setupForSRTCP();
     }
 
-    Groupsock const& gs = fRTPSink.groupsockBeingUsed();
-    AddressString groupAddressStr(gs.groupAddress());
-    unsigned short portNum = ntohs(gs.port().num());
-    unsigned char ttl = gs.ttl();
+    AddressString groupAddressStr(nullptr);
+    const char *family = "IP4";
+    unsigned short portNum = 0;
+    unsigned char ttl = 0;
+    Groupsock const* gs = fRTPSink.groupsockBeingUsed();
+    if (gs) {
+      if (gs->groupAddress().ss_family != AF_INET) family = "IP6";
+      groupAddressStr.init(gs->groupAddress());
+      portNum = ntohs(gs->port().num());
+      ttl = gs->ttl();
+    }
     unsigned char rtpPayloadType = fRTPSink.rtpPayloadType();
     char const* mediaType = fRTPSink.sdpMediaType();
     unsigned estBitrate
@@ -126,7 +133,7 @@ PassiveServerMediaSubsession::sdpLines(int /*addressFamily*/) {
 	    portNum, // m= <port>
 	    fParentSession->streamingUsesSRTP ? "S" : "",
 	    rtpPayloadType, // m= <fmt list>
-	    gs.groupAddress().ss_family == AF_INET ? "IP4" : "IP6", // c= address type
+	    family, // c= address type
 	    groupAddressStr.val(), // c= <connection address>
 	    ttl, // c= TTL
 	    estBitrate, // b=AS:<bandwidth>
@@ -162,20 +169,23 @@ void PassiveServerMediaSubsession
 		      void*& streamToken,
 		      void *rtsp_client_connection) {
   isMulticast = True;
-  Groupsock& gs = fRTPSink.groupsockBeingUsed();
-  if (destinationTTL == 255) destinationTTL = gs.ttl();
+  Groupsock *gs = fRTPSink.groupsockBeingUsed();
+  if (destinationTTL == 255 && gs) destinationTTL = gs->ttl();
 
   if (addressIsNull(destinationAddress)) {
     // normal case - use the sink's existing destination address:
-    destinationAddress = gs.groupAddress();
+    if (gs) destinationAddress = gs->groupAddress();
+    else memset(&destinationAddress, 0, sizeof(destinationAddress));
   } else { // use the client-specified destination address instead:
-    gs.changeDestinationParameters(destinationAddress, 0, destinationTTL);
-    if (fRTCPInstance != NULL) {
-      Groupsock* rtcpGS = fRTCPInstance->RTCPgs();
-      rtcpGS->changeDestinationParameters(destinationAddress, 0, destinationTTL);
+    if(gs) {
+      gs->changeDestinationParameters(destinationAddress, 0, destinationTTL);
+      if (fRTCPInstance != NULL) {
+        Groupsock* rtcpGS = fRTCPInstance->RTCPgs();
+        rtcpGS->changeDestinationParameters(destinationAddress, 0, destinationTTL);
+      }
     }
   }
-  serverRTPPort = gs.port();
+  serverRTPPort = gs ? gs->port() : 0;
   if (fRTCPInstance != NULL) {
     Groupsock* rtcpGS = fRTCPInstance->RTCPgs();
     serverRTCPPort = rtcpGS->port();
@@ -203,7 +213,9 @@ void PassiveServerMediaSubsession::startStream(unsigned clientSessionId,
   unsigned streamBitrate = fRTCPInstance == NULL ? 50 : fRTCPInstance->totSessionBW(); // in kbps
   unsigned rtpBufSize = streamBitrate * 25 / 2; // 1 kbps * 0.1 s = 12.5 bytes
   if (rtpBufSize < 50 * 1024) rtpBufSize = 50 * 1024;
-  increaseSendBufferTo(envir(), fRTPSink.groupsockBeingUsed().socketNum(), rtpBufSize);
+  if (fRTPSink.groupsockBeingUsed()) {
+    increaseSendBufferTo(envir(), fRTPSink.groupsockBeingUsed()->socketNum(), rtpBufSize);
+  }
 
   if (fRTCPInstance != NULL) {
     // Hack: Send a RTCP "SR" packet now, so that receivers will (likely) be able to

@@ -167,6 +167,13 @@ void OnDemandServerMediaSubsession
 	NoReuse dummy(envir()); // ensures that we skip over ports that are already in use
 	for (portNumBits serverPortNum = fInitialPortNum; ; ++serverPortNum) {
 	  serverRTPPort = serverPortNum;
+	  if (tcpSocketNum >= 0) {
+	    serverRTPPort = 0;
+	    serverRTCPPort = 0;
+	    rtpGroupsock = nullptr;
+	    rtcpGroupsock = nullptr;
+	    break;
+	  }
 	  rtpGroupsock = createGroupsock(nullAddress(destinationAddress.ss_family), serverRTPPort);
 	  if (rtpGroupsock->socketNum() < 0) {
 	    delete rtpGroupsock;
@@ -454,10 +461,15 @@ void OnDemandServerMediaSubsession
 ::setSDPLinesFromRTPSink(RTPSink* rtpSink, FramedSource* inputSource, unsigned estBitrate) {
   char const* mediaType = rtpSink->sdpMediaType();
   unsigned char rtpPayloadType = rtpSink->rtpPayloadType();
-  struct sockaddr_storage const& addressForSDP = rtpSink->groupsockBeingUsed().groupAddress();
-  portNumBits portNumForSDP = ntohs(rtpSink->groupsockBeingUsed().port().num());
-
-  AddressString ipAddressStr(addressForSDP);
+  AddressString ipAddressStr(nullptr);
+  portNumBits portNumForSDP = 0;
+  const char *family = "IP4";
+  if (rtpSink->groupsockBeingUsed()) {
+    const sockaddr_storage &addressForSDP = rtpSink->groupsockBeingUsed()->groupAddress();
+    ipAddressStr.init(addressForSDP);
+    if (addressForSDP.ss_family != AF_INET) family = "IP6";
+    portNumForSDP = ntohs(rtpSink->groupsockBeingUsed()->port().num());
+  }
   char* rtpmapLine = rtpSink->rtpmapLine();
   char* keyMgmtLine = rtpSink->keyMgmtLine();
   char const* rtcpmuxLine = fMultiplexRTCPWithRTP ? "a=rtcp-mux\r\n" : "";
@@ -491,7 +503,7 @@ void OnDemandServerMediaSubsession
 	  portNumForSDP, // m= <port>
 	  fParentSession->streamingUsesSRTP ? "S" : "",
 	  rtpPayloadType, // m= <fmt list>
-	  addressForSDP.ss_family == AF_INET ? "IP4" : "IP6", ipAddressStr.val(), // c= address
+	  family, ipAddressStr.val(), // c= address
 	  estBitrate, // b=AS:<bandwidth>
 	  rtpmapLine, // a=rtpmap:... (if present)
 	  keyMgmtLine, // a=key-mgmt:... (if present)

@@ -190,17 +190,22 @@ public:
 
   // IPv4 or IPv6 input:
   AddressString(struct sockaddr_storage const& addr);
+  AddressString(std::nullptr_t);
 
   virtual ~AddressString();
 
   char const* val() const { return fVal; }
 
-private:
+  void init(std::nullptr_t); // 0.0.0.0
+  void init(struct sockaddr_storage const& addr);
   void init(ipv4AddressBits const& addr); // used to implement the IPv4 constructors
   void init(ipv6AddressBits const& addr); // used to implement the IPv6 constructors
 
 private:
-  char* fVal; // The result ASCII string: allocated by the constructor; deleted by the destructor
+  AddressString(void);
+  AddressString(const AddressString&);
+  AddressString &operator=(const AddressString&);
+  char* fVal = nullptr; // The result ASCII string: allocated by the constructor; deleted by the destructor
 };
 
 portNumBits portNum(struct sockaddr_storage const& address);

@@ -150,8 +150,10 @@ RTPInterface::RTPInterface(Medium* owner, Groupsock* gs)
   // even if the socket was previously reported (e.g., by "select()") as having data available.
   // (This can supposedly happen if the UDP checksum fails, for example.)
   envir().taskScheduler().assertSameThread();
-  makeSocketNonBlocking(fGS->socketNum());
-  increaseSendBufferTo(envir(), fGS->socketNum(), 50*1024);
+  if (fGS) {
+    makeSocketNonBlocking(fGS->socketNum());
+    increaseSendBufferTo(envir(), fGS->socketNum(), 50*1024);
+  }
 }
 
 RTPInterface::~RTPInterface() {
@@ -163,10 +165,11 @@ RTPInterface::~RTPInterface() {
 void RTPInterface::setStreamSocket(int sockNum, unsigned char streamChannelId,
 				   TLSState* tlsState) {
   envir().taskScheduler().assertSameThread();
-  fGS->removeAllDestinations();
-  envir().taskScheduler().disableBackgroundHandling(fGS->socketNum()); // turn off any reading on our datagram socket
-  fGS->reset(); // and close our datagram socket, because we won't be using it anymore
-
+  if (fGS) {
+    fGS->removeAllDestinations();
+    envir().taskScheduler().disableBackgroundHandling(fGS->socketNum()); // turn off any reading on our datagram socket
+    fGS->reset(); // and close our datagram socket, because we won't be using it anymore
+  }
   addStreamSocket(sockNum, streamChannelId, tlsState);
 }
 
@@ -268,7 +271,7 @@ Boolean RTPInterface::sendPacket(unsigned char* packet, unsigned packetSize) {
   Boolean success = True; // we'll return False instead if any of the sends fail
 
   // Normal case: Send as a UDP packet:
-  if (!fGS->output(envir(), packet, packetSize)) success = False;
+  if (fGS && !fGS->output(envir(), packet, packetSize)) success = False;
 
   // Also, send over each of our TCP sockets:
   tcpStreamRecord* nextStream;
@@ -294,8 +297,9 @@ void RTPInterface
   envir() << "RTPInterface(" << id << ")::startNetworkReading: start: turnOnBackgroundReadHandling(GS " << (fGS ? fGS->socketNum() : 0) << ")\n";
   envir().taskScheduler().assertSameThread();
 
-  envir().taskScheduler().
-    turnOnBackgroundReadHandling(fGS->socketNum(), handlerProc, fOwner);
+  if (fGS) {
+    envir().taskScheduler().turnOnBackgroundReadHandling(fGS->socketNum(), handlerProc, fOwner);
+  }
 
   // Also, receive RTP over TCP, on each of our TCP connections:
   fReadHandlerProc = handlerProc;
@@ -321,7 +325,7 @@ Boolean RTPInterface::handleRead(unsigned char* buffer, unsigned bufferMaxSize,
   if (fNextTCPReadStreamSocketNum < 0) {
     // Normal case: read from the (datagram) 'groupsock':
     tcpSocketNum = -1;
-    readSuccess = fGS->handleRead(buffer, bufferMaxSize, bytesRead, fromAddress);
+    readSuccess = (fGS && fGS->handleRead(buffer, bufferMaxSize, bytesRead, fromAddress));
   } else {
     // Read from the TCP connection:
     tcpSocketNum = fNextTCPReadStreamSocketNum;

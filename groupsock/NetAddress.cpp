@@ -465,6 +465,14 @@ AddressString::AddressString(ipv6AddressBits const& addr) {
 }
 
 AddressString::AddressString(struct sockaddr_storage const& addr) {
+  init(addr);
+}
+
+AddressString::AddressString(std::nullptr_t) {
+  init(nullptr);
+}
+
+void AddressString::init(struct sockaddr_storage const& addr) {
   switch (addr.ss_family) {
     case AF_INET: {
       init(((sockaddr_in&)addr).sin_addr.s_addr);
@@ -475,6 +483,7 @@ AddressString::AddressString(struct sockaddr_storage const& addr) {
       break;
     }
     default: {
+      if (fVal) delete[] fVal;
       fVal = new char[200]; // more than enough for this error message
       sprintf(fVal, "(unknown address family %d)", addr.ss_family);
       break;
@@ -483,13 +492,28 @@ AddressString::AddressString(struct sockaddr_storage const& addr) {
 }
 
 void AddressString::init(ipv4AddressBits const& addr) {
+  if (fVal) delete[] fVal;
   fVal = new char[INET_ADDRSTRLEN];
   inet_ntop(AF_INET, &addr, fVal, INET_ADDRSTRLEN);
 }
 
 void AddressString::init(ipv6AddressBits const& addr) {
+  if (fVal) delete[] fVal;
   fVal = new char[INET6_ADDRSTRLEN];
   inet_ntop(AF_INET6, &addr, fVal, INET6_ADDRSTRLEN);
+}
+
+void AddressString::init(std::nullptr_t) {
+  if (fVal) delete[] fVal;
+  fVal = new char[8];
+  fVal[0] = '0';
+  fVal[1] = '.';
+  fVal[2] = '0';
+  fVal[3] = '.';
+  fVal[4] = '0';
+  fVal[5] = '.';
+  fVal[6] = '0';
+  fVal[7] = '\0';
 }
 
 AddressString::~AddressString() {
