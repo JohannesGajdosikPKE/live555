@@ -22,6 +22,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "RTSPClient.hh"
 #ifndef NO_OPENSSL
 #include <openssl/err.h>
+#include <memory>
 #endif
 #include "BasicUsageEnvironment.hh" // PrintSocket
 
@@ -265,9 +266,40 @@ Boolean ServerTLSState::setup(int socketNum) {
 
     if (SSL_CTX_set_ecdh_auto(fCtx, 1) != 1) break;
 
-    if (SSL_CTX_use_certificate_chain_file(fCtx, fCertificateFileName) != 1) break;
+    // CertificateFileName might contain own certificate data instead of a file path
+    const bool bFileContainsCertData = 
+      strstr(fCertificateFileName,"-----BEGIN CERTIFICATE-----") != nullptr;
+    const bool bFileContainsPKeyData =
+      strstr(fPrivateKeyFileName, "-----BEGIN PRIVATE KEY-----") != nullptr;
 
-    if (SSL_CTX_use_PrivateKey_file(fCtx, fPrivateKeyFileName, SSL_FILETYPE_PEM) != 1) break;
+    if (bFileContainsCertData && bFileContainsPKeyData)
+    {
+      using BIO_ptr = std::unique_ptr<BIO, decltype(&BIO_free)>;
+      using X509_ptr = std::unique_ptr<X509, decltype(&X509_free)>;
+      using RSA_ptr = std::unique_ptr<RSA, decltype(&RSA_free)>;
+      using EVP_PKEY_ptr = std::unique_ptr <EVP_PKEY, decltype(&EVP_PKEY_free)>;
+
+      BIO_ptr cert_bio(BIO_new_mem_buf((const void*) fCertificateFileName, -1), BIO_free);
+      if (!cert_bio.get())
+        break;
+
+      X509_ptr cert (PEM_read_bio_X509(cert_bio.get(), nullptr, nullptr, nullptr), X509_free);
+      if (!cert || SSL_CTX_use_certificate(fCtx, cert.get()) != 1) break;
+
+      BIO_ptr pk_bio(BIO_new_mem_buf((const void*)fPrivateKeyFileName, -1), BIO_free);
+      if (!pk_bio.get())
+        break;
+
+      EVP_PKEY_ptr pkey(PEM_read_bio_PrivateKey(pk_bio.get(), nullptr, nullptr, nullptr), EVP_PKEY_free);
+      if (!pkey || SSL_CTX_use_PrivateKey(fCtx, pkey.get()) != 1) break;
+
+    }
+    else
+    {
+      if (SSL_CTX_use_certificate_chain_file(fCtx, fCertificateFileName) != 1) break;
+
+      if (SSL_CTX_use_PrivateKey_file(fCtx, fPrivateKeyFileName, SSL_FILETYPE_PEM) != 1) break;
+    }
 
     fCon = SSL_new(fCtx);
     if (fCon == NULL) break;
