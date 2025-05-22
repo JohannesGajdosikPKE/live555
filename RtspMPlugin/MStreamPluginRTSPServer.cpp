@@ -886,6 +886,13 @@ MediaServerPluginRTSPServer::createNew(ServerType type,bool &success,
   return nullptr;
 }
 
+static std::string logableCertAndKeyPath(const std::string &path)
+{
+  if (path.find("-----BEGIN") != std::string::npos)
+    return "logging of certificate contents not allowed";
+  return path;
+}
+
 MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(ServerType type, UsageEnvironment &env, int ourSocketIPv4, int ourSocketIPv6,
                                                          int m_HTTPServerSocketIPv4, int m_HTTPServerSocketIPv6,
                                                          const RTSPParameters &params, IMStreamFactory *stream_factory)
@@ -924,7 +931,7 @@ MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(ServerType type, UsageE
   }
   if (type == type_rtsps_only || type == type_https_only) {
     env << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(" << ServerTypeToString(type) << "): tls cert: "
-        << params.getTlsCertFile().c_str() << ", key: " << params.getTlsKeyFile().c_str() << "\n";
+        << logableCertAndKeyPath(params.getTlsCertFile()).c_str() << ", key: " << logableCertAndKeyPath(params.getTlsKeyFile()).c_str() << "\n";
     setTLSState(params.getTlsCertFile().c_str(),params.getTlsKeyFile().c_str(),
                 type == type_rtsps_only,
                 type == type_rtsps_only);
