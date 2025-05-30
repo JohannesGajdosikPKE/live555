@@ -91,16 +91,13 @@ void TimeAccounter::account(const unsigned int id) {
 
 void TimeAccounter::transferValues(UsageEnvironment &env,Counter *values,unsigned int nr) {
   std::ostringstream o;
-  o << "TimeAccounter::transferValues:";
   for (unsigned int i=0;i<nr;++i,++values) {
     AtomicCounter &c(counter[i]);
     const uint64_t v = c.duration.exchange(0);
     const uint64_t n = c.nr_of_calls.exchange(0);
-    o << ' ' << n << '/' << v;
     values->duration += v;
     values->nr_of_calls += n;
   }
-  env << o.str().c_str() << "\n";
 }
 
 
