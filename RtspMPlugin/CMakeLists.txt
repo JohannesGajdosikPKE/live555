@@ -22,6 +22,9 @@ set(CMAKE_CXX_STANDARD 14)
 
 project(RtspMStreamPluginProject)
 
+set(CREATEVERIONFILE "CreateVersionFile")
+add_executable(${CREATEVERIONFILE} CreateVersionFile.c)
+
 if (NOT CMAKE_CONFIGURATION_TYPES)
     # no multi configuration generator like Visual Studio
   if (NOT DEFINED CMAKE_BUILD_TYPE OR NOT CMAKE_BUILD_TYPE)
@@ -49,7 +52,20 @@ set(CMAKE_DEBUG_POSTFIX "d")
 set(PLUGIN RtspMStreamPlugin)
 set(TESTPROG RtspMStreamPluginTest)
 
+if (WIN32)
+  add_custom_command(
+    OUTPUT temporary_version_info.c
+    COMMAND ${CREATEVERIONFILE} temporary_version_info.c temporary_resource_file.rc
+    VERBATIM)
+else()
+  add_custom_command(
+    OUTPUT temporary_version_info.c
+    COMMAND ${CREATEVERIONFILE} temporary_version_info.c
+    VERBATIM)
+endif()
+
 set(PLUGIN_SOURCES
+  temporary_version_info.c
   ../BasicUsageEnvironment/include/BasicHashTable.hh
   ../BasicUsageEnvironment/include/BasicUsageEnvironment.hh
   ../BasicUsageEnvironment/include/BasicUsageEnvironment0.hh
@@ -430,7 +446,20 @@ set(PLUGIN_SOURCES
   MStreamPluginRTSPServer.cpp
 )
 
+if (WIN32)
+  set(PLUGIN_SOURCES ${PLUGIN_SOURCES} temporary_resource_file.rc)
+  set(APPLICATION_NAME "${PLUGIN}.dll")
+endif ()
+
 add_library(${PLUGIN} SHARED ${PLUGIN_SOURCES})
+
+add_custom_command(TARGET ${PLUGIN} POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E remove temporary_version_info.c)
+if (WIN32)
+  add_custom_command(TARGET ${PLUGIN} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E remove temporary_resource_file.rc)
+endif ()
+
 
 target_include_directories(${PLUGIN} PUBLIC .)
 target_include_directories(${PLUGIN} PRIVATE ../groupsock/include)

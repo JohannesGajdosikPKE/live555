@@ -33,8 +33,6 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 using namespace InterfaceMediaStream;
 
-#define PLUGIN_VERSION "1.02"
-
 //#define ALLOC_STATS
 #ifdef ALLOC_STATS
 
@@ -2821,6 +2819,9 @@ static std::string IpToString(int ip) {
   return o.str();
 }
 
+extern "C" const char *plugin_version;
+extern "C" const char *git_commit_hash;
+
 class PluginInstance {
 public:
   static PluginInstance *Create(IMStreamFactory *stream_factory,const RTSPParameters &params) {
@@ -2896,7 +2897,10 @@ private:
           watchVariable = 0;
         }
       }) {
-    params.log(4,"PluginInstance::PluginInstance(" + std::to_string(PluginInstance::params.rtspPort) + "): start\n");
+    params.log(4,"PluginInstance["
+                 "version: " + std::string(plugin_version)
+               + ", git: " + std::string(git_commit_hash)
+               + "]::PluginInstance(" + std::to_string(PluginInstance::params.rtspPort) + "): start\n");
     sem.wait();
     params.log(4,"PluginInstance::PluginInstance: end\n");
   }
@@ -2955,7 +2959,9 @@ void PluginInstance::generateInfoString(void) {
   }
 
   std::stringstream o;
-  o << "---- RtspMStreamPlugin(" PLUGIN_VERSION "(" __DATE__ " " __TIME__ "), api:" RTCMEDIALIB_API_VERSION ")\n"
+  o << "---- RtspMStreamPlugin(" << plugin_version <<  "(" __DATE__ " " __TIME__ "), "
+       "git: " << git_commit_hash << ", "
+       "api:" RTCMEDIALIB_API_VERSION ")\n"
        "URIs (0.0.0.0: the port is bound to all interfaces):\n";
 
   MediaServerPluginRTSPServer::InfoMap connection_info,stream_info;
