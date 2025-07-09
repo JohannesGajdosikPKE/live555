@@ -4,7 +4,7 @@ const char *contents =
 "#include \"winres.h\"\n"
 "LANGUAGE LANG_GERMAN, SUBLANG_GERMAN_AUSTRIAN\n"
 "VS_VERSION_INFO VERSIONINFO\n"
-"  FILEVERSION %s"
+"  FILEVERSION %d,%d,%d,%d"
 "  FILEFLAGSMASK 0x3fL\n"
 "#ifdef _DEBUG\n"
 "  FILEFLAGS 0x1L\n"
@@ -40,7 +40,11 @@ char buffer[16384];
 #define popen _popen
 #endif
 
-static const char *plugin_version = "1.3.0.0"; // must be in %d.%d.%d.%d format
+static const int plugin_version_digit_0 = 1;
+static const int plugin_version_digit_1 = 3;
+static const int plugin_version_digit_2 = 0;
+static const int plugin_version_digit_3 = 0;
+
 
 int main(int argc, char **argv) {
   char git_hash[256];
@@ -62,16 +66,23 @@ int main(int argc, char **argv) {
   }
   FILE *f = fopen(argv[1],"w");
   fprintf(f,
-          "const char *plugin_version=\"%s\";\n"
+          "const char *plugin_version=\"%d.%d.%d.%d\";\n"
           "const char *git_commit_hash=\"%s\";\n",
-          plugin_version,git_hash);
+	  plugin_version_digit_0,
+	  plugin_version_digit_1,
+	  plugin_version_digit_2,
+	  plugin_version_digit_3,
+          git_hash);
   fclose(f);
   printf("Created file %s\n",argv[1]);
 
   if (argc > 2) {
     FILE *f = fopen(argv[2],"w");
     fprintf(f,contents,
-            plugin_version, // file version
+            plugin_version_digit_0,
+	    plugin_version_digit_1,
+	    plugin_version_digit_2,
+	    plugin_version_digit_3,
 	    git_hash);
     fclose(f);
     printf("Created file %s\n",argv[2]);
