@@ -275,7 +275,7 @@ GenericMediaServer
     fServerPort(ourPort), fReclamationSeconds(reclamationSeconds),
     fPreviousClientSessionId(0),
     fTLSCertificateFileName(NULL), fTLSPrivateKeyFileName(NULL),
-    nr_of_workers(GetNrOfCores()),
+    nr_of_workers(GetNrOfCores(0,6.f/16.f)),
     workers(new std::unique_ptr<Worker>[nr_of_workers]),
     cleanup_called(false) {
 //fprintf(stderr,"GenericMediaServer::GenericMediaServer: %u workers\n", nr_of_workers);
