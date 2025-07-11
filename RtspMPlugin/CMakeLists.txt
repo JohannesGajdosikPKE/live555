@@ -54,7 +54,7 @@ set(TESTPROG RtspMStreamPluginTest)
 
 if (WIN32)
   add_custom_command(
-    OUTPUT temporary_version_info.c
+    OUTPUT temporary_version_info.c temporary_resource_file.rc
     COMMAND ${CREATEVERIONFILE} temporary_version_info.c temporary_resource_file.rc
     VERBATIM)
 else()
