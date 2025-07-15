@@ -60,6 +60,9 @@ public:
     std::lock_guard<std::recursive_mutex> lock(keep_task_helpers_mutex);
     return (keep_task_helpers.erase(h) == 1);
   }
+  std::shared_ptr<RTSPClientSession> lookupClientSession(u_int32_t sessionId) {
+    return std::static_pointer_cast<RTSPClientSession>(RTSPServer::lookupClientSession(sessionId));
+  }
   struct LookupCompletionFuncData;
 protected:
   MediaServerPluginRTSPServer(ServerType type,UsageEnvironment &env, int ourSocketIPv4, int ourSocketIPv6,
