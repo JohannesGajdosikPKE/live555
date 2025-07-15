@@ -41,7 +41,7 @@ char buffer[16384];
 #endif
 
 static const int plugin_version_digit_0 = 1;
-static const int plugin_version_digit_1 = 3;
+static const int plugin_version_digit_1 = 4;
 static const int plugin_version_digit_2 = 0;
 static const int plugin_version_digit_3 = 0;
 
