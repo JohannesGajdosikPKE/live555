@@ -20,7 +20,7 @@ const char *contents =
 "        BLOCK \"000004b0\"\n"
 "        BEGIN\n"
 //"            VALUE \"CompanyName\", \"PKE Holding AG\"\n"
-"            VALUE \"FileDescription\", \"selbstgebautes Plugin\"\n"
+//"            VALUE \"FileDescription\", \"streaming plugin\"\n"
 "            VALUE \"InternalName\", \"RtspMStreamPlugin.dll\"\n"
 "            VALUE \"LegalCopyright\", \"GNU LGPL, derived work by PKE Holding AG (C) from live555 by Live Networks, Inc, \"\n"
 "            VALUE \"OriginalFilename\", \"RtspMStreamPlugin.dll\"\n"
