@@ -177,7 +177,7 @@ public:
   Worker(GenericMediaServer &server)
     : worker_thread([this,&server](void) {
 //        std::cout << "GenericMediaServer::Worker::mainThread(" << std::this_thread::get_id() << "): start" << std::endl << std::flush;
-        scheduler = BasicTaskScheduler::createNew();
+        scheduler = BasicTaskScheduler::createNew(500000);
         scheduler->assert_threads = true;
 //        std::cout << "GenericMediaServer::Worker::mainThread(" << std::this_thread::get_id() << "): scheduler created" << std::endl << std::flush;
         env = server.createNewUsageEnvironment(*scheduler);
@@ -561,7 +561,13 @@ void GenericMediaServer::ClientConnection::closeSockets() {
   if (fOurSocket>= 0) {
     envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::closeSockets: disableBackgroundHandling(" << fOurSocket << ") and close socket\n";
     envir().taskScheduler().disableBackgroundHandling(fOurSocket);
-    ::closeSocket(fOurSocket);
+    if (::closeSocket(fOurSocket)) {
+      const int errnr = envir().getErrno();
+      envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::closeSockets: closeSocket(" << fOurSocket << ") failed: " << errnr << "\n";
+    } else {
+      envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::closeSockets: closeSocket(" << fOurSocket << ") ok\n";
+    }
+    fOurSocket = -1;
   } else {
     envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::closeSockets: already closed\n";
   }
