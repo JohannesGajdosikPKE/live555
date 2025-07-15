@@ -145,7 +145,10 @@ uint64_t BasicTaskScheduler::executeCommand(std::function<void(uint64_t task_nr)
 #else
     const int rc = write(command_pipe[1], &data, 1);
 #endif
-    if (rc > 0) break;
+    if (rc > 0) {
+//      envir() << "BasicTaskScheduler::executeCommand: send(command_pipe[1],1) for nr " << (void*)rval << " ok" << "\n";
+      return rval;
+    }
     if (rc != 0) {
 #if defined(__WIN32__) || defined(_WIN32)
       const int errnr = WSAGetLastError();
@@ -153,12 +156,13 @@ uint64_t BasicTaskScheduler::executeCommand(std::function<void(uint64_t task_nr)
       const int errnr = errno;
 #endif
       envir() << "FATAL: BasicTaskScheduler::executeCommand: sending 1 byte on "
-              << command_pipe[1] << " failed: "
+              << command_pipe[1] << " failed for nr " << (void*)rval << ": "
               << errnr << "\n";
       abort();
+    } else {
+      envir() << "BasicTaskScheduler::executeCommand: send(command_pipe[1],1) returned 0, retry nr " << (void*)rval << "\n";
     }
   }
-  return rval;
 }
 
 bool BasicTaskScheduler::cancelCommand(const uint64_t token) {
@@ -166,6 +170,7 @@ bool BasicTaskScheduler::cancelCommand(const uint64_t token) {
   std::lock_guard<std::mutex> guard(command_queue_mutex);
   for (auto it(command_queue.begin());it!=command_queue.end();++it) {
     if (token == it->seq) {
+      envir() << "BasicTaskScheduler::cancelCommand: nr " << (void*)token << "\n";
       command_queue.erase(it);
       return true;
     }
@@ -179,6 +184,7 @@ void BasicTaskScheduler::CommandRequestHandler(void* instance, int /*mask*/) {
 
 void BasicTaskScheduler::commandRequestHandler(void) {
   ACCOUNT_GUARD("BTS:commandRH",envir());
+  bool no_commands = true;
   for (;;) {
     char data;
 #if defined(__WIN32__) || defined(_WIN32)
@@ -205,7 +211,11 @@ void BasicTaskScheduler::commandRequestHandler(void) {
     uint64_t task_nr;
     {
       std::lock_guard<std::mutex> guard(command_queue_mutex);
-      if (command_queue.empty()) continue;
+      if (command_queue.empty()) {
+        envir() << "BasicTaskScheduler::commandRequestHandler: received 1 byte on "
+                << command_pipe[0] << ", but there is no command\n";
+        continue;
+      }
       task_nr = command_queue.front().seq;
       f.swap(command_queue.front().f);
       command_queue.pop_front();
@@ -213,7 +223,12 @@ void BasicTaskScheduler::commandRequestHandler(void) {
       // maybe another thread now wants to cancel the command before it is executed
       // the cancelling will fail.
       // or the same thread might try to cancel the command from its own command callback
+//    envir() << "BasicTaskScheduler::commandRequestHandler: executing command nr " << (void*)task_nr << "\n";
     f(task_nr);
+    no_commands = false;
+  }
+  if (no_commands) {
+    envir() << "BasicTaskScheduler::commandRequestHandler: no commands executed\n";
   }
 }
 
@@ -350,42 +365,23 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
   }
   }
 
-{
-  ANON_ACCOUNT_GUARD(envir());
+  if (selectResult > 0) {
+    ANON_ACCOUNT_GUARD(envir());
 
-  // Call the handler function for one readable socket:
-  HandlerIterator iter(*fHandlers);
-  HandlerDescriptor* handler;
-  // To ensure forward progress through the handlers, begin past the last
-  // socket number that we handled:
-  if (fLastHandledSocketNum >= 0) {
-    while ((handler = iter.next()) != NULL) {
-      if (handler->socketNum == fLastHandledSocketNum) break;
+    // Call the handler function for one readable socket:
+    HandlerIterator iter(*fHandlers);
+    HandlerDescriptor* handler;
+    // To ensure forward progress through the handlers, begin past the last
+    // socket number that we handled:
+    if (fLastHandledSocketNum >= 0) {
+      while ((handler = iter.next()) != NULL) {
+        if (handler->socketNum == fLastHandledSocketNum) break;
+      }
+      if (handler == NULL) {
+        fLastHandledSocketNum = -1;
+        iter.reset(); // start from the beginning instead
+      }
     }
-    if (handler == NULL) {
-      fLastHandledSocketNum = -1;
-      iter.reset(); // start from the beginning instead
-    }
-  }
-  while ((handler = iter.next()) != NULL) {
-    int sock = handler->socketNum; // alias
-    int resultConditionSet = 0;
-    if (FD_ISSET(sock, &readSet) && FD_ISSET(sock, &fReadSet)/*sanity check*/) resultConditionSet |= SOCKET_READABLE;
-    if (FD_ISSET(sock, &writeSet) && FD_ISSET(sock, &fWriteSet)/*sanity check*/) resultConditionSet |= SOCKET_WRITABLE;
-    if (FD_ISSET(sock, &exceptionSet) && FD_ISSET(sock, &fExceptionSet)/*sanity check*/) resultConditionSet |= SOCKET_EXCEPTION;
-    if ((resultConditionSet&handler->conditionSet) != 0 && handler->handlerProc != NULL) {
-      fLastHandledSocketNum = sock;
-          // Note: we set "fLastHandledSocketNum" before calling the handler,
-          // in case the handler calls "doEventLoop()" reentrantly.
-      ANON_ACCOUNT_GUARD(envir());
-      (*handler->handlerProc)(handler->clientData, resultConditionSet);
-      break;
-    }
-  }
-  if (handler == NULL && fLastHandledSocketNum >= 0) {
-    // We didn't call a handler, but we didn't get to check all of them,
-    // so try again from the beginning:
-    iter.reset();
     while ((handler = iter.next()) != NULL) {
       int sock = handler->socketNum; // alias
       int resultConditionSet = 0;
@@ -393,17 +389,36 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
       if (FD_ISSET(sock, &writeSet) && FD_ISSET(sock, &fWriteSet)/*sanity check*/) resultConditionSet |= SOCKET_WRITABLE;
       if (FD_ISSET(sock, &exceptionSet) && FD_ISSET(sock, &fExceptionSet)/*sanity check*/) resultConditionSet |= SOCKET_EXCEPTION;
       if ((resultConditionSet&handler->conditionSet) != 0 && handler->handlerProc != NULL) {
-	fLastHandledSocketNum = sock;
-	    // Note: we set "fLastHandledSocketNum" before calling the handler,
+        fLastHandledSocketNum = sock;
+            // Note: we set "fLastHandledSocketNum" before calling the handler,
             // in case the handler calls "doEventLoop()" reentrantly.
-	ANON_ACCOUNT_GUARD(envir());
-	(*handler->handlerProc)(handler->clientData, resultConditionSet);
-	break;
+        ANON_ACCOUNT_GUARD(envir());
+        (*handler->handlerProc)(handler->clientData, resultConditionSet);
+        break;
       }
     }
-    if (handler == NULL) fLastHandledSocketNum = -1;//because we didn't call a handler
+    if (handler == NULL && fLastHandledSocketNum >= 0) {
+      // We didn't call a handler, but we didn't get to check all of them,
+      // so try again from the beginning:
+      iter.reset();
+      while ((handler = iter.next()) != NULL) {
+        int sock = handler->socketNum; // alias
+        int resultConditionSet = 0;
+        if (FD_ISSET(sock, &readSet) && FD_ISSET(sock, &fReadSet)/*sanity check*/) resultConditionSet |= SOCKET_READABLE;
+        if (FD_ISSET(sock, &writeSet) && FD_ISSET(sock, &fWriteSet)/*sanity check*/) resultConditionSet |= SOCKET_WRITABLE;
+        if (FD_ISSET(sock, &exceptionSet) && FD_ISSET(sock, &fExceptionSet)/*sanity check*/) resultConditionSet |= SOCKET_EXCEPTION;
+        if ((resultConditionSet&handler->conditionSet) != 0 && handler->handlerProc != NULL) {
+          fLastHandledSocketNum = sock;
+              // Note: we set "fLastHandledSocketNum" before calling the handler,
+              // in case the handler calls "doEventLoop()" reentrantly.
+          ANON_ACCOUNT_GUARD(envir());
+          (*handler->handlerProc)(handler->clientData, resultConditionSet);
+          break;
+        }
+      }
+      if (handler == NULL) fLastHandledSocketNum = -1;//because we didn't call a handler
+    }
   }
-}
   continue_without_sockets:
   // Also handle any newly-triggered event (Note that we do this *after* calling a socket handler,
   // in case the triggered event handler modifies The set of readable sockets.)
