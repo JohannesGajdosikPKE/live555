@@ -781,9 +781,18 @@ void RTSPServer::RTSPClientConnection::closeSocketsRTSP() {
 
   // Turn off background handling on our input socket (and output socket, if different); then close it (or them):
   if (fClientOutputSocket != fClientInputSocket && fClientOutputSocket >= 0) {
-    envir() << "GenericMediaServer::RTSPClientConnection(" << getId() << ")::closeSocketsRTSP: disableBackgroundHandling(" << fClientOutputSocket << ") and close socket\n";
+    envir() << "RTSPServer::RTSPClientConnection(" << getId() << ")::closeSocketsRTSP: disableBackgroundHandling(" << fClientOutputSocket << ") and close output socket\n";
     envir().taskScheduler().disableBackgroundHandling(fClientOutputSocket);
-    ::closeSocket(fClientOutputSocket);
+    if (::closeSocket(fClientOutputSocket)) {
+      const int errnr = envir().getErrno();
+      envir() << "RTSPServer::RTSPClientConnection(" << getId() << ")::closeSocketsRTSP: closeSocket(" << fClientOutputSocket << ") failed: " << errnr << "\n";
+    } else {
+      envir() << "RTSPServer::RTSPClientConnection(" << getId() << ")::closeSocketsRTSP: closeSocket(" << fClientOutputSocket << ") ok\n";
+    }
+  } else {
+    if (fClientOutputSocket < 0) {
+      envir() << "RTSPServer::RTSPClientConnection(" << getId() << ")::closeSocketsRTSP: output socket already closed\n";
+    }
   }
   fClientOutputSocket = -1;
   
@@ -922,6 +931,12 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
     contentLength = 0;
     Boolean urlIsRTSPS;
     Boolean playAfterSetup = False;
+    fLastCRLF[0] = '\n'; // temporarily, for logging
+    fLastCRLF[1] = '\0'; // temporarily, for logging
+    envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes: "
+               "request received:\n" << (char*)fRequestBuffer;
+    fLastCRLF[0] = '\r'; // restore
+    fLastCRLF[1] = '\n'; // restore
     fLastCRLF[2] = '\0'; // temporarily, for parsing
     Boolean parseSucceeded = parseRTSPRequestString((char*)fRequestBuffer, fLastCRLF+2 - fRequestBuffer,
 						    cmdName, sizeof cmdName,
@@ -1154,7 +1169,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesFinish(void) {
 //  envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: fIsActive: " << (int)fIsActive << "\n";
   // If it has a scheduledDelayedTask, don't delete the instance or close the sockets. The sockets can be reused in the task.
   if (!fIsActive && fScheduledDelayedTask <= 0) {
-    if (fRecursionCount > 0) closeSockets(); else removeFromServer();
+    if (fRecursionCount > 0) closeSocketsRTSP(); else removeFromServer();
     // Note: The "fRecursionCount" test is for a pathological situation where we reenter the event loop and get called recursively
     // while handling a command (e.g., while handling a "DESCRIBE", to get a SDP description).
     // In such a case we don't want to actually delete ourself until we leave the outermost call.
@@ -1983,6 +1998,11 @@ void RTSPServer::RTSPClientSession
   } else if (strcmp(cmdName, "SET_PARAMETER") == 0) {
     handleCmd_SET_PARAMETER(ourClientConnection, subsession, fullRequestStr);
   }
+}
+
+void  RTSPServer::RTSPClientConnection
+::pretendClientHasClosed(void) { 
+  RTSPClientConnection::handleRequestBytes(-777);
 }
 
 void RTSPServer::RTSPClientSession

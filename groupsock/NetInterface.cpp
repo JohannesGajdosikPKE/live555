@@ -48,7 +48,14 @@ Socket::Socket(UsageEnvironment& env, Port port, int family)
 }
 
 void Socket::reset() {
-  if (fSocketNum >= 0) closeSocket(fSocketNum);
+  if (fSocketNum >= 0) {
+    if (closeSocket(fSocketNum)) {
+      const int errnr = fEnv.getErrno();
+      fEnv << "Socket(" << fSocketNum << ")::reset: closeSocket failed: " << errnr << "\n";
+    } else {
+      fEnv << "Socket(" << fSocketNum << ")::reset: closeSocket ok\n";
+    }
+  }
   fSocketNum = -1;
 }
 
@@ -60,8 +67,14 @@ Boolean Socket::changePort(Port newPort) {
   int oldSocketNum = fSocketNum;
   unsigned oldReceiveBufferSize = getReceiveBufferSize(fEnv, fSocketNum);
   unsigned oldSendBufferSize = getSendBufferSize(fEnv, fSocketNum);
-  closeSocket(fSocketNum);
-
+  if (fSocketNum >= 0) {
+    if (closeSocket(fSocketNum)) {
+      const int errnr = fEnv.getErrno();
+      fEnv << "Socket(" << fSocketNum << ")::changePort(" << newPort.num() << "): closeSocket failed: " << errnr << "\n";
+    } else {
+      fEnv << "Socket(" << fSocketNum << ")::changePort(" << newPort.num() << "): closeSocket ok\n";
+    }
+  }
   fSocketNum = setupDatagramSocket(fEnv, newPort, fFamily);
   if (fSocketNum < 0) {
     fEnv.taskScheduler().turnOffBackgroundReadHandling(oldSocketNum);

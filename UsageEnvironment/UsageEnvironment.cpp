@@ -28,7 +28,6 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #endif
 
 #include <iostream>
-#include <sstream>
 
 ////////// library version constants //////////
 
@@ -90,7 +89,6 @@ void TimeAccounter::account(const unsigned int id) {
 }
 
 void TimeAccounter::transferValues(UsageEnvironment &env,Counter *values,unsigned int nr) {
-  std::ostringstream o;
   for (unsigned int i=0;i<nr;++i,++values) {
     AtomicCounter &c(counter[i]);
     const uint64_t v = c.duration.exchange(0);

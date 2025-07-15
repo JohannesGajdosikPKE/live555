@@ -180,6 +180,7 @@ public: // should be protected, but some old compilers complain otherwise
       Boolean fReuseConnection, fDeliverViaTCP;
       char* fProxyURLSuffix;
     };
+    void pretendClientHasClosed(void);
   protected: // redefined virtual functions:
     virtual void handleRequestBytes(int newBytesRead);
   private:
@@ -268,7 +269,7 @@ public: // should be protected, but some old compilers complain otherwise
       virtual ~RTSPClientSession();
       virtual void informClientConnect(void) {}
         // informClientDisconnect not needed: this is done in ~RTSPClientSession
-
+      RTSPServer::RTSPClientConnection *getOurClientConnection(void) const {return fOurClientConnection;}
     // Make the handler functions for each command virtual, to allow subclasses to redefine them:
   public:
     virtual void handleCmd_SETUP(RTSPClientConnection* ourClientConnection,
@@ -297,15 +298,15 @@ public: // should be protected, but some old compilers complain otherwise
   public:
     void deleteStreamByTrack(unsigned trackNum);
     Boolean getStreamAfterSETUP (void) const {return fStreamAfterSETUP;}
-  protected:
     void reclaimStreamStates();
     Boolean isMulticast() const { return fIsMulticast; }
+  protected:
 
     // Shortcuts for setting up a RTSP response (prior to sending it):
-    void setRTSPResponse(RTSPClientConnection* ourClientConnection, char const* responseStr) { ourClientConnection->setRTSPResponse(responseStr); }
-    void setRTSPResponse(RTSPClientConnection* ourClientConnection, char const* responseStr, u_int32_t sessionId) { ourClientConnection->setRTSPResponse(responseStr, sessionId); }
-    void setRTSPResponse(RTSPClientConnection* ourClientConnection, char const* responseStr, char const* contentStr) { ourClientConnection->setRTSPResponse(responseStr, contentStr); }
-    void setRTSPResponse(RTSPClientConnection* ourClientConnection, char const* responseStr, u_int32_t sessionId, char const* contentStr) { ourClientConnection->setRTSPResponse(responseStr, sessionId, contentStr); }
+    static void setRTSPResponse(RTSPClientConnection* ourClientConnection, char const* responseStr) { ourClientConnection->setRTSPResponse(responseStr); }
+    static void setRTSPResponse(RTSPClientConnection* ourClientConnection, char const* responseStr, u_int32_t sessionId) { ourClientConnection->setRTSPResponse(responseStr, sessionId); }
+    static void setRTSPResponse(RTSPClientConnection* ourClientConnection, char const* responseStr, char const* contentStr) { ourClientConnection->setRTSPResponse(responseStr, contentStr); }
+    static void setRTSPResponse(RTSPClientConnection* ourClientConnection, char const* responseStr, u_int32_t sessionId, char const* contentStr) { ourClientConnection->setRTSPResponse(responseStr, sessionId, contentStr); }
 
   protected:
     RTSPServer& fOurRTSPServer; // same as ::fOurServer
