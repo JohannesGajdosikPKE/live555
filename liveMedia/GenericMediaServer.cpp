@@ -664,8 +664,17 @@ void GenericMediaServer::ClientSession::deleteThis(void) {
   char sessionIdStr[8+1];
   sprintf(sessionIdStr, "%08X", fOurSessionId);
 
-  std::lock_guard<std::recursive_mutex> lock(fOurServer.fClientSessions_mutex);
-  fOurServer.fClientSessions.erase(sessionIdStr);
+  std::shared_ptr<ClientSession> self;
+    // keep a shared_ptr to the ClientSession so that it is
+    // not deleted while fClientSessions_mutex is locked
+  {
+    std::lock_guard<std::recursive_mutex> lock(fOurServer.fClientSessions_mutex);
+    const auto it = fOurServer.fClientSessions.find(sessionIdStr);
+    if (it != fOurServer.fClientSessions.end()) {
+      self = it->second;
+      fOurServer.fClientSessions.erase(it);
+    }
+  }
   // TODO: Here I should get rid of fOurServerMediaSession so that the liveness task works coorectly 
 }
 

@@ -205,7 +205,11 @@ static const char *SubsessionInfoToString(const SubsessionInfo &ssi) {
 
 
 struct Frame {
-  Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t *data,int32_t size,TimeType time,bool end_of_frame);
+  Frame(
+#ifdef ALLOC_STATS
+        const std::string &alloc_stat_name,
+#endif
+        const uint8_t *data,int32_t size,TimeType time,bool end_of_frame);
   const uint8_t *getData(void) const {return data.get();}
   const uint32_t size;
   const TimeType time;
@@ -253,7 +257,7 @@ public:
   std::shared_ptr<ServerMediaSession> createServerMediaSession(UsageEnvironment &env);
   typedef std::function<void(const Frame&)> FrameFunction;
   class Registration;
-  std::unique_ptr<Registration> connect(const SubsessionInfo *info,FrameFunction &&f);
+  std::shared_ptr<Registration> connect(const SubsessionInfo *info,FrameFunction &&f);
   void getSubsessions(std::set<std::string> &subsessions) const;
   void keepAlive(void);
   void cancelKeepAlive(void);
@@ -270,8 +274,8 @@ private:
   bool must_deregister = true;
   void emptyFrameReceived(void);
   friend class Registration;
-  void remember(Registration *reg);
-  void forget(Registration *reg);
+  void remember(const Registration &reg);
+  void forget(const Registration &reg);
   struct RegistrationSet;
   static void OnH26xFrameCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const TimeType frameTime);
   static void OnFrameCallback(void *callerId, const SubsessionInfo *info, const uint8_t *buffer, int bufferSize, const TimeType &frameTime);
@@ -319,8 +323,8 @@ void MediaServerPluginRTSPServer::MyRTSPClientSession::informClientConnect(void)
             << " to " << fOurServerMediaSession->streamName() << "\n";
     abort();
   }
-  std::shared_ptr<StreamMapEntry> e(static_cast<MediaServerPluginRTSPServer&>(fOurServer).
-                                      getStreamMapEntry(fOurServerMediaSession->streamName()));
+  const std::shared_ptr<StreamMapEntry> e(static_cast<MediaServerPluginRTSPServer&>(fOurServer).
+                                          getStreamMapEntry(fOurServerMediaSession->streamName()));
   if (e && e->stream) {
     struct sockaddr_storage sock_addr;
     socklen_t sock_addrlen = sizeof(sock_addr);
@@ -359,13 +363,13 @@ void MediaServerPluginRTSPServer::MyRTSPClientSession::informClientConnect(void)
 static
 std::shared_ptr<uint8_t> CreateSharedArray(
 #ifdef ALLOC_STATS
-                           const MediaServerPluginRTSPServer::StreamMapEntry &e,
+                           const std::string &alloc_stat_name,
 #endif
                            const uint8_t *const data,const int32_t size) {
   std::shared_ptr<uint8_t> rval;
   if (size > 0) {
 #ifdef ALLOC_STATS
-    AllocStatEntry &ae(GetAllocEntry(e.name));
+    AllocStatEntry &ae(GetAllocEntry(alloc_stat_name));
 #endif
     rval = std::shared_ptr<uint8_t>(
       new uint8_t[size],
@@ -389,11 +393,15 @@ std::shared_ptr<uint8_t> CreateSharedArray(
   return rval;
 }
 
-Frame::Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t *data,int32_t size,TimeType time,bool end_of_frame)
+Frame::Frame(
+#ifdef ALLOC_STATS
+             const std::string &alloc_stat_name,
+#endif
+             const uint8_t *data,int32_t size,TimeType time,bool end_of_frame)
       :size((data && size>0)?size:0),time(time),end_of_frame(end_of_frame),
        data(CreateSharedArray(
 #ifdef ALLOC_STATS
-              e,
+              alloc_stat_name,
 #endif
               data,Frame::size)) {
 }
@@ -401,39 +409,61 @@ Frame::Frame(const MediaServerPluginRTSPServer::StreamMapEntry &e,const uint8_t 
 class MediaServerPluginRTSPServer::StreamMapEntry::Registration : public IdContainer {
   Registration(const std::shared_ptr<StreamMapEntry> &map_entry,
                const SubsessionInfo *info,FrameFunction &&f)
-    : map_entry(map_entry),env(map_entry->env()),info(info),f(std::move(f)) {
-    map_entry->remember(this);
-    env << "StreamMapEntry::Registration(" << id << ")::Registration(" << map_entry->name.c_str() << "), use_count: " << (int)(map_entry.use_count()) << "\n";
-  }
+    : map_entry(map_entry),env(map_entry->env()),info(info),f(std::move(f)) {}
+  ~Registration(void) {}
   const std::shared_ptr<StreamMapEntry> map_entry;
+  void remember(void) {
+    map_entry->remember(*this);
+    env << "StreamMapEntry::Registration(" << id << "," << map_entry->name.c_str() << ")::remember: use_count: " << (int)(map_entry.use_count()) << "\n";
+  }
+  void forget(void) {
+    env << "StreamMapEntry::Registration(" << id << "," << map_entry->name.c_str() << ")::forget start\n";
+    map_entry->forget(*this);
+    env << "StreamMapEntry::Registration(" << id << "," << map_entry->name.c_str() << ")::forget end, use_count:" << (int)(map_entry.use_count() - 1) << "\n";
+  }
 public:
     // Having a Registration means having a shared_ptr to the StreamMapEntry
     // and thus having a shared_ptr to the stream itself and its internal memory like *info.
     // It cannot guarantee that frames will be received, rather guarantees that no more frames will be received
     // after the destructor is finished.
     // Only StreamMapEntry::connect calls Create:
-  static std::unique_ptr<Registration> Create(const std::shared_ptr<StreamMapEntry> &map_entry,
+  static std::shared_ptr<Registration> Create(const std::shared_ptr<StreamMapEntry> &map_entry,
                                               const SubsessionInfo *info,FrameFunction &&f) {
-    return std::unique_ptr<Registration>(new Registration(map_entry,info,std::move(f)));
+    const auto rval
+      = std::shared_ptr<Registration>(
+          new Registration(map_entry,info,std::move(f)),
+          [](Registration* r) {r->forget();delete r;});
+    rval->weak_self = rval;
+    rval->remember();
+    return rval;
   }
-  ~Registration(void) {
-    env << "StreamMapEntry::Registration(" << id << "," << map_entry->name.c_str() << ")::~Registration start\n";
-    map_entry->forget(this);
-    env << "StreamMapEntry::Registration(" << id << "," << map_entry->name.c_str() << ")::~Registration end, use_count:" << (int)(map_entry.use_count()-1) << "\n";
-  }
+  std::weak_ptr<Registration> getWeakSelf(void) const {return weak_self;}
 public:
   UsageEnvironment &env;
   const SubsessionInfo *const info;
   const FrameFunction f;
+private:
+  std::weak_ptr<Registration> weak_self;
 };
 
-struct MediaServerPluginRTSPServer::StreamMapEntry::RegistrationSet : public std::set<Registration*> {
-  RegistrationSet(void) : e(0) {}
+struct MediaServerPluginRTSPServer::StreamMapEntry::RegistrationSet
+    : public std::set<std::weak_ptr<Registration>,
+                      std::owner_less<std::weak_ptr<Registration> > > {
+  RegistrationSet(void) {}
   void callFunctions(const uint8_t *buffer, int bufferSize, const TimeType frameTime, bool end_of_frame) const {
-    const Frame f(*e,buffer,bufferSize,frameTime,end_of_frame);
-    for (auto &it : *this) it->f(f);
+    const Frame f(
+#ifdef ALLOC_STATS
+                  alloc_stat_name,
+#endif
+                  buffer,bufferSize,frameTime,end_of_frame);
+    for (const auto &it : *this) {
+      std::shared_ptr<Registration> r(it.lock());
+      if (r && r->f) r->f(f);
+    }
   }
-  StreamMapEntry *e;
+#ifdef ALLOC_STATS
+  std::string alloc_stat_name;
+#endif
 };
 
 
@@ -472,7 +502,11 @@ MediaServerPluginRTSPServer::StreamMapEntry::~StreamMapEntry(void) {
   }
   {
     std::lock_guard<std::recursive_mutex> lock(registration_mutex);
-    if (!registration_map.empty()) abort();
+    if (!registration_map.empty()) {
+      env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry: "
+               "assertion failed, registration_map is not empty\n";
+      abort();
+    }
   }
     // defensive programming: in case of programming error segfault as early as possible:
   subsession_info_list = nullptr;
@@ -481,33 +515,35 @@ MediaServerPluginRTSPServer::StreamMapEntry::~StreamMapEntry(void) {
 
 
 
-std::unique_ptr<MediaServerPluginRTSPServer::StreamMapEntry::Registration>
+std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry::Registration>
 MediaServerPluginRTSPServer::StreamMapEntry::connect(const SubsessionInfo *info,FrameFunction &&f) {
   return Registration::Create(shared_from_this(),info,std::move(f));
 }
 
-void MediaServerPluginRTSPServer::StreamMapEntry::remember(Registration *reg) {
+void MediaServerPluginRTSPServer::StreamMapEntry::remember(const Registration &reg) {
     // only called from the Registration constructor
 //  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::remember(" << SubsessionInfoToString(*reg->info) << "): start\n";
   if (!stream) abort();
   {
     std::lock_guard<std::recursive_mutex> lock(registration_mutex);
-    RegistrationSet &rs(registration_map[reg->info]);
-    rs.e = this;
-    if (!rs.insert(reg).second) abort();
+    RegistrationSet &rs(registration_map[reg.info]);
+#ifdef ALLOC_STATS
+    rs.alloc_stat_name = name;
+#endif
+    if (!rs.insert(reg.getWeakSelf()).second) abort();
   }
 //  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::remember end\n";
 }
 
-void MediaServerPluginRTSPServer::StreamMapEntry::forget(Registration *reg) {
+void MediaServerPluginRTSPServer::StreamMapEntry::forget(const Registration &reg) {
     // only called from the Registration destructor: from the worker threads, when MyFrameSource is destructed
-//  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::forget(" << SubsessionInfoToString(*reg->info) << "): start\n";
+//  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::forget(" << SubsessionInfoToString(reg.info) << "): start\n";
   std::lock_guard<std::recursive_mutex> lock(registration_mutex);
-  auto it(registration_map.find(reg->info));
+  auto it(registration_map.find(reg.info));
   if (it == registration_map.end()) abort();
-    // will call the destructor of the RegistrationEntry wich in turn
+    // will call the destructor of the RegistrationEntry which in turn
     // will invalidate the registration and call the FrameCb with an empty Frame
-  const auto erase_rc = it->second.erase(reg);
+  const auto erase_rc = it->second.erase(reg.getWeakSelf());
   if (erase_rc != 1) abort();
   if (it->second.empty()) {
     registration_map.erase(it);
@@ -519,7 +555,7 @@ void MediaServerPluginRTSPServer::StreamMapEntry::forget(Registration *reg) {
       }
     }
   }
-//  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::forget(" << SubsessionInfoToString(*reg->info) << "): end\n";
+//  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::forget(" << SubsessionInfoToString(reg.info) << "): end\n";
 }
 
 struct KeepTaskHelper : public std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> {
@@ -666,37 +702,41 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnH26xFrameCallback(const Regi
 }
 
   // called from some thread in the executeble:
-void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void *callerId, const SubsessionInfo *info, const uint8_t *buffer, int bufferSize, const TimeType &frameTime) {
-    // The executable has called the callback, meaning that the stream is still alive and registered.
-    // This implies that the StreamMapEntry is not yet destructed,
-    // and I can get its address from the callerId, which was given to the executable upon registration of OnFrameCallback:
-  StreamMapEntry &e(*reinterpret_cast<MediaServerPluginRTSPServer::StreamMapEntry*>(callerId));
-  if (!info || !buffer || bufferSize == 0) {
-        // after this function is completed, no more calls into the executable must be called (RegisterOnFrame).
+void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void* callerId, const SubsessionInfo* info, const uint8_t* buffer, int bufferSize, const TimeType& frameTime) {
+  // The executable has called the callback, meaning that the stream is still alive and registered.
+  // This implies that the StreamMapEntry is not yet destructed,
+  // and I can get its address from the callerId, which was given to the executable upon registration of OnFrameCallback:
+  StreamMapEntry& e(*reinterpret_cast<MediaServerPluginRTSPServer::StreamMapEntry*>(callerId));
+  if(!info || !buffer || bufferSize == 0) {
+    // after this function is completed, no more calls into the executable must be called (RegisterOnFrame).
     Semaphore sem;
     e.env().taskScheduler().executeCommand(
-      [&e,&sem](uint64_t) {
+      [&e, &sem](uint64_t) {
         e.env() << "StreamMapEntry(" << e.id << "," << e.name.c_str() << ")::OnFrameCallback: "
-                   "empty frame received, calling emptyFrameReceived\n";
-        e.must_deregister = false;
-          // emptyFrameReceived is called from the thread of the stream.
-          // This is necessary because inside delete() is called which
-          // must not be don on the heap of the executabe.
-        e.emptyFrameReceived();
-          // now the destructor of this StreamMapEntry should habe been called
-        sem.post();
+        "empty frame received, calling emptyFrameReceived\n";
+    e.must_deregister = false;
+    // emptyFrameReceived is called from the thread of the stream.
+    // This is necessary because inside delete() is called which
+    // must not be don on the heap of the executabe.
+    e.emptyFrameReceived();
+    // now the destructor of this StreamMapEntry should habe been called
+    sem.post();
       });
     sem.wait();
     return;
   }
-  std::lock_guard<std::recursive_mutex> lock(e.registration_mutex);
-  const auto r(e.registration_map.find(info));
-  if (r != e.registration_map.end()) {
+  RegistrationSet tmp_reg_set;
+  {
+    std::lock_guard<std::recursive_mutex> lock(e.registration_mutex);
+    const auto r(e.registration_map.find(info));
+    if (r != e.registration_map.end()) tmp_reg_set = r->second;
+  }
+  if (!tmp_reg_set.empty()) {
     if (0 == strcmp(info->getRtpPayloadFormatName(),"H264") ||
         0 == strcmp(info->getRtpPayloadFormatName(),"H265")) {
-      OnH26xFrameCallback(r->second,buffer,bufferSize,frameTime);
+      OnH26xFrameCallback(tmp_reg_set,buffer,bufferSize,frameTime);
     } else {
-      r->second.callFunctions(buffer,bufferSize, frameTime,true);
+      tmp_reg_set.callFunctions(buffer,bufferSize,frameTime,true);
     }
   }
 }
