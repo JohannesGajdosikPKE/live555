@@ -1177,7 +1177,11 @@ private:
                 // prevent premature deletion:
               const std::shared_ptr<RTSPServer::RTSPClientSession> client_session
                 = server.lookupClientSession(client_session_id);
-              if (!client_session) abort();
+              if (!client_session) {
+                envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l: "
+                           "session has been closed, ignoring frame\n";
+                return;
+              }
               std::lock_guard<std::mutex> lock(registered_tasks_mutex);
               const uint64_t registered_task = envir().taskScheduler().executeCommand(
                 [this,&server,f](uint64_t task_nr) {
