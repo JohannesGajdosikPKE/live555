@@ -177,13 +177,13 @@ void RTPInterface::addStreamSocket(int sockNum, unsigned char streamChannelId,
 				   TLSState* tlsState) {
   envir().taskScheduler().assertSameThread();
   if (sockNum < 0) return;
-  envir() << "RTPInterface(" << id << ")::addStreamSocket(" << sockNum << "," << ((int)streamChannelId) << "," << tlsState << ") start\n";
+//  envir() << "RTPInterface(" << id << ")::addStreamSocket(" << sockNum << "," << ((int)streamChannelId) << "," << tlsState << ") start\n";
 
   for (tcpStreamRecord* streams = fTCPStreams; streams != NULL;
        streams = streams->fNext) {
     if (streams->fStreamSocketNum == sockNum
-	&& streams->fStreamChannelId == streamChannelId) {
-      envir() << "RTPInterface(" << id << ")::addStreamSocket(" << sockNum << "," << ((int)streamChannelId) << "," << tlsState << ") end (already exists)\n";
+        && streams->fStreamChannelId == streamChannelId) {
+//      envir() << "RTPInterface(" << id << ")::addStreamSocket(" << sockNum << "," << ((int)streamChannelId) << "," << tlsState << ") end (already exists)\n";
       return; // we already have it
     }
   }
@@ -193,7 +193,7 @@ void RTPInterface::addStreamSocket(int sockNum, unsigned char streamChannelId,
   // Also, make sure this new socket is set up for receiving RTP/RTCP-over-TCP:
   SocketDescriptor* socketDescriptor = lookupSocketDescriptor(envir(), sockNum, tlsState);
   socketDescriptor->registerRTPInterface(streamChannelId, this);
-  envir() << "RTPInterface(" << id << ")::addStreamSocket(" << sockNum << "," << ((int)streamChannelId) << "," << tlsState << ") end (new tcpStreamRecord, registerRTPInterface called)\n";
+//  envir() << "RTPInterface(" << id << ")::addStreamSocket(" << sockNum << "," << ((int)streamChannelId) << "," << tlsState << ") end (new tcpStreamRecord, registerRTPInterface called)\n";
 }
 
 static void deregisterSocket(UsageEnvironment& env, int sockNum, unsigned char streamChannelId) {
@@ -212,7 +212,7 @@ void RTPInterface::removeStreamSocket(int sockNum,
   // (However "streamChannelId" == 0xFF is a special case, meaning remove all
   //  (sockNum,*) pairs.)
   envir().taskScheduler().assertSameThread();
-  envir() << "RTPInterface(" << id << ")::removeStreamSocket(" << sockNum << "," << ((int)streamChannelId) << ") start\n";
+//  envir() << "RTPInterface(" << id << ")::removeStreamSocket(" << sockNum << "," << ((int)streamChannelId) << ") start\n";
 
   while (1) {
     tcpStreamRecord** streamsPtr = &fTCPStreams;
@@ -228,11 +228,11 @@ void RTPInterface::removeStreamSocket(int sockNum,
 	*streamsPtr = next;
 
 	// And 'deregister' this socket,channelId pair:
-	envir() << "RTPInterface(" << id << ")::removeStreamSocket(" << sockNum << "," << ((int)streamChannelId) << "): calling deregisterSocket(" << ((int)streamChannelIdToRemove) << ")\n";
+//	envir() << "RTPInterface(" << id << ")::removeStreamSocket(" << sockNum << "," << ((int)streamChannelId) << "): calling deregisterSocket(" << ((int)streamChannelIdToRemove) << ")\n";
 	deregisterSocket(envir(), sockNum, streamChannelIdToRemove);
 
 	if (streamChannelId != 0xFF) {
-	  envir() << "RTPInterface(" << id << ")::removeStreamSocket(" << sockNum << "," << ((int)streamChannelId) << ") end2\n";
+//	  envir() << "RTPInterface(" << id << ")::removeStreamSocket(" << sockNum << "," << ((int)streamChannelId) << ") end2\n";
 	  return; // we're done
 	}
 	break; // start again from the beginning of the list, in case the list has changed
@@ -242,7 +242,7 @@ void RTPInterface::removeStreamSocket(int sockNum,
     }
     if (*streamsPtr == NULL) break;
   }
-  envir() << "RTPInterface(" << id << ")::removeStreamSocket(" << sockNum << "," << ((int)streamChannelId) << ") end\n";
+//  envir() << "RTPInterface(" << id << ")::removeStreamSocket(" << sockNum << "," << ((int)streamChannelId) << ") end\n";
 }
 
 void RTPInterface::setServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum,
@@ -294,7 +294,7 @@ Boolean RTPInterface::sendPacket(unsigned char* packet, unsigned packetSize) {
 void RTPInterface
 ::startNetworkReading(TaskScheduler::BackgroundHandlerProc* handlerProc) {
   // Normal case: Arrange to read UDP packets:
-  envir() << "RTPInterface(" << id << ")::startNetworkReading: start: turnOnBackgroundReadHandling(GS " << (fGS ? fGS->socketNum() : 0) << ")\n";
+//  envir() << "RTPInterface(" << id << ")::startNetworkReading: start: turnOnBackgroundReadHandling(GS " << (fGS ? fGS->socketNum() : 0) << ")\n";
   envir().taskScheduler().assertSameThread();
 
   if (fGS) {
@@ -309,10 +309,10 @@ void RTPInterface
     SocketDescriptor* socketDescriptor = lookupSocketDescriptor(envir(), streams->fStreamSocketNum);
 
     // Tell it about our subChannel:
-    envir() << "RTPInterface(" << id << ")::startNetworkReading: SocketDescriptor(" << streams->fStreamSocketNum << ")->registerRTPInterface(" << ((int)(streams->fStreamChannelId)) << ")\n";
+//    envir() << "RTPInterface(" << id << ")::startNetworkReading: SocketDescriptor(" << streams->fStreamSocketNum << ")->registerRTPInterface(" << ((int)(streams->fStreamChannelId)) << ")\n";
     socketDescriptor->registerRTPInterface(streams->fStreamChannelId, this);
   }
-  envir() << "RTPInterface(" << id << ")::startNetworkReading: end\n";
+//  envir() << "RTPInterface(" << id << ")::startNetworkReading: end\n";
 }
 
 Boolean RTPInterface::handleRead(unsigned char* buffer, unsigned bufferMaxSize,
@@ -514,13 +514,13 @@ SocketDescriptor::SocketDescriptor(UsageEnvironment& env, int socketNum, TLSStat
 }
 
 SocketDescriptor::~SocketDescriptor() {
-  fEnv << "SocketDescriptor(" << fOurSocketNum << ")::~SocketDescriptor start: calling turnOffBackgroundReadHandling\n";
+//  fEnv << "SocketDescriptor(" << fOurSocketNum << ")::~SocketDescriptor start: calling turnOffBackgroundReadHandling\n";
   fEnv.taskScheduler().assertSameThread();
   fEnv.taskScheduler().turnOffBackgroundReadHandling(fOurSocketNum);
   removeSocketDescription(fEnv, fOurSocketNum);
 
   if (fSubChannelHashTable != NULL) {
-    fEnv << "SocketDescriptor(" << fOurSocketNum << ")::~SocketDescriptor: clearing fSubChannelHashTable\n";
+//    fEnv << "SocketDescriptor(" << fOurSocketNum << ")::~SocketDescriptor: clearing fSubChannelHashTable\n";
     // Remove knowledge of this socket from any "RTPInterface"s that are using it:
     HashTable::Iterator* iter = HashTable::Iterator::create(*fSubChannelHashTable);
     RTPInterface* rtpInterface;
@@ -530,7 +530,7 @@ SocketDescriptor::~SocketDescriptor() {
       u_int64_t streamChannelIdLong = (u_int64_t)key;
       unsigned char streamChannelId = (unsigned char)streamChannelIdLong;
 
-      fEnv << "SocketDescriptor(" << fOurSocketNum << ")::~SocketDescriptor: calling rtpInterface(" << rtpInterface->id << ")->removeStreamSocket(" << ((int)streamChannelId) << ")\n";
+//      fEnv << "SocketDescriptor(" << fOurSocketNum << ")::~SocketDescriptor: calling rtpInterface(" << rtpInterface->id << ")->removeStreamSocket(" << ((int)streamChannelId) << ")\n";
       rtpInterface->removeStreamSocket(fOurSocketNum, streamChannelId);
     }
     delete iter;
@@ -548,7 +548,7 @@ SocketDescriptor::~SocketDescriptor() {
     u_int8_t specialChar = fReadErrorOccurred ? 0xFF : 0xFE;
     (*fServerRequestAlternativeByteHandler)(fServerRequestAlternativeByteHandlerClientData, specialChar);
   }
-  fEnv << "SocketDescriptor(" << fOurSocketNum << ")::~SocketDescriptor end\n";
+//  fEnv << "SocketDescriptor(" << fOurSocketNum << ")::~SocketDescriptor end\n";
 }
 
 void SocketDescriptor::registerRTPInterface(unsigned char streamChannelId,
@@ -558,7 +558,7 @@ void SocketDescriptor::registerRTPInterface(unsigned char streamChannelId,
 #if defined(DEBUG_SEND)||defined(DEBUG_RECEIVE)
   fprintf(stderr, "SocketDescriptor(socket %d)::registerRTPInterface(channel %d): isFirstRegistration %d\n", fOurSocketNum, streamChannelId, isFirstRegistration);
 #endif
-  fEnv << "SocketDescriptor(" << fOurSocketNum << ")::registerRTPInterface(" << ((int)streamChannelId) << "," << rtpInterface->id << "): fSubChannelHashTable->Add\n";
+//  fEnv << "SocketDescriptor(" << fOurSocketNum << ")::registerRTPInterface(" << ((int)streamChannelId) << "," << rtpInterface->id << "): fSubChannelHashTable->Add\n";
   fSubChannelHashTable->Add((char const*)(long)streamChannelId,
 			    rtpInterface);
 
@@ -566,7 +566,7 @@ void SocketDescriptor::registerRTPInterface(unsigned char streamChannelId,
     // Arrange to handle reads on this TCP socket:
     TaskScheduler::BackgroundHandlerProc* handler
       = (TaskScheduler::BackgroundHandlerProc*)&tcpReadHandler;
-    fEnv << "SocketDescriptor(" << fOurSocketNum << ")::registerRTPInterface(" << ((int)streamChannelId) << "," << rtpInterface->id << "): setBackgroundHandling(tcpReadHandler)\n";
+//    fEnv << "SocketDescriptor(" << fOurSocketNum << ")::registerRTPInterface(" << ((int)streamChannelId) << "," << rtpInterface->id << "): setBackgroundHandling(tcpReadHandler)\n";
     fEnv.taskScheduler().
       setBackgroundHandling(fOurSocketNum, SOCKET_READABLE|SOCKET_EXCEPTION, handler, this);
   }

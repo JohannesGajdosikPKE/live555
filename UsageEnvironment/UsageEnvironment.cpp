@@ -143,7 +143,7 @@ TaskScheduler::~TaskScheduler() {
 void TaskScheduler::assertSameThread(void) const {
   if (assert_threads && !isSameThread()) {
     const unsigned int curr_thread_id = Live555CurrentThreadId();
-    std::cout << "TaskScheduler(" << my_thread_id << ")::assertSameThread: calling from wrong thread: " << curr_thread_id << std::endl << std::flush;
+    if (env) *env << "TaskScheduler(" << my_thread_id << ")::assertSameThread: calling from wrong thread: " << curr_thread_id << "\n";
     abort();
   }
 }

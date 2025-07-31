@@ -167,7 +167,7 @@ RTCPInstance::RTCPInstance(UsageEnvironment& env, Groupsock* RTCPgs,
     fSource->registerForMultiplexedRTCPPackets(this);
   } else {
     // Arrange to handle incoming reports from the network:
-    env << "RTCPInstance::RTCPInstance: calling fRTCPInterface.startNetworkReading(incomingReportHandler)\n";
+//    env << "RTCPInstance::RTCPInstance: calling fRTCPInterface.startNetworkReading(incomingReportHandler)\n";
     TaskScheduler::BackgroundHandlerProc* handler
       = (TaskScheduler::BackgroundHandlerProc*)&incomingReportHandler;
     fRTCPInterface.startNetworkReading(handler);
@@ -407,8 +407,8 @@ void RTCPInstance::setStreamSocket(int sockNum, unsigned char streamChannelId,
 
 void RTCPInstance::addStreamSocket(int sockNum, unsigned char streamChannelId,
 				   TLSState* tlsState) {
-  envir() << "RTCPInstance::addStreamSocket(" << sockNum << "," << ((int)streamChannelId) << "," << tlsState << ") start: "
-             "fRTCPInterface.stopNetworkReading/setStreamSocket/startNetworkReading(incomingReportHandler)\n";
+//  envir() << "RTCPInstance::addStreamSocket(" << sockNum << "," << ((int)streamChannelId) << "," << tlsState << ") start: "
+//             "fRTCPInterface.stopNetworkReading/setStreamSocket/startNetworkReading(incomingReportHandler)\n";
   // First, turn off background read handling for the default (UDP) socket:
   if (fRTCPInterface.gs()) envir().taskScheduler().turnOffBackgroundReadHandling(fRTCPInterface.gs()->socketNum());
 
@@ -419,7 +419,7 @@ void RTCPInstance::addStreamSocket(int sockNum, unsigned char streamChannelId,
   TaskScheduler::BackgroundHandlerProc* handler
     = (TaskScheduler::BackgroundHandlerProc*)&incomingReportHandler;
   fRTCPInterface.startNetworkReading(handler);
-  envir() << "RTCPInstance::addStreamSocket(" << sockNum << "," << ((int)streamChannelId) << "," << tlsState << "): end\n";
+//  envir() << "RTCPInstance::addStreamSocket(" << sockNum << "," << ((int)streamChannelId) << "," << tlsState << "): end\n";
 }
 
 void RTCPInstance

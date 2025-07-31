@@ -1184,7 +1184,7 @@ private:
               }
               std::lock_guard<std::mutex> lock(registered_tasks_mutex);
               const uint64_t registered_task = envir().taskScheduler().executeCommand(
-                [this,&server,f](uint64_t task_nr) {
+                [this,&server,f,client_session_ptr=std::move(client_session)](uint64_t task_nr) {
 //                  envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
 //                             "frame in connection thread, dequeued task(" << (void*)task_nr << ")\n";
                   {
@@ -1194,7 +1194,7 @@ private:
                     const unsigned int s = registered_tasks.size();
                     if (2*s <= prev_task_queue_size) {
                       prev_task_queue_size = s;
-                      if (s >= 4) {
+                      if (s >= 16) {
                         envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
                                    "task_queue.size <= " << s << "\n";
                       }
@@ -1207,16 +1207,10 @@ private:
                   const unsigned int frame_queue_size = my_frame_queue.size();
                   if (frame_queue_size > 0 && frame_queue_size >= 2*prev_frame_queue_size) {
                     prev_frame_queue_size = frame_queue_size;
-                    if (frame_queue_size >= 4) {
+                    if (frame_queue_size >= 16) {
                       constexpr unsigned int max_frame_queue_size = 256;
                       if (frame_queue_size >= max_frame_queue_size) {
-                        client_session_to_delete = server.lookupClientSession(client_session_id);
-                        if (!client_session_to_delete) {
-                          envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
-                                     "frame_queue.size = " << frame_queue_size << " has increased too much, "
-                                     "I want to clean up, but cannot find the client_session_id=" << client_session_id << "\n";
-                          abort();
-                        }
+                        client_session_to_delete = client_session_ptr;
                       } else {
                         envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
                                    "frame_queue.size >= " << frame_queue_size << "\n";
@@ -1251,7 +1245,7 @@ private:
               const unsigned int s = registered_tasks.size();
               if (s >= 2*prev_task_queue_size) {
                 prev_task_queue_size = s;
-                if (s >= 4) {
+                if (s >= 16) {
                   envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l: "
                              "task_queue.size >= " << s << "\n";
                 }
@@ -1292,7 +1286,7 @@ private:
     const unsigned int s = my_frame_queue.size();
     if (2*s <= prev_frame_queue_size) {
       prev_frame_queue_size = s;
-      if (s >= 4) {
+      if (s >= 16) {
         envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::deliverFrame: "
                    "frame_queue.size <= " << s << "\n";
       }
@@ -2770,7 +2764,7 @@ public:
     if (!l) l = std::make_unique<ThreadLogger>(params);
     l->log(log_level,std::move(msg));
   }
-  void log(std::string &&msg) {log(4,std::move(msg));}
+  void log(std::string &&msg) {log(5,std::move(msg));}
 private:
   const MPluginParams& params;
   std::map<unsigned int,std::unique_ptr<ThreadLogger> > loggers;
@@ -3024,14 +3018,14 @@ void PluginInstance::generateInfoString(void) {
             << '/' << (unsigned int)((float)(c.duration) * factor);
         }
       }
-      params.log(3,o.str());
+      params.log(6,o.str());
     }
     for (int i=0;i<3;i++) if (server[i]) {
       std::string perf_string(server[i]->workerPerformance(time_diff));
       if (!perf_string.empty()) {
         std::ostringstream o;
         o << "perf(Server" << i << "):" << perf_string << '\n';
-        params.log(3,o.str());
+        params.log(6,o.str());
       }
     }
   }
