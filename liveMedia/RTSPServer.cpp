@@ -931,12 +931,6 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
     contentLength = 0;
     Boolean urlIsRTSPS;
     Boolean playAfterSetup = False;
-    fLastCRLF[0] = '\n'; // temporarily, for logging
-    fLastCRLF[1] = '\0'; // temporarily, for logging
-    envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes: "
-               "request received:\n" << (char*)fRequestBuffer;
-    fLastCRLF[0] = '\r'; // restore
-    fLastCRLF[1] = '\n'; // restore
     fLastCRLF[2] = '\0'; // temporarily, for parsing
     Boolean parseSucceeded = parseRTSPRequestString((char*)fRequestBuffer, fLastCRLF+2 - fRequestBuffer,
 						    cmdName, sizeof cmdName,
@@ -960,7 +954,17 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
 #endif
       // If there was a "Content-Length:" header, then make sure we've received all of the data that it specified:
       if (ptr + newBytesRead < tmpPtr + 2 + contentLength) break; // we still need more data; subsequent reads will give it to us 
-      
+
+      envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes: "
+              << cmdName << " request parsing ok\n";
+      if (strcmp(cmdName, "OPTIONS") && strcmp(cmdName, "GET_PARAMETER")) { // do not log contents of OPTIONS request
+        fLastCRLF[0] = '\n'; // temporarily, for logging
+        fLastCRLF[1] = '\0'; // temporarily, for logging
+        envir() << (char*)fRequestBuffer;
+        fLastCRLF[0] = '\r'; // restore
+        fLastCRLF[1] = '\n'; // restore
+      }
+
       // If the request included a "Session:" id, and it refers to a client session that's
       // current ongoing, then use this command to indicate 'liveness' on that client session:
       Boolean const requestIncludedSessionId = sessionIdStr[0] != '\0';
@@ -1085,6 +1089,12 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
 					      acceptStr, sizeof acceptStr);
       *fLastCRLF = '\r';
       if (parseSucceeded) {
+        fLastCRLF[0] = '\n'; // temporarily, for logging
+        fLastCRLF[1] = '\0'; // temporarily, for logging
+        envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes: "
+                   "HTTP "<< cmdName << " request parsing ok\n" << (char*)fRequestBuffer;
+        fLastCRLF[0] = '\r'; // restore
+        fLastCRLF[1] = '\n'; // restore
 #ifdef DEBUG
 	fprintf(stderr, "parseHTTPRequestString() succeeded, returning cmdName \"%s\", urlSuffix \"%s\", sessionCookie \"%s\", acceptStr \"%s\"\n", cmdName, urlSuffix, sessionCookie, acceptStr);
 #endif
@@ -1119,6 +1129,12 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
 	  handleHTTPCmd_notSupported();
 	}
       } else {
+        fLastCRLF[0] = '\n'; // temporarily, for logging
+        fLastCRLF[1] = '\0'; // temporarily, for logging
+        envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes: "
+                   "request parsing failed\n" << (char*)fRequestBuffer;
+        fLastCRLF[0] = '\r'; // restore
+        fLastCRLF[1] = '\n'; // restore
 #ifdef DEBUG
 	fprintf(stderr, "parseHTTPRequestString() failed!\n");
 #endif

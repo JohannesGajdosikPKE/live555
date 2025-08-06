@@ -1168,14 +1168,14 @@ private:
     }
     envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect(" << e.name.c_str() << "," << SubsessionInfoToString(*info) << ")\n";
     frame_registration = e.connect(info,
-          [this,&server=e.server](const Frame &f) {
+      [this,&server=e.server](const Frame &f) {
               // called from some thread outside the plugin
 //            if (f.size == 0) {
                 // no more frames for this SubsessionInfo
 //              envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l: empty frame received\n";
 //            } else {
                 // prevent premature deletion:
-              const std::shared_ptr<RTSPServer::RTSPClientSession> client_session
+              std::shared_ptr<RTSPServer::RTSPClientSession> client_session
                 = server.lookupClientSession(client_session_id);
               if (!client_session) {
                 envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l: "
@@ -1221,26 +1221,55 @@ private:
                     envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
                                "frame_queue.size = " << frame_queue_size << " has increased too much, "
                                "closing session.\n";
-                    client_session_to_delete->reclaimStreamStates();
-                    client_session_to_delete->deleteThis();
-                    RTSPServer::RTSPClientConnection* const client_connection(client_session_to_delete->getOurClientConnection());
-                    if (client_connection) {
-                        // here the FrameSource will get destructed
-                      client_connection->pretendClientHasClosed();
-                    } else {
-                      envir() << "FATAL: MyFrameSource::connect::l::l: "
-                                 "client_session has no client_connection\n";
-                      abort();
-                    }
                   } else {
-                      // deliverFrame may delete MyFrameSource
+                    // deliverFrame may delete MyFrameSource
 //                    envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
 //                               "end: calling deliverFrame\n";
                     deliverFrame();
                   }
+                  if (client_session_ptr->envir().taskScheduler().isSameThread()) {
+                    if (client_session_to_delete) {
+                      client_session_to_delete->reclaimStreamStates();
+                      client_session_to_delete->deleteThis();
+                      RTSPServer::RTSPClientConnection* const client_connection(client_session_to_delete->getOurClientConnection());
+                      if (client_connection) {
+                          // here the FrameSource will get destructed
+                        client_connection->pretendClientHasClosed();
+                      } else {
+                        envir() << "FATAL: MyFrameSource::connect::l::l: "
+                                   "client_session has no client_connection\n";
+                        abort();
+                      }
+                    }
+                  } else {
+                    envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
+                               "WARNING: session belongs to different thread\n";
+                      // close in own thread
+                    client_session_ptr->envir().taskScheduler().executeCommand(
+                      [client_session=std::move(client_session_ptr),
+                       to_delete=std::move(client_session_to_delete)](uint64_t task_nr) {
+                        if (to_delete) {
+                          to_delete->reclaimStreamStates();
+                          to_delete->deleteThis();
+                          RTSPServer::RTSPClientConnection* const client_connection(to_delete->getOurClientConnection());
+                          if (client_connection) {
+                              // here the FrameSource will get destructed
+                            client_connection->pretendClientHasClosed();
+                          } else {
+                            to_delete->envir() << "FATAL: MyFrameSource::connect::l::l: "
+                                                  "client_session has no client_connection\n";
+                            abort();
+                          }
+                        }
+                      });
+                  }
                 });
 //              envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l: "
 //                         "frameCb, queueing frame -> task(" << (void*)registered_task << ")\n";
+              if (client_session) {
+                envir() << "FATAL programming error: client_session should have been moved to lambda object\n";
+                abort();
+              }
               registered_tasks.push_back(registered_task);
               const unsigned int s = registered_tasks.size();
               if (s >= 2*prev_task_queue_size) {
