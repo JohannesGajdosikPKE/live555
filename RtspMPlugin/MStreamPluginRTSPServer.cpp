@@ -1185,6 +1185,13 @@ private:
               std::lock_guard<std::mutex> lock(registered_tasks_mutex);
               const uint64_t registered_task = envir().taskScheduler().executeCommand(
                 [this,&server,f,client_session_ptr=std::move(client_session)](uint64_t task_nr) {
+                    // Maybe the client_session has already been closed.
+                    // In this case MyFrameSource will also have been destructed and *this is inaccessible.
+                  if (!server.lookupClientSession(client_session_ptr->getOurSessionId())) {
+                    client_session_ptr->envir() << "MyFrameSource(session_id=" << client_session_ptr->getOurSessionId() << ")::connect::l::l: "
+                                                   "session already closed, dropping frame\n";
+                    return;
+                  }
 //                  envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
 //                             "frame in connection thread, dequeued task(" << (void*)task_nr << ")\n";
                   {
@@ -1229,10 +1236,11 @@ private:
                   }
                   if (client_session_ptr->envir().taskScheduler().isSameThread()) {
                     if (client_session_to_delete) {
-                      client_session_to_delete->reclaimStreamStates();
-                      client_session_to_delete->deleteThis();
                       RTSPServer::RTSPClientConnection* const client_connection(client_session_to_delete->getOurClientConnection());
                       if (client_connection) {
+                        auto tmp(client_connection->shared_from_this());
+                        client_session_to_delete->reclaimStreamStates();
+                        client_session_to_delete->deleteThis();
                           // here the FrameSource will get destructed
                         client_connection->pretendClientHasClosed();
                       } else {
@@ -1249,10 +1257,11 @@ private:
                       [client_session=std::move(client_session_ptr),
                        to_delete=std::move(client_session_to_delete)](uint64_t task_nr) {
                         if (to_delete) {
-                          to_delete->reclaimStreamStates();
-                          to_delete->deleteThis();
                           RTSPServer::RTSPClientConnection* const client_connection(to_delete->getOurClientConnection());
                           if (client_connection) {
+                            auto tmp(client_connection->shared_from_this());
+                            to_delete->reclaimStreamStates();
+                            to_delete->deleteThis();
                               // here the FrameSource will get destructed
                             client_connection->pretendClientHasClosed();
                           } else {
