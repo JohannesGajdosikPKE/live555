@@ -279,7 +279,7 @@ private:
   struct RegistrationSet;
   static void OnH26xFrameCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const TimeType frameTime);
   static void OnFrameCallback(void *callerId, const SubsessionInfo *info, const uint8_t *buffer, int bufferSize, const TimeType &frameTime);
-  mutable std::recursive_mutex registration_mutex;
+  mutable std::recursive_mutex registration_mutex; // protects not only registration_map, but also each single RegistrationSet
   std::map<const SubsessionInfo*,RegistrationSet> registration_map;
   const SubsessionInfo *const *subsession_info_list;
   mutable std::mutex sms_map_mutex;
@@ -522,7 +522,7 @@ MediaServerPluginRTSPServer::StreamMapEntry::connect(const SubsessionInfo *info,
 
 void MediaServerPluginRTSPServer::StreamMapEntry::remember(const Registration &reg) {
     // only called from the Registration constructor
-//  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::remember(" << SubsessionInfoToString(*reg->info) << "): start\n";
+//  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::remember(" << SubsessionInfoToString(*reg.info) << "): start\n";
   if (!stream) abort();
   {
     std::lock_guard<std::recursive_mutex> lock(registration_mutex);
@@ -530,7 +530,11 @@ void MediaServerPluginRTSPServer::StreamMapEntry::remember(const Registration &r
 #ifdef ALLOC_STATS
     rs.alloc_stat_name = name;
 #endif
-    if (!rs.insert(reg.getWeakSelf()).second) abort();
+    if (!rs.insert(reg.getWeakSelf()).second) {
+      env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::remember(" << reg.id << "/" << SubsessionInfoToString(*reg.info)
+            << "): FATAL programming error: double registration\n";
+      abort();
+    }
   }
 //  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::remember end\n";
 }
@@ -667,10 +671,8 @@ void MediaServerPluginRTSPServer::StreamMapEntry::emptyFrameReceived(void) {
 
 void MediaServerPluginRTSPServer::StreamMapEntry::getSubsessions(std::set<std::string> &subsessions) const {
   std::lock_guard<std::recursive_mutex> lock(registration_mutex);
-  if (!registration_map.empty()) {
-    for (const SubsessionInfo *const*s=subsession_info_list;*s;s++) {
-      subsessions.insert(SubsessionInfoToString(**s));
-    }
+  for (const auto &it : registration_map) {
+    subsessions.insert(SubsessionInfoToString(*it.first));
   }
 }
 
@@ -725,18 +727,18 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void* callerId
     sem.wait();
     return;
   }
-  RegistrationSet tmp_reg_set;
-  {
-    std::lock_guard<std::recursive_mutex> lock(e.registration_mutex);
-    const auto r(e.registration_map.find(info));
-    if (r != e.registration_map.end()) tmp_reg_set = r->second;
-  }
-  if (!tmp_reg_set.empty()) {
-    if (0 == strcmp(info->getRtpPayloadFormatName(),"H264") ||
-        0 == strcmp(info->getRtpPayloadFormatName(),"H265")) {
-      OnH26xFrameCallback(tmp_reg_set,buffer,bufferSize,frameTime);
-    } else {
-      tmp_reg_set.callFunctions(buffer,bufferSize,frameTime,true);
+  std::lock_guard<std::recursive_mutex> lock(e.registration_mutex);
+  const auto r(e.registration_map.find(info));
+    // Cannot release registration_mutex yet, because I want to make sure
+    // there is no unregistration/destruction while I call the callbacks.
+  if (r != e.registration_map.end()) {
+    if (!r->second.empty()) {
+      if (0 == strcmp(info->getRtpPayloadFormatName(),"H264") ||
+          0 == strcmp(info->getRtpPayloadFormatName(),"H265")) {
+        OnH26xFrameCallback(r->second,buffer,bufferSize,frameTime);
+      } else {
+        r->second.callFunctions(buffer,bufferSize,frameTime,true);
+      }
     }
   }
 }
@@ -1177,7 +1179,7 @@ private:
                 // prevent premature deletion:
               std::shared_ptr<RTSPServer::RTSPClientSession> client_session
                 = server.lookupClientSession(client_session_id);
-              if (!client_session) {
+              if (client_session.use_count() == 0) {
                 envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l: "
                            "session has been closed, ignoring frame\n";
                 return;
@@ -1194,20 +1196,26 @@ private:
                   }
 //                  envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
 //                             "frame in connection thread, dequeued task(" << (void*)task_nr << ")\n";
+                  std::shared_ptr<RTSPServer::RTSPClientSession> client_session_to_delete;
+                  unsigned int task_queue_size;
                   {
                     std::lock_guard<std::mutex> lock(registered_tasks_mutex);
                     if (registered_tasks.front() != task_nr) abort();
+                    task_queue_size = registered_tasks.size();
+                    constexpr unsigned int max_task_queue_size = 256;
+                    if (task_queue_size >= max_task_queue_size) {
+                      client_session_to_delete = client_session_ptr;
+                    }
                     registered_tasks.pop_front();
-                    const unsigned int s = registered_tasks.size();
-                    if (2*s <= prev_task_queue_size) {
-                      prev_task_queue_size = s;
-                      if (s >= 16) {
+                    task_queue_size--;
+                    if (2*task_queue_size <= prev_task_queue_size) {
+                      prev_task_queue_size = task_queue_size;
+                      if (task_queue_size >= 16) {
                         envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
-                                   "task_queue.size <= " << s << "\n";
+                                   "task_queue.size <= " << task_queue_size << "\n";
                       }
                     }
                   }
-                  std::shared_ptr<RTSPServer::RTSPClientSession> client_session_to_delete;
                     // this is the actual frame callback.
                     // It is called from the connections UsageEnvironment thread
                   my_frame_queue.push_back(f); // Frame contains shared Ptr to data
@@ -1226,7 +1234,9 @@ private:
                   }
                   if (client_session_to_delete) {
                     envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
-                               "frame_queue.size = " << frame_queue_size << " has increased too much, "
+                               "frame_queue.size = " << frame_queue_size
+                            << " or task_queue.size = " << task_queue_size
+                            << " has increased too much, "
                                "closing session.\n";
                   } else {
                     // deliverFrame may delete MyFrameSource
