@@ -223,6 +223,7 @@ protected:
     UsageEnvironment &env(getBestThreadedUsageEnvironment());
     env.taskScheduler().executeCommand(
       [this,s=clientSocket,a=clientAddr,&env](uint64_t) {
+        if (cleanup_called) return; // create no new connections while shutdown is in progress
         createNewClientConnectionImpl(env,s,a);
       });
   }
@@ -299,7 +300,7 @@ protected:
   class Worker;
   std::mutex workers_mutex;
   std::unique_ptr<Worker> *const workers;
-  bool cleanup_called;
+  std::atomic<bool> cleanup_called;
 };
 
 // A data structure used for optional user/password authentication:

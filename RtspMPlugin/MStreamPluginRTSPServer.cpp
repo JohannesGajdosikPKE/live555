@@ -26,6 +26,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <string.h>
 
 #include <deque>
+#include <list>
 #include <sstream>
 #include <iomanip>
 #include <atomic>
@@ -33,7 +34,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 using namespace InterfaceMediaStream;
 
-//#define ALLOC_STATS
+#define ALLOC_STATS
 #ifdef ALLOC_STATS
 
 class MemAccounter {
@@ -252,6 +253,9 @@ public:
   static std::shared_ptr<StreamMapEntry> Create(MediaServerPluginRTSPServer &server,const std::shared_ptr<IMStream> &stream,const std::string &name,std::function<void(const std::string&)> &&on_close) {
     return std::shared_ptr<StreamMapEntry>(new StreamMapEntry(server,stream,name,std::move(on_close)));
   }
+  void registerOnFrame(void) {
+    stream->RegisterOnFrame(this,StreamMapEntry::OnFrameCallback);
+  }
   ~StreamMapEntry(void);
   const SubsessionInfo *const *getSubsessionInfoList(void) const {return subsession_info_list;}
   std::shared_ptr<ServerMediaSession> createServerMediaSession(UsageEnvironment &env);
@@ -279,7 +283,7 @@ private:
   struct RegistrationSet;
   static void OnH26xFrameCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const TimeType frameTime);
   static void OnFrameCallback(void *callerId, const SubsessionInfo *info, const uint8_t *buffer, int bufferSize, const TimeType &frameTime);
-  mutable std::recursive_mutex registration_mutex; // protects not only registration_map, but also each single RegistrationSet
+  mutable std::recursive_mutex registration_mutex; // protects not only registration_map, but also each single RegistrationSet and must_deregister
   std::map<const SubsessionInfo*,RegistrationSet> registration_map;
   const SubsessionInfo *const *subsession_info_list;
   mutable std::mutex sms_map_mutex;
@@ -410,8 +414,13 @@ class MediaServerPluginRTSPServer::StreamMapEntry::Registration : public IdConta
   Registration(const std::shared_ptr<StreamMapEntry> &map_entry,
                const SubsessionInfo *info,FrameFunction &&f)
     : map_entry(map_entry),env(map_entry->env()),info(info),f(std::move(f)) {}
-  ~Registration(void) {}
-  const std::shared_ptr<StreamMapEntry> map_entry;
+  ~Registration(void) {
+    if (!map_entry->env().taskScheduler().isSameThread()) {
+        // delegate destruction of map_entry to its own thread:
+      UsageEnvironment &env(map_entry->env());
+      env.taskScheduler().executeCommand([e=std::move(map_entry)](uint64_t){});
+    }
+  }
   void remember(void) {
     map_entry->remember(*this);
     env << "StreamMapEntry::Registration(" << id << "," << map_entry->name.c_str() << ")::remember: use_count: " << (int)(map_entry.use_count()) << "\n";
@@ -421,6 +430,8 @@ class MediaServerPluginRTSPServer::StreamMapEntry::Registration : public IdConta
     map_entry->forget(*this);
     env << "StreamMapEntry::Registration(" << id << "," << map_entry->name.c_str() << ")::forget end, use_count:" << (int)(map_entry.use_count() - 1) << "\n";
   }
+  std::shared_ptr<StreamMapEntry> map_entry;
+  std::weak_ptr<Registration> weak_self;
 public:
     // Having a Registration means having a shared_ptr to the StreamMapEntry
     // and thus having a shared_ptr to the stream itself and its internal memory like *info.
@@ -438,12 +449,9 @@ public:
     return rval;
   }
   std::weak_ptr<Registration> getWeakSelf(void) const {return weak_self;}
-public:
   UsageEnvironment &env;
   const SubsessionInfo *const info;
   const FrameFunction f;
-private:
-  std::weak_ptr<Registration> weak_self;
 };
 
 struct MediaServerPluginRTSPServer::StreamMapEntry::RegistrationSet
@@ -456,8 +464,9 @@ struct MediaServerPluginRTSPServer::StreamMapEntry::RegistrationSet
                   alloc_stat_name,
 #endif
                   buffer,bufferSize,frameTime,end_of_frame);
-    for (const auto &it : *this) {
-      std::shared_ptr<Registration> r(it.lock());
+    for (auto it(begin());it!=end();) {
+      std::shared_ptr<Registration> r(it->lock());
+      ++it;
       if (r && r->f) r->f(f);
     }
   }
@@ -471,24 +480,25 @@ MediaServerPluginRTSPServer::StreamMapEntry::StreamMapEntry(MediaServerPluginRTS
                                                             std::function<void(const std::string&)> &&on_close)
                                             :server(server),name(name),stream(stream),on_close(std::move(on_close)) {
   if (!stream) abort();
-    // RegisterOnClose might call Destroy early, so lock the mutex:
-  std::lock_guard<std::recursive_mutex> lock(registration_mutex);
   subsession_info_list = stream->getSubsessionInfoList();
-  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::StreamMapEntry start, ssi:";
+  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::StreamMapEntry: ssi:";
   for (const SubsessionInfo *const*s=subsession_info_list;*s;s++) env() << " " << SubsessionInfoToString(**s);
-  env() << ", calling RegisterOnFrame(" << this << ",cb)\n";
-  stream->RegisterOnFrame(this,StreamMapEntry::OnFrameCallback);
-  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::StreamMapEntry end\n";
+  env() << "\n";
 }
 
   // the last shared_ptr may be released from any thread and therefore
   // ~StreamMapEntry may be called from any thread:
 MediaServerPluginRTSPServer::StreamMapEntry::~StreamMapEntry(void) {
+  env().taskScheduler().assertSameThread();
+      // must_deregister is only accessed from the plugin thread, no need for a mutex:
   if (must_deregister) {
     env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry start, calling RegisterOnFrame(" << this << ",NULL)\n";
     stream->RegisterOnFrame(this,nullptr);
   } else {
-    env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry start, no deregistration necessary\n";
+    env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry start, executable has already closed the stream, no deregistration allowed\n";
+    std::lock_guard<std::recursive_mutex> lock(registration_mutex);
+    // TODO
+      // lock the registration_mutex so that the destructor cannot progress while the NULL-Frame-Callback is called.
   }
     // no more OnFrame callbacks from executable threads
   std::function<void(const std::string&)> tmp_on_close;
@@ -500,7 +510,7 @@ MediaServerPluginRTSPServer::StreamMapEntry::~StreamMapEntry(void) {
     env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry: calling on_close cb\n";
     tmp_on_close(name);
   }
-  {
+  { // assertion if everything has been cleaned up:
     std::lock_guard<std::recursive_mutex> lock(registration_mutex);
     if (!registration_map.empty()) {
       env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry: "
@@ -662,11 +672,12 @@ void MediaServerPluginRTSPServer::StreamMapEntry::emptyFrameReceived(void) {
     env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::emptyFrameReceived: calling on_close cb\n";
     tmp_on_close(name);
   }
+  const auto references = do_not_delete_in_this_block.use_count();
   env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::emptyFrameReceived: end, "
            "now the destructur should be called"
-           ", references: " << (unsigned int)do_not_delete_in_this_block.use_count()
+           ", references: " << (unsigned int)references
         << "\n";
-  if (do_not_delete_in_this_block.use_count() != 1) abort();
+  if (references != 1) abort();
 }
 
 void MediaServerPluginRTSPServer::StreamMapEntry::getSubsessions(std::set<std::string> &subsessions) const {
@@ -705,32 +716,47 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnH26xFrameCallback(const Regi
 
   // called from some thread in the executeble:
 void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void* callerId, const SubsessionInfo* info, const uint8_t* buffer, int bufferSize, const TimeType& frameTime) {
-  // The executable has called the callback, meaning that the stream is still alive and registered.
-  // This implies that the StreamMapEntry is not yet destructed,
-  // and I can get its address from the callerId, which was given to the executable upon registration of OnFrameCallback:
-  StreamMapEntry& e(*reinterpret_cast<MediaServerPluginRTSPServer::StreamMapEntry*>(callerId));
-  if(!info || !buffer || bufferSize == 0) {
-    // after this function is completed, no more calls into the executable must be called (RegisterOnFrame).
+    // The executable has already locked its own mutex, it has found the callerId in its callback-map, and has called this function.
+    // This implies that the executable has not closed the stream by itself and has not yet sent the NULL-callback for this callerId,
+    // and StreamMapEntry::must_deregister is still true.
+    // In the worst case ~StreamMapEntry might have been called by the Plugin, but ~StreamMapEntry will block when calling RegisterOnFrame(callerId,NULL)
+    // on the executable's mutex.
+    // This is because all calls to RegisterOnFrame(callerId,...) block until this OnFrameCallback has finished and the executable has unlocked its mutex.
+    // Therefore I can get the StreamMapEntry's address from the callerId, that was given to the executable upon registration of OnFrameCallback,
+    // and I can securely access all StreamMapEntry members, but I must not call StreamMapEntry virtual functions or StreamMapEntry::shared_from_this.
+  StreamMapEntry &e(*reinterpret_cast<MediaServerPluginRTSPServer::StreamMapEntry*>(callerId));
+  if (!info || !buffer || bufferSize == 0) {
     Semaphore sem;
     e.env().taskScheduler().executeCommand(
-      [&e, &sem](uint64_t) {
+      [&e,&sem](uint64_t) {
         e.env() << "StreamMapEntry(" << e.id << "," << e.name.c_str() << ")::OnFrameCallback: "
-        "empty frame received, calling emptyFrameReceived\n";
-    e.must_deregister = false;
-    // emptyFrameReceived is called from the thread of the stream.
-    // This is necessary because inside delete() is called which
-    // must not be don on the heap of the executabe.
-    e.emptyFrameReceived();
-    // now the destructor of this StreamMapEntry should habe been called
-    sem.post();
+                   "empty frame received, calling emptyFrameReceived\n";
+        e.cancelKeepAlive();
+        std::function<void(const std::string&)> tmp_on_close;
+        {
+          std::lock_guard<std::mutex> lock(e.on_close_mutex);
+          e.on_close.swap(tmp_on_close);
+        }
+        if (tmp_on_close) {
+          e.env() << "StreamMapEntry(" << e.id << "," << e.name.c_str() << ")::emptyFrameReceived: calling on_close cb\n";
+            // The executable closes the stream.
+            // After this function is completed, no more calls into the executable must be called (RegisterOnFrame).
+            // This is why I must set e.must_deregister = false;
+          e.must_deregister = false;
+          tmp_on_close(e.name);
+            // and perhaps destruct e in the plugin thread at end of scope
+        }
+        sem.post();
       });
+        // The lamba accesses the StreamMapEntry whose destructor might finish when OnFrameCallback returns.
+        // Therefore I must wait for the lamda to finish:
     sem.wait();
     return;
   }
-  std::lock_guard<std::recursive_mutex> lock(e.registration_mutex);
+  std::unique_lock<std::recursive_mutex> lock(e.registration_mutex);
   const auto r(e.registration_map.find(info));
     // Cannot release registration_mutex yet, because I want to make sure
-    // there is no unregistration/destruction while I call the callbacks.
+    // there is no unregistration while I call the callbacks.
   if (r != e.registration_map.end()) {
     if (!r->second.empty()) {
       if (0 == strcmp(info->getRtpPayloadFormatName(),"H264") ||
@@ -1144,18 +1170,22 @@ private:
       // The frame callback will continue after the destructor has finished and will access
       // the deleted object.
 
-    std::lock_guard<std::mutex> lock(registered_tasks_mutex);
-    if (!registered_tasks.empty()) {
+    std::list<uint64_t> tmp_tasks;
+    {
+      std::lock_guard<std::mutex> lock(registered_tasks_mutex);
+      tmp_tasks.swap(registered_tasks);
+    }
+    if (!tmp_tasks.empty()) {
       do {
-        auto registered_task = registered_tasks.front();
-        registered_tasks.pop_front();
-        if (envir().taskScheduler().cancelCommand(registered_task)) {
-          envir() << ("MyFrameSource(" + ToString(id) + "," + name + ")::~MyFrameSource: cancelled (" + std::to_string(registered_task) + ")\n").c_str();
+        const uint64_t task = tmp_tasks.front();
+        tmp_tasks.pop_front();
+        if (envir().taskScheduler().cancelCommand(task)) {
+          envir() << ("MyFrameSource(" + ToString(id) + "," + name + ")::~MyFrameSource: cancelled (" + std::to_string(task) + ")\n").c_str();
         } else {
-          envir() << ("MyFrameSource(" + ToString(id) + "," + name + ")::~MyFrameSource: cancelling (" + std::to_string(registered_task) + ") failed, "
+          envir() << ("MyFrameSource(" + ToString(id) + "," + name + ")::~MyFrameSource: cancelling (" + std::to_string(task) + ") failed, "
                       "this can happen when I want to cancel my own task\n").c_str();
         }
-      } while (!registered_tasks.empty());
+      } while (!tmp_tasks.empty());
     } else {
       envir() << ("MyFrameSource(" + ToString(id) + "," + name + ")::~MyFrameSource: no task to cancel\n").c_str();
     }
@@ -1184,9 +1214,10 @@ private:
                            "session has been closed, ignoring frame\n";
                 return;
               }
-              std::lock_guard<std::mutex> lock(registered_tasks_mutex);
+              bool append_to_registered_tasks = true; // protected by registered_tasks_mutex
               const uint64_t registered_task = envir().taskScheduler().executeCommand(
-                [this,&server,f,client_session_ptr=std::move(client_session)](uint64_t task_nr) {
+                [this,&server,f,client_session_ptr=std::move(client_session),
+                 &append_to_registered_tasks](uint64_t task_nr) {
                     // Maybe the client_session has already been closed.
                     // In this case MyFrameSource will also have been destructed and *this is inaccessible.
                   if (!server.lookupClientSession(client_session_ptr->getOurSessionId())) {
@@ -1200,20 +1231,37 @@ private:
                   unsigned int task_queue_size;
                   {
                     std::lock_guard<std::mutex> lock(registered_tasks_mutex);
-                    if (registered_tasks.front() != task_nr) abort();
                     task_queue_size = registered_tasks.size();
-                    constexpr unsigned int max_task_queue_size = 256;
-                    if (task_queue_size >= max_task_queue_size) {
-                      client_session_to_delete = client_session_ptr;
-                    }
-                    registered_tasks.pop_front();
-                    task_queue_size--;
-                    if (2*task_queue_size <= prev_task_queue_size) {
-                      prev_task_queue_size = task_queue_size;
-                      if (task_queue_size >= 16) {
-                        envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
-                                   "task_queue.size <= " << task_queue_size << "\n";
+                    for (auto it(registered_tasks.begin());;++it) {
+                      if (it == registered_tasks.end()) {
+                          // append_to_registered_tasks can be accessed because the outside function
+                          // has not yet locked registered_tasks_mutex.
+                          // Worst case: the labda is not executed for a long time,
+                          // the task has been appended to registered_tasks, but later some cleanup
+                          // removes all registered tasks.
+                          // But in this case the labda has been removed and will not be executed at all.
+                        append_to_registered_tasks = false;
+                          // pretend that the lambda has been added to registerd_tasks,
+                          // because later task_queue_size will be decremented again
+                        task_queue_size++;
+                        break;
                       }
+                      if (*it == task_nr) {
+                        registered_tasks.erase(it);
+                        break;
+                      }
+                    }
+                  }
+                  constexpr unsigned int max_task_queue_size = 256;
+                  if (task_queue_size >= max_task_queue_size) {
+                    client_session_to_delete = client_session_ptr;
+                  }
+                  task_queue_size--;
+                  if (2*task_queue_size <= prev_task_queue_size) {
+                    prev_task_queue_size = task_queue_size;
+                    if (task_queue_size >= 16) {
+                      envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
+                                 "task_queue.size <= " << task_queue_size << "\n";
                     }
                   }
                     // this is the actual frame callback.
@@ -1289,13 +1337,16 @@ private:
                 envir() << "FATAL programming error: client_session should have been moved to lambda object\n";
                 abort();
               }
-              registered_tasks.push_back(registered_task);
-              const unsigned int s = registered_tasks.size();
-              if (s >= 2*prev_task_queue_size) {
-                prev_task_queue_size = s;
-                if (s >= 16) {
-                  envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l: "
-                             "task_queue.size >= " << s << "\n";
+              std::lock_guard<std::mutex> lock(registered_tasks_mutex);
+              if (append_to_registered_tasks) {
+                registered_tasks.push_back(registered_task);
+                const unsigned int s = registered_tasks.size();
+                if (s >= 2*prev_task_queue_size) {
+                  prev_task_queue_size = s;
+                  if (s >= 16) {
+                    envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l: "
+                               "task_queue.size >= " << s << "\n";
+                  }
                 }
               }
 //            }
@@ -1350,7 +1401,7 @@ public:
 private:
   std::shared_ptr<RTSPServer::RTSPClientConnection> client_connection;
   std::deque<Frame> my_frame_queue;
-  std::deque<uint64_t> registered_tasks;
+  std::list<uint64_t> registered_tasks;
   std::mutex registered_tasks_mutex;
   std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry::Registration> frame_registration;
   unsigned int prev_task_queue_size = 0;
@@ -2660,9 +2711,10 @@ void MediaServerPluginRTSPServer::GetStreamCb(void *cb_context,const std::shared
 void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer::LookupCompletionFuncData *l,
                                               const std::shared_ptr<IMStream> &stream) {
   std::shared_ptr<ServerMediaSession> sms;
+  bool new_stream_has_been_created = false;
+  std::shared_ptr<StreamMapEntry> e;
   if (stream) {
     envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str() << "): start\n";
-    std::shared_ptr<StreamMapEntry> e;
     {
       std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
       auto &entry(stream_map[l->streamName]);
@@ -2693,6 +2745,7 @@ void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer:
             envir() << "MediaServerPluginRTSPServer::getStreamCb::close-lambda(" << name.c_str() << "): end\n";
           });
         entry = e;
+        new_stream_has_been_created = true;
         envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str() << "): "
                    "StreamMapEntry created, creating ServerMediaSession\n";
       }
@@ -2705,6 +2758,11 @@ void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer:
   envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str()
           << "): calling completionFunc(new ServerMediaSession " << sms.get() << ")\n";
   (*(l->completionFunc))(l->completionClientData, sms);
+  if (new_stream_has_been_created) {
+    envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str()
+            << "): calling registerOnFrame\n";
+    e->registerOnFrame();
+  }
   envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str() << "): end\n";
 }
 

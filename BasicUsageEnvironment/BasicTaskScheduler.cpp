@@ -129,6 +129,16 @@ void BasicTaskScheduler::setUsageEnvironment(UsageEnvironment &e,std::ostream &l
   log << PrintSocket(tmp,sizeof(tmp),command_pipe[1]) << "\n";
 }
 
+int BasicTaskScheduler::sendOneByteOnCommandPipe(void) {
+  const char data = '\0';
+  std::lock_guard<std::mutex> lock(command_pipe_send_mutex);
+#if defined(__WIN32__) || defined(_WIN32)
+  return send(command_pipe[1],&data,1,0);
+#else
+  return write(command_pipe[1],&data,1);
+#endif
+}
+
 uint64_t BasicTaskScheduler::executeCommand(std::function<void(uint64_t task_nr)> &&cmd) {
   if (!cmd) return 0;
   uint64_t rval;
@@ -138,15 +148,10 @@ uint64_t BasicTaskScheduler::executeCommand(std::function<void(uint64_t task_nr)
     if (command_sequence == 0) command_sequence = 1;
     command_queue.push_back(Command(std::move(cmd),rval));
   }
-  char data = 0;
   for (;;) {
-#if defined(__WIN32__) || defined(_WIN32)
-    const int rc = send(command_pipe[1], &data, 1, 0);
-#else
-    const int rc = write(command_pipe[1], &data, 1);
-#endif
+    const int rc = sendOneByteOnCommandPipe();
     if (rc > 0) {
-//      envir() << "BasicTaskScheduler::executeCommand: send(command_pipe[1],1) for nr " << (void*)rval << " ok" << "\n";
+//      envir() << "BasicTaskScheduler::executeCommand: send(command_pipe[1],1) for command nr " << (void*)rval << " ok" << "\n";
       return rval;
     }
     if (rc != 0) {
@@ -156,11 +161,11 @@ uint64_t BasicTaskScheduler::executeCommand(std::function<void(uint64_t task_nr)
       const int errnr = errno;
 #endif
       envir() << "FATAL: BasicTaskScheduler::executeCommand: sending 1 byte on "
-              << command_pipe[1] << " failed for nr " << (void*)rval << ": "
+              << command_pipe[1] << " failed for command nr " << (void*)rval << ": "
               << errnr << "\n";
       abort();
     } else {
-      envir() << "BasicTaskScheduler::executeCommand: send(command_pipe[1],1) returned 0, retry nr " << (void*)rval << "\n";
+      envir() << "BasicTaskScheduler::executeCommand: send(command_pipe[1],1) returned 0, retrying command nr " << (void*)rval << "\n";
     }
   }
 }
@@ -186,11 +191,12 @@ void BasicTaskScheduler::commandRequestHandler(void) {
   ACCOUNT_GUARD("BTS:commandRH",envir());
   bool no_commands = true;
   for (;;) {
-    char data;
+    char data[4096];
+    int rc =
 #if defined(__WIN32__) || defined(_WIN32)
-    const int rc = recv(command_pipe[0], &data, 1, 0);
+      recv(command_pipe[0], data, sizeof(data), 0);
 #else
-    const int rc = read(command_pipe[0], &data, 1);
+      read(command_pipe[0], &data, sizeof(data));
 #endif
     if (rc == 0) break;
     if (rc < 0) {
@@ -201,31 +207,33 @@ void BasicTaskScheduler::commandRequestHandler(void) {
       const int errnr = errno;
       if (errnr == EAGAIN || errnr == EWOULDBLOCK) break;
 #endif
-      envir() << "FATAL: BasicTaskScheduler::commandRequestHandler: receiving 1 byte on "
+      envir() << "FATAL: BasicTaskScheduler::commandRequestHandler: receiving from "
               << command_pipe[0] << " failed: "
               << errnr << "\n";
       abort();
     }
-      // 1 byte receiveived, execute at most 1 command:
-    std::function<void(uint64_t task_nr)> f;
-    uint64_t task_nr;
-    {
-      std::lock_guard<std::mutex> guard(command_queue_mutex);
-      if (command_queue.empty()) {
-        envir() << "BasicTaskScheduler::commandRequestHandler: received 1 byte on "
-                << command_pipe[0] << ", but there is no command\n";
-        continue;
+      // rc bytes received, execute at most rc command:
+    do {
+      std::function<void(uint64_t task_nr)> f;
+      uint64_t task_nr;
+      {
+        std::lock_guard<std::mutex> guard(command_queue_mutex);
+        if (command_queue.empty()) {
+          envir() << "BasicTaskScheduler::commandRequestHandler: received " << rc << " bytes on "
+                  << command_pipe[0] << " without command\n";
+          break;
+        }
+        task_nr = command_queue.front().seq;
+        f.swap(command_queue.front().f);
+        command_queue.pop_front();
       }
-      task_nr = command_queue.front().seq;
-      f.swap(command_queue.front().f);
-      command_queue.pop_front();
-    }
-      // maybe another thread now wants to cancel the command before it is executed
-      // the cancelling will fail.
-      // or the same thread might try to cancel the command from its own command callback
-//    envir() << "BasicTaskScheduler::commandRequestHandler: executing command nr " << (void*)task_nr << "\n";
-    f(task_nr);
-    no_commands = false;
+        // maybe another thread now wants to cancel the command before it is executed
+        // the cancelling will fail.
+        // or the same thread might try to cancel the command from its own command callback
+//      envir() << "BasicTaskScheduler::commandRequestHandler: executing command nr " << (void*)task_nr << "\n";
+      f(task_nr);
+      no_commands = false;
+    } while (--rc > 0);
   }
   if (no_commands) {
     envir() << "BasicTaskScheduler::commandRequestHandler: no commands executed\n";

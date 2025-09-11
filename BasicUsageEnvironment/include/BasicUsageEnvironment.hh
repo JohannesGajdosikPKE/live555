@@ -96,6 +96,8 @@ protected:
   fd_set fExceptionSet;
 
 private:
+  int sendOneByteOnCommandPipe(void);
+  std::mutex command_pipe_send_mutex;
   int command_pipe[2]; // just to send a signal
   uint64_t command_sequence = 1;
   struct Command {
