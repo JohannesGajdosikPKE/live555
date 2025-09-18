@@ -270,9 +270,9 @@ public:
   const std::string name;
   const std::shared_ptr<IMStream> stream;
 private:
-  std::mutex on_close_mutex;
+  std::recursive_mutex on_close_mutex;
   std::function<void(const std::string&)> on_close;
-  std::mutex delayed_keep_task_mutex;
+  std::recursive_mutex delayed_keep_task_mutex;
   TaskToken delayed_keep_task = nullptr; // protected by delayed_keep_task_mutex
   bool i_want_to_die = false;            // protected by delayed_keep_task_mutex
   bool must_deregister = true;
@@ -286,7 +286,7 @@ private:
   mutable std::recursive_mutex registration_mutex; // protects not only registration_map, but also each single RegistrationSet and must_deregister
   std::map<const SubsessionInfo*,RegistrationSet> registration_map;
   const SubsessionInfo *const *subsession_info_list;
-  mutable std::mutex sms_map_mutex;
+  mutable std::recursive_mutex sms_map_mutex;
   std::map<UsageEnvironment*,std::shared_ptr<ServerMediaSession> > sms_map;
 };
 
@@ -503,7 +503,7 @@ MediaServerPluginRTSPServer::StreamMapEntry::~StreamMapEntry(void) {
     // no more OnFrame callbacks from executable threads
   std::function<void(const std::string&)> tmp_on_close;
   {
-    std::lock_guard<std::mutex> lock(on_close_mutex);
+    std::lock_guard<std::recursive_mutex> lock(on_close_mutex);
     on_close.swap(tmp_on_close);
   }
   if (tmp_on_close) {
@@ -619,7 +619,7 @@ static void KeepTaskHelperFunc(void *context) {
 void MediaServerPluginRTSPServer::StreamMapEntry::keepAlive(void) {
   KeepTaskHelper *old_ptr = nullptr;
   {
-    std::lock_guard<std::mutex> lock(delayed_keep_task_mutex);
+    std::lock_guard<std::recursive_mutex> lock(delayed_keep_task_mutex);
     if (i_want_to_die) {
       if (delayed_keep_task) {
         env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::ScheduleKeepTaskHelperFunc: "
@@ -643,7 +643,7 @@ void MediaServerPluginRTSPServer::StreamMapEntry::keepAlive(void) {
 }
 
 void MediaServerPluginRTSPServer::StreamMapEntry::cancelKeepAlive(void) {
-  std::unique_lock<std::mutex> lock(delayed_keep_task_mutex);
+  std::unique_lock<std::recursive_mutex> lock(delayed_keep_task_mutex);
   i_want_to_die = true;
   if (delayed_keep_task) {
     KeepTaskHelper *const old_ptr = reinterpret_cast<KeepTaskHelper*>(
@@ -665,7 +665,7 @@ void MediaServerPluginRTSPServer::StreamMapEntry::emptyFrameReceived(void) {
   cancelKeepAlive();
   std::function<void(const std::string&)> tmp_on_close;
   {
-    std::lock_guard<std::mutex> lock(on_close_mutex);
+    std::lock_guard<std::recursive_mutex> lock(on_close_mutex);
     on_close.swap(tmp_on_close);
   }
   if (tmp_on_close) {
@@ -734,7 +734,7 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void* callerId
         e.cancelKeepAlive();
         std::function<void(const std::string&)> tmp_on_close;
         {
-          std::lock_guard<std::mutex> lock(e.on_close_mutex);
+          std::lock_guard<std::recursive_mutex> lock(e.on_close_mutex);
           e.on_close.swap(tmp_on_close);
         }
         if (tmp_on_close) {
@@ -1170,9 +1170,10 @@ private:
       // The frame callback will continue after the destructor has finished and will access
       // the deleted object.
 
+#ifdef REGISTERED_TASKS
     std::list<uint64_t> tmp_tasks;
     {
-      std::lock_guard<std::mutex> lock(registered_tasks_mutex);
+      std::lock_guard<std::recursive_mutex> lock(registered_tasks_mutex);
       tmp_tasks.swap(registered_tasks);
     }
     if (!tmp_tasks.empty()) {
@@ -1189,6 +1190,7 @@ private:
     } else {
       envir() << ("MyFrameSource(" + ToString(id) + "," + name + ")::~MyFrameSource: no task to cancel\n").c_str();
     }
+#endif
     envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::~MyFrameSource end\n";
   }
   void connect(MediaServerPluginRTSPServer::StreamMapEntry &e,
@@ -1214,10 +1216,15 @@ private:
                            "session has been closed, ignoring frame\n";
                 return;
               }
+#ifdef REGISTERED_TASKS
               bool append_to_registered_tasks = true; // protected by registered_tasks_mutex
+#endif
               const uint64_t registered_task = envir().taskScheduler().executeCommand(
-                [this,&server,f,client_session_ptr=std::move(client_session),
-                 &append_to_registered_tasks](uint64_t task_nr) {
+                [this,&server,f,client_session_ptr=std::move(client_session)
+#ifdef REGISTERED_TASKS
+                ,&append_to_registered_tasks
+#endif
+                ](uint64_t task_nr) {
                     // Maybe the client_session has already been closed.
                     // In this case MyFrameSource will also have been destructed and *this is inaccessible.
                   if (!server.lookupClientSession(client_session_ptr->getOurSessionId())) {
@@ -1228,9 +1235,10 @@ private:
 //                  envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
 //                             "frame in connection thread, dequeued task(" << (void*)task_nr << ")\n";
                   std::shared_ptr<RTSPServer::RTSPClientSession> client_session_to_delete;
+#ifdef REGISTERED_TASKS
                   unsigned int task_queue_size;
                   {
-                    std::lock_guard<std::mutex> lock(registered_tasks_mutex);
+                    std::lock_guard<std::recursive_mutex> lock(registered_tasks_mutex);
                     task_queue_size = registered_tasks.size();
                     for (auto it(registered_tasks.begin());;++it) {
                       if (it == registered_tasks.end()) {
@@ -1264,6 +1272,7 @@ private:
                                  "task_queue.size <= " << task_queue_size << "\n";
                     }
                   }
+#endif
                     // this is the actual frame callback.
                     // It is called from the connections UsageEnvironment thread
                   my_frame_queue.push_back(f); // Frame contains shared Ptr to data
@@ -1283,7 +1292,9 @@ private:
                   if (client_session_to_delete) {
                     envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
                                "frame_queue.size = " << frame_queue_size
+#ifdef REGISTERED_TASKS
                             << " or task_queue.size = " << task_queue_size
+#endif
                             << " has increased too much, "
                                "closing session.\n";
                   } else {
@@ -1337,7 +1348,8 @@ private:
                 envir() << "FATAL programming error: client_session should have been moved to lambda object\n";
                 abort();
               }
-              std::lock_guard<std::mutex> lock(registered_tasks_mutex);
+#ifdef REGISTERED_TASKS
+              std::lock_guard<std::recursive_mutex> lock(registered_tasks_mutex);
               if (append_to_registered_tasks) {
                 registered_tasks.push_back(registered_task);
                 const unsigned int s = registered_tasks.size();
@@ -1349,6 +1361,7 @@ private:
                   }
                 }
               }
+#endif
 //            }
       });
   }
@@ -1401,8 +1414,10 @@ public:
 private:
   std::shared_ptr<RTSPServer::RTSPClientConnection> client_connection;
   std::deque<Frame> my_frame_queue;
+#ifdef REGISTERED_TASKS
   std::list<uint64_t> registered_tasks;
-  std::mutex registered_tasks_mutex;
+  std::recursive_mutex registered_tasks_mutex;
+#endif
   std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry::Registration> frame_registration;
   unsigned int prev_task_queue_size = 0;
   unsigned int prev_frame_queue_size = 0;
@@ -2772,7 +2787,7 @@ std::shared_ptr<ServerMediaSession> MediaServerPluginRTSPServer::StreamMapEntry:
   std::shared_ptr<ServerMediaSession> rval;
   const SubsessionInfo *const *sl(getSubsessionInfoList());
   if ((sl) && (*sl)) {
-    std::lock_guard<std::mutex> lock(sms_map_mutex);
+    std::lock_guard<std::recursive_mutex> lock(sms_map_mutex);
     std::shared_ptr<ServerMediaSession> &sms(sms_map[&env]);
     if (sms) {
       env << "StreamMapEntry(" << id << "," << name.c_str() << ")::createServerMediaSession: reusing existing ServerMediaSession\n";
