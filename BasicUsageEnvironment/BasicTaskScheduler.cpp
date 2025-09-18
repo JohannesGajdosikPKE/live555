@@ -83,6 +83,7 @@ BasicTaskScheduler::BasicTaskScheduler(unsigned maxSchedulerGranularity)
 #if defined(__WIN32__) || defined(_WIN32)
   , fDummySocketNum(-1)
 #endif
+  , command_pipe_count(0)
 {
 #if defined(__WIN32__) || defined(_WIN32)
   if (!initializeWinsockIfNecessary()) abort();
@@ -111,6 +112,7 @@ BasicTaskScheduler::BasicTaskScheduler(unsigned maxSchedulerGranularity)
   if (pipe2(command_pipe, O_CLOEXEC)) abort();
 #endif
   if (!makeSocketNonBlocking(command_pipe[0])) abort();
+  if (!makeSocketNonBlocking(command_pipe[1])) abort();
 
   FD_ZERO(&fReadSet);
   FD_ZERO(&fWriteSet);
@@ -131,7 +133,7 @@ void BasicTaskScheduler::setUsageEnvironment(UsageEnvironment &e,std::ostream &l
 
 int BasicTaskScheduler::sendOneByteOnCommandPipe(void) {
   const char data = '\0';
-  std::lock_guard<std::mutex> lock(command_pipe_send_mutex);
+  std::lock_guard<std::recursive_mutex> lock(command_pipe_send_mutex);
 #if defined(__WIN32__) || defined(_WIN32)
   return send(command_pipe[1],&data,1,0);
 #else
@@ -148,26 +150,25 @@ uint64_t BasicTaskScheduler::executeCommand(std::function<void(uint64_t task_nr)
     if (command_sequence == 0) command_sequence = 1;
     command_queue.push_back(Command(std::move(cmd),rval));
   }
-  for (;;) {
-    const int rc = sendOneByteOnCommandPipe();
-    if (rc > 0) {
-//      envir() << "BasicTaskScheduler::executeCommand: send(command_pipe[1],1) for command nr " << (void*)rval << " ok" << "\n";
-      return rval;
-    }
-    if (rc != 0) {
-#if defined(__WIN32__) || defined(_WIN32)
-      const int errnr = WSAGetLastError();
-#else
-      const int errnr = errno;
-#endif
-      envir() << "FATAL: BasicTaskScheduler::executeCommand: sending 1 byte on "
-              << command_pipe[1] << " failed for command nr " << (void*)rval << ": "
-              << errnr << "\n";
-      abort();
-    } else {
-      envir() << "BasicTaskScheduler::executeCommand: send(command_pipe[1],1) returned 0, retrying command nr " << (void*)rval << "\n";
-    }
+  if ((int)command_pipe_count >= 1024) return rval; // no need to wakeup the receiving thread
+  const int rc = sendOneByteOnCommandPipe();
+  if (rc > 0) {
+    command_pipe_count++;
+    return rval;
   }
+  if (rc == 0) return rval;
+#if defined(__WIN32__) || defined(_WIN32)
+  const int errnr = WSAGetLastError();
+  if (errnr == WSAEWOULDBLOCK) return rval;
+#else
+  const int errnr = errno;
+  if (errnr == EAGAIN || errnr == EWOULDBLOCK) return rval;
+#endif
+  envir() << "FATAL: BasicTaskScheduler::executeCommand: sending 1 byte on "
+          << command_pipe[1] << " failed for command nr " << (void*)rval << ": "
+          << errnr << "\n";
+  abort();
+  return rval; // can never be reached, shutup the compiler
 }
 
 bool BasicTaskScheduler::cancelCommand(const uint64_t token) {
@@ -175,7 +176,7 @@ bool BasicTaskScheduler::cancelCommand(const uint64_t token) {
   std::lock_guard<std::mutex> guard(command_queue_mutex);
   for (auto it(command_queue.begin());it!=command_queue.end();++it) {
     if (token == it->seq) {
-      envir() << "BasicTaskScheduler::cancelCommand: nr " << (void*)token << "\n";
+///      envir() << "BasicTaskScheduler::cancelCommand: nr " << (void*)token << "\n";
       command_queue.erase(it);
       return true;
     }
@@ -189,7 +190,8 @@ void BasicTaskScheduler::CommandRequestHandler(void* instance, int /*mask*/) {
 
 void BasicTaskScheduler::commandRequestHandler(void) {
   ACCOUNT_GUARD("BTS:commandRH",envir());
-  bool no_commands = true;
+  command_request_handler_called = true;
+  unsigned int bytes_received = 0;
   for (;;) {
     char data[4096];
     int rc =
@@ -212,31 +214,28 @@ void BasicTaskScheduler::commandRequestHandler(void) {
               << errnr << "\n";
       abort();
     }
-      // rc bytes received, execute at most rc command:
-    do {
-      std::function<void(uint64_t task_nr)> f;
-      uint64_t task_nr;
-      {
-        std::lock_guard<std::mutex> guard(command_queue_mutex);
-        if (command_queue.empty()) {
-          envir() << "BasicTaskScheduler::commandRequestHandler: received " << rc << " bytes on "
-                  << command_pipe[0] << " without command\n";
-          break;
-        }
-        task_nr = command_queue.front().seq;
-        f.swap(command_queue.front().f);
-        command_queue.pop_front();
-      }
-        // maybe another thread now wants to cancel the command before it is executed
-        // the cancelling will fail.
-        // or the same thread might try to cancel the command from its own command callback
-//      envir() << "BasicTaskScheduler::commandRequestHandler: executing command nr " << (void*)task_nr << "\n";
-      f(task_nr);
-      no_commands = false;
-    } while (--rc > 0);
+    bytes_received += rc;
+    if (rc < sizeof(data)) break;
   }
-  if (no_commands) {
-    envir() << "BasicTaskScheduler::commandRequestHandler: no commands executed\n";
+      // execute as many commands as possible command:
+  const int current_command_pipe_count = (int)(command_pipe_count -= bytes_received);
+    // can easily be < 0 when the sending thread is a little slow
+//  if (current_command_pipe_count < 0) {
+//    envir() << "STRANGE: BasicTaskScheduler::commandRequestHandler: received "
+//            << (-current_command_pipe_count) << " bytes too much from "
+//            << command_pipe[0] << "\n";
+//  }
+  for (;;) {
+    std::deque<Command> tmp_command_queue;
+    {
+      std::lock_guard<std::mutex> guard(command_queue_mutex);
+      if (command_queue.empty()) break;
+      tmp_command_queue.swap(command_queue);
+    }
+    do {
+      tmp_command_queue.front().f(tmp_command_queue.front().seq);
+      tmp_command_queue.pop_front();
+    } while (!tmp_command_queue.empty());
   }
 }
 
@@ -264,7 +263,7 @@ void BasicTaskScheduler::schedulerTickTask() {
 void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
   //assertSameThread(); already asserted in doEventLoop
   ACCOUNT_GUARD("SingleStep", envir());
-
+  command_request_handler_called = false;
   fd_set readSet, writeSet, exceptionSet;
   struct timeval tv_timeToDelay;
   {
@@ -462,6 +461,9 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
   // Also handle any delayed event that may have come due.
   ACCOUNT_GUARD("DelayQueue",envir());
   fDelayQueue.handleAlarm();
+  if (!command_request_handler_called) {
+    commandRequestHandler();
+  }
 }
 
 void BasicTaskScheduler::assertValidSocketForSelect(int socketNum) {

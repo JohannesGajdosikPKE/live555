@@ -97,8 +97,9 @@ protected:
 
 private:
   int sendOneByteOnCommandPipe(void);
-  std::mutex command_pipe_send_mutex;
+  std::recursive_mutex command_pipe_send_mutex;
   int command_pipe[2]; // just to send a signal
+  std::atomic<unsigned int> command_pipe_count;
   uint64_t command_sequence = 1;
   struct Command {
     Command(void) {}
@@ -108,6 +109,7 @@ private:
   };
   std::deque<Command> command_queue;
   std::mutex command_queue_mutex;
+  bool command_request_handler_called;
   static void CommandRequestHandler(void* instance, int /*mask*/);
   void commandRequestHandler(void);
 #if defined(__WIN32__) || defined(_WIN32)
