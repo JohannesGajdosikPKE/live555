@@ -1184,11 +1184,25 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesFinish(void) {
   --fRecursionCount;
 //  envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: fIsActive: " << (int)fIsActive << "\n";
   // If it has a scheduledDelayedTask, don't delete the instance or close the sockets. The sockets can be reused in the task.
-  if (!fIsActive && fScheduledDelayedTask <= 0) {
-    if (fRecursionCount > 0) closeSocketsRTSP(); else removeFromServer();
-    // Note: The "fRecursionCount" test is for a pathological situation where we reenter the event loop and get called recursively
-    // while handling a command (e.g., while handling a "DESCRIBE", to get a SDP description).
-    // In such a case we don't want to actually delete ourself until we leave the outermost call.
+  if (!fIsActive) {
+    if (fScheduledDelayedTask <= 0) {
+      if (fRecursionCount > 0) {
+        envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: "
+                   "calling closeSocketsRTSP()\n";
+        closeSocketsRTSP();
+      }
+      else {
+        envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: "
+                   "calling removeFromServer()\n";
+        removeFromServer();
+      }
+      // Note: The "fRecursionCount" test is for a pathological situation where we reenter the event loop and get called recursively
+      // while handling a command (e.g., while handling a "DESCRIBE", to get a SDP description).
+      // In such a case we don't want to actually delete ourself until we leave the outermost call.
+    } else {
+      envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: "
+                 "I would like to close but there is still a fScheduledDelayedTask\n";
+    }
   }
 //  fprintf(stderr,"RTSPServer::RTSPClientConnection(%p)::handleRequestBytes(%d) end\n", this, newBytesRead);
 }

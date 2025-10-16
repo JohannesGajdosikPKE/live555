@@ -411,8 +411,8 @@ Frame::Frame(
 
 class MediaServerPluginRTSPServer::StreamMapEntry::Registration : public IdContainer {
   Registration(const std::shared_ptr<StreamMapEntry> &map_entry,
-               const SubsessionInfo *info,FrameFunction &&f)
-    : map_entry(map_entry),env(map_entry->env()),info(info),f(std::move(f)) {}
+               const SubsessionInfo *info,FrameFunction &&func)
+    : map_entry(map_entry),env(map_entry->env()),info(info),func(std::move(func)) {}
   ~Registration(void) {
     if (!map_entry->env().taskScheduler().isSameThread()) {
         // delegate destruction of map_entry to its own thread:
@@ -438,11 +438,11 @@ public:
     // after the destructor is finished.
     // Only StreamMapEntry::connect calls Create:
   static std::shared_ptr<Registration> Create(const std::shared_ptr<StreamMapEntry> &map_entry,
-                                              const SubsessionInfo *info,FrameFunction &&f) {
+                                              const SubsessionInfo *info,FrameFunction &&func) {
     const auto rval
       = std::shared_ptr<Registration>(
-          new Registration(map_entry,info,std::move(f)),
-          [](Registration* r) {r->forget();delete r;});
+          new Registration(map_entry,info,std::move(func)),
+          [](Registration *reg) {reg->forget();delete reg;});
     rval->weak_self = rval;
     rval->remember();
     return rval;
@@ -450,7 +450,7 @@ public:
   std::weak_ptr<Registration> getWeakSelf(void) const {return weak_self;}
   UsageEnvironment &env;
   const SubsessionInfo *const info;
-  const FrameFunction f;
+  const FrameFunction func;
 };
 
 struct MediaServerPluginRTSPServer::StreamMapEntry::RegistrationSet
@@ -458,15 +458,15 @@ struct MediaServerPluginRTSPServer::StreamMapEntry::RegistrationSet
                       std::owner_less<std::weak_ptr<Registration> > > {
   RegistrationSet(void) {}
   void callFunctions(const uint8_t *buffer, int bufferSize, const TimeType frameTime, bool end_of_frame) const {
-    const Frame f(
+    const Frame frame(
 #ifdef ALLOC_STATS
-                  alloc_stat_name,
+                      alloc_stat_name,
 #endif
-                  buffer,bufferSize,frameTime,end_of_frame);
+                      buffer,bufferSize,frameTime,end_of_frame);
     for (auto it(begin());it!=end();) {
-      std::shared_ptr<Registration> r(it->lock());
+      std::shared_ptr<Registration> reg(it->lock());
       ++it;
-      if (r && r->f) r->f(f);
+      if (reg && reg->func) reg->func(frame);
     }
   }
 #ifdef ALLOC_STATS
