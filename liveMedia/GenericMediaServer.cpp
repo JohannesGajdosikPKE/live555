@@ -255,12 +255,48 @@ std::string GenericMediaServer::workerPerformance(uint64_t time_diff) {
   return o.str();
 }
 
+static inline float GetCoreFactorFromFile(const float default_value, UsageEnvironment& env) {
+#ifdef _WIN32
+  char fname[MAX_PATH + 32];
+  if (GetModuleFileNameA(NULL, fname, MAX_PATH) == 0) {
+    env << "GetCoreFactorFromFile: GetModuleFileNameA failed: " << (int)GetLastError() << "\n";
+  } else {
+    char *c = strrchr(fname,'\\');
+    if (c) ++c;
+    else c = fname;
+    strcpy(c,"RtspMStreamPluginCoreFactor.txt");
+  }
+#else
+  const char* fname = "RtspMStreamPluginCoreFactor.txt";
+#endif
+  float rval = default_value;
+  FILE *f = fopen(fname,"r");
+  if (f) {
+    env << "GetCoreFactorFromFile \"" << fname << "\": fopen ok\n";
+    const int rc = fscanf(f,"%f",&rval);
+    if (1 != rc) {
+      env << "GetCoreFactorFromFile \"" << fname << "\": fscanf returned " << rc << ", errno: " << errno << "\n";
+      rval = default_value;
+    } else if (rval < 0.f || rval > 1.f) {
+      env << "GetCoreFactorFromFile \"" << fname << "\": bad file contents: " << rval << "\n";
+      rval = default_value;
+    } else {
+      env << "GetCoreFactorFromFile \"" << fname << "\": reading ok: " << rval << "\n";
+    }
+    fclose(f);
+  }
+  return rval;
+}
+
+static inline unsigned int GetNrOfCoresFromHW(void) {
+  unsigned int rval = std::thread::hardware_concurrency();
+  if (rval == 0) rval = 32; // C++ does not know the nr of cores
+  return rval;
+}
+
 static inline unsigned int GetNrOfCores(unsigned int nr = 0,float factor = 1.f) {
   unsigned int rval = nr;
-  if (0 == rval) {
-    rval = std::thread::hardware_concurrency();
-    if (0 == rval) rval = 32; // C++ does not know the nr of cores
-  }
+  if (0 == rval) rval = GetNrOfCoresFromHW();
   rval = 0.5f + rval * factor;
   if (1024 < rval) rval = 1024; // sanity check
   else if (0 == rval) rval = 1;
@@ -275,7 +311,7 @@ GenericMediaServer
     fServerPort(ourPort), fReclamationSeconds(reclamationSeconds),
     fPreviousClientSessionId(0),
     fTLSCertificateFileName(NULL), fTLSPrivateKeyFileName(NULL),
-    nr_of_workers(GetNrOfCores()),
+    nr_of_workers(GetNrOfCores(0,GetCoreFactorFromFile(0.375,env))),
     workers(new std::unique_ptr<Worker>[nr_of_workers]),
     cleanup_called(false) {
 //fprintf(stderr,"GenericMediaServer::GenericMediaServer: %u workers\n", nr_of_workers);
