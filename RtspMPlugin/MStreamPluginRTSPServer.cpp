@@ -326,8 +326,8 @@ void MediaServerPluginRTSPServer::MyRTSPClientSession::informClientConnect(void)
             << " to " << fOurServerMediaSession->streamName() << "\n";
     abort();
   }
-  const std::shared_ptr<StreamMapEntry> e(static_cast<MediaServerPluginRTSPServer&>(fOurServer).
-                                          getStreamMapEntry(fOurServerMediaSession->streamName()));
+  std::shared_ptr<StreamMapEntry> e(static_cast<MediaServerPluginRTSPServer&>(fOurServer).
+                                    getStreamMapEntry(fOurServerMediaSession->streamName()));
   if (e && e->stream) {
     struct sockaddr_storage sock_addr;
     socklen_t sock_addrlen = sizeof(sock_addr);
@@ -359,6 +359,12 @@ void MediaServerPluginRTSPServer::MyRTSPClientSession::informClientConnect(void)
             << "." << (dst_ip&0xFF)
             << ":" << dst_port
             << " to " << fOurServerMediaSession->streamName() << "\n";
+      // destruction of e only in its own thread:
+    UsageEnvironment &entry_env(e->env());
+    if (!entry_env.taskScheduler().isSameThread()) {
+      entry_env.taskScheduler().executeCommand([entry=std::move(e)](uint64_t) {});
+      if (e) abort(); // check that std::move actually has transferred ownership into the lambda
+    }
   }
 }
 
