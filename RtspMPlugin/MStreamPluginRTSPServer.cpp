@@ -251,7 +251,18 @@ class MediaServerPluginRTSPServer::StreamMapEntry : public std::enable_shared_fr
   StreamMapEntry(MediaServerPluginRTSPServer &server,const std::shared_ptr<IMStream> &stream,const std::string &name,std::function<void(const std::string&)> &&on_close);
 public:
   static std::shared_ptr<StreamMapEntry> Create(MediaServerPluginRTSPServer &server,const std::shared_ptr<IMStream> &stream,const std::string &name,std::function<void(const std::string&)> &&on_close) {
-    return std::shared_ptr<StreamMapEntry>(new StreamMapEntry(server,stream,name,std::move(on_close)));
+    return std::shared_ptr<StreamMapEntry>(new StreamMapEntry(server,stream,name,std::move(on_close)),
+                                             // delete StreamMapEntry in its own thread:
+                                           [](StreamMapEntry *e) {
+                                               // must check for nullptr, see https://stackoverflow.com/questions/42962515/does-it-make-sense-to-check-for-nullptr-in-custom-deleter-of-shared-ptr
+                                             if (e) {
+                                               if (e->env().taskScheduler().isSameThread()) {
+                                                 delete e;
+                                               } else {
+                                                 e->env().taskScheduler().executeCommand([e](uint64_t) {delete e;});
+                                               }
+                                             }
+                                           });
   }
   void registerOnFrame(void) {
     stream->RegisterOnFrame(this,StreamMapEntry::OnFrameCallback);
@@ -270,9 +281,9 @@ public:
   const std::string name;
   const std::shared_ptr<IMStream> stream;
 private:
-  std::recursive_mutex on_close_mutex;
+  MyMutex on_close_mutex;
   std::function<void(const std::string&)> on_close;
-  std::recursive_mutex delayed_keep_task_mutex;
+  MyMutex delayed_keep_task_mutex;
   TaskToken delayed_keep_task = nullptr; // protected by delayed_keep_task_mutex
   bool i_want_to_die = false;            // protected by delayed_keep_task_mutex
   bool must_deregister = true;
@@ -282,10 +293,10 @@ private:
   struct RegistrationSet;
   static void OnH26xFrameCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const TimeType frameTime);
   static void OnFrameCallback(void *callerId, const SubsessionInfo *info, const uint8_t *buffer, int bufferSize, const TimeType &frameTime);
-  mutable std::recursive_mutex registration_mutex; // protects not only registration_map, but also each single RegistrationSet and must_deregister
+  mutable MyMutex registration_mutex; // protects not only registration_map, but also each single RegistrationSet and must_deregister
   std::map<const SubsessionInfo*,RegistrationSet> registration_map;
   const SubsessionInfo *const *subsession_info_list;
-  mutable std::recursive_mutex sms_map_mutex;
+  mutable MyMutex sms_map_mutex;
   std::map<UsageEnvironment*,std::shared_ptr<ServerMediaSession> > sms_map;
 };
 
@@ -359,12 +370,6 @@ void MediaServerPluginRTSPServer::MyRTSPClientSession::informClientConnect(void)
             << "." << (dst_ip&0xFF)
             << ":" << dst_port
             << " to " << fOurServerMediaSession->streamName() << "\n";
-      // destruction of e only in its own thread:
-    UsageEnvironment &entry_env(e->env());
-    if (!entry_env.taskScheduler().isSameThread()) {
-      entry_env.taskScheduler().executeCommand([entry=std::move(e)](uint64_t) {});
-      if (e) abort(); // check that std::move actually has transferred ownership into the lambda
-    }
   }
 }
 
@@ -419,13 +424,7 @@ class MediaServerPluginRTSPServer::StreamMapEntry::Registration : public IdConta
   Registration(const std::shared_ptr<StreamMapEntry> &map_entry,
                const SubsessionInfo *info,FrameFunction &&func)
     : map_entry(map_entry),env(map_entry->env()),info(info),func(std::move(func)) {}
-  ~Registration(void) {
-    if (!map_entry->env().taskScheduler().isSameThread()) {
-        // delegate destruction of map_entry to its own thread:
-      UsageEnvironment &env(map_entry->env());
-      env.taskScheduler().executeCommand([e=std::move(map_entry)](uint64_t){});
-    }
-  }
+  ~Registration(void) {}
   void remember(void) {
     map_entry->remember(*this);
     env << "StreamMapEntry::Registration(" << id << "," << map_entry->name.c_str() << ")::remember: use_count: " << (int)(map_entry.use_count()) << "\n";
@@ -448,7 +447,7 @@ public:
     const auto rval
       = std::shared_ptr<Registration>(
           new Registration(map_entry,info,std::move(func)),
-          [](Registration *reg) {reg->forget();delete reg;});
+          [](Registration *reg) {if (reg) {reg->forget();delete reg;}});
     rval->weak_self = rval;
     rval->remember();
     return rval;
@@ -491,8 +490,6 @@ MediaServerPluginRTSPServer::StreamMapEntry::StreamMapEntry(MediaServerPluginRTS
   env() << "\n";
 }
 
-  // the last shared_ptr may be released from any thread and therefore
-  // ~StreamMapEntry may be called from any thread:
 MediaServerPluginRTSPServer::StreamMapEntry::~StreamMapEntry(void) {
   env().taskScheduler().assertSameThread();
       // must_deregister is only accessed from the plugin thread, no need for a mutex:
@@ -501,14 +498,14 @@ MediaServerPluginRTSPServer::StreamMapEntry::~StreamMapEntry(void) {
     stream->RegisterOnFrame(this,nullptr);
   } else {
     env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry start, executable has already closed the stream, no deregistration allowed\n";
-    std::lock_guard<std::recursive_mutex> lock(registration_mutex);
+    MyMutex::Guard lock(registration_mutex);
     // TODO
       // lock the registration_mutex so that the destructor cannot progress while the NULL-Frame-Callback is called.
   }
     // no more OnFrame callbacks from executable threads
   std::function<void(const std::string&)> tmp_on_close;
   {
-    std::lock_guard<std::recursive_mutex> lock(on_close_mutex);
+    MyMutex::Guard lock(on_close_mutex);
     on_close.swap(tmp_on_close);
   }
   if (tmp_on_close) {
@@ -516,7 +513,7 @@ MediaServerPluginRTSPServer::StreamMapEntry::~StreamMapEntry(void) {
     tmp_on_close(name);
   }
   { // assertion if everything has been cleaned up:
-    std::lock_guard<std::recursive_mutex> lock(registration_mutex);
+    MyMutex::Guard lock(registration_mutex);
     if (!registration_map.empty()) {
       env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry: "
                "assertion failed, registration_map is not empty\n";
@@ -540,7 +537,7 @@ void MediaServerPluginRTSPServer::StreamMapEntry::remember(const Registration &r
 //  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::remember(" << SubsessionInfoToString(*reg.info) << "): start\n";
   if (!stream) abort();
   {
-    std::lock_guard<std::recursive_mutex> lock(registration_mutex);
+    MyMutex::Guard lock(registration_mutex);
     RegistrationSet &rs(registration_map[reg.info]);
 #ifdef ALLOC_STATS
     rs.alloc_stat_name = name;
@@ -557,7 +554,7 @@ void MediaServerPluginRTSPServer::StreamMapEntry::remember(const Registration &r
 void MediaServerPluginRTSPServer::StreamMapEntry::forget(const Registration &reg) {
     // only called from the Registration destructor: from the worker threads, when MyFrameSource is destructed
 //  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::forget(" << SubsessionInfoToString(reg.info) << "): start\n";
-  std::lock_guard<std::recursive_mutex> lock(registration_mutex);
+  MyMutex::Guard lock(registration_mutex);
   auto it(registration_map.find(reg.info));
   if (it == registration_map.end()) abort();
     // will call the destructor of the RegistrationEntry which in turn
@@ -624,7 +621,7 @@ static void KeepTaskHelperFunc(void *context) {
 void MediaServerPluginRTSPServer::StreamMapEntry::keepAlive(void) {
   KeepTaskHelper *old_ptr = nullptr;
   {
-    std::lock_guard<std::recursive_mutex> lock(delayed_keep_task_mutex);
+    MyMutex::Guard lock(delayed_keep_task_mutex);
     if (i_want_to_die) {
       if (delayed_keep_task) {
         env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::ScheduleKeepTaskHelperFunc: "
@@ -650,7 +647,7 @@ void MediaServerPluginRTSPServer::StreamMapEntry::keepAlive(void) {
 std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry>
 MediaServerPluginRTSPServer::StreamMapEntry::cancelKeepAlive(void) {
   std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> rval;
-  std::unique_lock<std::recursive_mutex> lock(delayed_keep_task_mutex);
+  std::unique_lock<MyMutex> lock(delayed_keep_task_mutex);
   i_want_to_die = true;
   if (delayed_keep_task) {
     KeepTaskHelper *const old_ptr = reinterpret_cast<KeepTaskHelper*>(
@@ -669,7 +666,7 @@ MediaServerPluginRTSPServer::StreamMapEntry::cancelKeepAlive(void) {
 }
 
 void MediaServerPluginRTSPServer::StreamMapEntry::getSubsessions(std::set<std::string> &subsessions) const {
-  std::lock_guard<std::recursive_mutex> lock(registration_mutex);
+  MyMutex::Guard lock(registration_mutex);
   for (const auto &it : registration_map) {
     subsessions.insert(SubsessionInfoToString(*it.first));
   }
@@ -730,7 +727,7 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void* callerId
           const std::shared_ptr<StreamMapEntry> keep_entry(e.cancelKeepAlive());
           std::function<void(const std::string&)> tmp_on_close;
           {
-            std::lock_guard<std::recursive_mutex> lock(e.on_close_mutex);
+            MyMutex::Guard lock(e.on_close_mutex);
             e.on_close.swap(tmp_on_close);
           }
           if (tmp_on_close) {
@@ -748,7 +745,7 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void* callerId
     sem.wait();
     return;
   }
-  std::unique_lock<std::recursive_mutex> lock(e.registration_mutex);
+  std::unique_lock<MyMutex> lock(e.registration_mutex);
   const auto r(e.registration_map.find(info));
     // Cannot release registration_mutex yet, because I want to make sure
     // there is no unregistration while I call the callbacks.
@@ -1017,7 +1014,7 @@ MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer() {
     envir() << "MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer: closing kept streams\n";
 
     for (;;) {
-      std::lock_guard<std::recursive_mutex> lock(keep_task_helpers_mutex);
+      MyMutex::Guard lock(keep_task_helpers_mutex);
       if (keep_task_helpers.empty()) break;
       const std::string name((*keep_task_helpers.begin())->get()->name);
       envir() << "MediaServerPluginRTSPServer::~MediaServerPluginRTSPServer: deleting KeepTaskHelper for " << name.c_str() << "\n";
@@ -1168,7 +1165,7 @@ private:
 #ifdef REGISTERED_TASKS
     std::list<uint64_t> tmp_tasks;
     {
-      std::lock_guard<std::recursive_mutex> lock(registered_tasks_mutex);
+      MyMutex::Guard lock(registered_tasks_mutex);
       tmp_tasks.swap(registered_tasks);
     }
     if (!tmp_tasks.empty()) {
@@ -1233,7 +1230,7 @@ private:
 #ifdef REGISTERED_TASKS
                   unsigned int task_queue_size;
                   {
-                    std::lock_guard<std::recursive_mutex> lock(registered_tasks_mutex);
+                    MyMutex::Guard lock(registered_tasks_mutex);
                     task_queue_size = registered_tasks.size();
                     for (auto it(registered_tasks.begin());;++it) {
                       if (it == registered_tasks.end()) {
@@ -1344,7 +1341,7 @@ private:
                 abort();
               }
 #ifdef REGISTERED_TASKS
-              std::lock_guard<std::recursive_mutex> lock(registered_tasks_mutex);
+              MyMutex::Guard lock(registered_tasks_mutex);
               if (append_to_registered_tasks) {
                 registered_tasks.push_back(registered_task);
                 const unsigned int s = registered_tasks.size();
@@ -1411,7 +1408,7 @@ private:
   std::deque<Frame> my_frame_queue;
 #ifdef REGISTERED_TASKS
   std::list<uint64_t> registered_tasks;
-  std::recursive_mutex registered_tasks_mutex;
+  MyMutex registered_tasks_mutex;
 #endif
   std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry::Registration> frame_registration;
   unsigned int prev_task_queue_size = 0;
@@ -2639,7 +2636,7 @@ struct MediaServerPluginRTSPServer::LookupCompletionFuncData {
 
 std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry>
 MediaServerPluginRTSPServer::getStreamMapEntry(const std::string &stream_name) const {
-  std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
+  MyMutex::Guard lock(stream_map_mutex);
   auto it(stream_map.find(stream_name));
   if (it != stream_map.end()) {
     const std::shared_ptr<StreamMapEntry> rval(it->second.lock());
@@ -2726,7 +2723,7 @@ void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer:
   if (stream) {
     envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str() << "): start\n";
     {
-      std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
+      MyMutex::Guard lock(stream_map_mutex);
       auto &entry(stream_map[l->streamName]);
       if (e = entry.lock()) {
         envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str() << "): "
@@ -2747,7 +2744,7 @@ void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer:
                 // It is not strictly necessary to erase the weak_ptr from the map.
                 // This is to guard against an insane executable that does not call the callback with a NULL stream
                 // when the url is wrong. In this case the map would fill up with wrong urls over time.
-              std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
+              MyMutex::Guard lock(stream_map_mutex);
               stream_map.erase(name);
             }
             deleteAllServerMediaSessions(name.c_str());
@@ -2782,7 +2779,7 @@ std::shared_ptr<ServerMediaSession> MediaServerPluginRTSPServer::StreamMapEntry:
   std::shared_ptr<ServerMediaSession> rval;
   const SubsessionInfo *const *sl(getSubsessionInfoList());
   if ((sl) && (*sl)) {
-    std::lock_guard<std::recursive_mutex> lock(sms_map_mutex);
+    MyMutex::Guard lock(sms_map_mutex);
     std::shared_ptr<ServerMediaSession> &sms(sms_map[&env]);
     if (sms) {
       env << "StreamMapEntry(" << id << "," << name.c_str() << ")::createServerMediaSession: reusing existing ServerMediaSession\n";
@@ -2964,7 +2961,7 @@ void MediaServerPluginRTSPServer::generateConnectionStreamInfo(InfoMap &connecti
     }
   }
   {
-    std::lock_guard<std::recursive_mutex> lock(stream_map_mutex);
+    MyMutex::Guard lock(stream_map_mutex);
     for (auto &it : stream_map) {
       auto s(it.second.lock());
       if (s) s->getSubsessions(subsessions[it.first]);

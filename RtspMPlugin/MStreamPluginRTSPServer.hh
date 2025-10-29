@@ -30,6 +30,41 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <mutex>
 #include <iostream>
 
+#ifdef _WIN32
+#include <processthreadsapi.h>
+static inline
+unsigned int CurrentThreadId(void) {return GetCurrentThreadId();}
+#else
+#include <unistd.h>
+#include <sys/syscall.h>
+static inline
+unsigned int CurrentThreadId(void) {return syscall(SYS_gettid);}
+#endif
+
+class MyMutex {
+  std::mutex m;
+  unsigned int locking_thread = 0;
+public:
+  class Guard {
+    MyMutex &m;
+  public:
+    Guard(MyMutex &m) : m(m) {m.lock();}
+    ~Guard(void) {m.unlock();}
+  };
+  void lock(void) {
+    if (!m.try_lock()) {
+        // deadlock with myself: abort
+      if (locking_thread == CurrentThreadId()) abort();
+      m.lock();
+    }
+    locking_thread = CurrentThreadId();
+  }
+  void unlock(void) {
+    locking_thread = 0;
+    m.unlock();
+  }
+};
+
 struct KeepTaskHelper;
 
 class MediaServerPluginRTSPServer : public RTSPServer {
@@ -53,11 +88,11 @@ public:
   void generateConnectionStreamInfo(InfoMap &connection_info,InfoMap &stream_info,
                                     SubsessionMap &subsessions) const;
   bool registerKeepTaskHelper(KeepTaskHelper *h) {
-    std::lock_guard<std::recursive_mutex> lock(keep_task_helpers_mutex);
+    MyMutex::Guard lock(keep_task_helpers_mutex);
     return keep_task_helpers.insert(h).second;
   }
   bool unregisterKeepTaskHelper(KeepTaskHelper *h) {
-    std::lock_guard<std::recursive_mutex> lock(keep_task_helpers_mutex);
+    MyMutex::Guard lock(keep_task_helpers_mutex);
     return (keep_task_helpers.erase(h) == 1);
   }
   std::shared_ptr<RTSPClientSession> lookupClientSession(u_int32_t sessionId) {
@@ -100,10 +135,10 @@ protected:
   const InterfaceMediaStream::RTSPParameters params;
   InterfaceMediaStream::IMStreamFactory *const stream_factory;
   std::map<std::string,std::weak_ptr<StreamMapEntry> > stream_map;
-  mutable std::recursive_mutex stream_map_mutex;
+  mutable MyMutex stream_map_mutex;
   const std::unique_ptr<const char[]> m_urlPrefix;
   bool destructor_started = false;
-  mutable std::recursive_mutex keep_task_helpers_mutex;
+  mutable MyMutex keep_task_helpers_mutex;
   std::set<KeepTaskHelper*> keep_task_helpers;
 };
 
