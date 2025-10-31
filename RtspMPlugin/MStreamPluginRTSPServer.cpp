@@ -293,8 +293,13 @@ private:
   struct RegistrationSet;
   static void OnH26xFrameCallback(const RegistrationSet &rs, const uint8_t *buffer, int bufferSize, const TimeType frameTime);
   static void OnFrameCallback(void *callerId, const SubsessionInfo *info, const uint8_t *buffer, int bufferSize, const TimeType &frameTime);
-  mutable MyMutex registration_mutex; // protects not only registration_map, but also each single RegistrationSet and must_deregister
-  std::map<const SubsessionInfo*,RegistrationSet> registration_map;
+  mutable std::recursive_mutex registration_mutex; // protects not only registration_map, but also each single RegistrationSet and must_deregister
+  class RegistrationMap : public std::map<const SubsessionInfo*,RegistrationSet> {
+  public:
+    bool empty(void) const = delete;
+    unsigned int getNrOfRegistrations(void) const;
+  };
+  RegistrationMap registration_map;
   const SubsessionInfo *const *subsession_info_list;
   mutable MyMutex sms_map_mutex;
   std::map<UsageEnvironment*,std::shared_ptr<ServerMediaSession> > sms_map;
@@ -479,6 +484,12 @@ struct MediaServerPluginRTSPServer::StreamMapEntry::RegistrationSet
 #endif
 };
 
+unsigned int MediaServerPluginRTSPServer::StreamMapEntry::RegistrationMap::getNrOfRegistrations(void) const {
+  unsigned int rval = 0;
+  for (const auto& it : *this) rval += it.second.size();
+  return rval;
+}
+
 
 MediaServerPluginRTSPServer::StreamMapEntry::StreamMapEntry(MediaServerPluginRTSPServer &server,const std::shared_ptr<IMStream> &stream,const std::string &name,
                                                             std::function<void(const std::string&)> &&on_close)
@@ -498,9 +509,9 @@ MediaServerPluginRTSPServer::StreamMapEntry::~StreamMapEntry(void) {
     stream->RegisterOnFrame(this,nullptr);
   } else {
     env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry start, executable has already closed the stream, no deregistration allowed\n";
-    MyMutex::Guard lock(registration_mutex);
+    std::lock_guard<std::recursive_mutex> lock(registration_mutex);
     // TODO
-      // lock the registration_mutex so that the destructor cannot progress while the NULL-Frame-Callback is called.
+      // lock registration_mutex so that the destructor cannot progress while the NULL-Frame-Callback is called.
   }
     // no more OnFrame callbacks from executable threads
   std::function<void(const std::string&)> tmp_on_close;
@@ -513,10 +524,11 @@ MediaServerPluginRTSPServer::StreamMapEntry::~StreamMapEntry(void) {
     tmp_on_close(name);
   }
   { // assertion if everything has been cleaned up:
-    MyMutex::Guard lock(registration_mutex);
-    if (!registration_map.empty()) {
+    std::lock_guard<std::recursive_mutex> lock(registration_mutex);
+    const unsigned int nr_of_entries = registration_map.getNrOfRegistrations();
+    if (nr_of_entries != 0) {
       env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::~StreamMapEntry: "
-               "assertion failed, registration_map is not empty\n";
+               "assertion failed, registration_map still contains " << (int)nr_of_entries << " entries\n";
       abort();
     }
   }
@@ -537,7 +549,7 @@ void MediaServerPluginRTSPServer::StreamMapEntry::remember(const Registration &r
 //  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::remember(" << SubsessionInfoToString(*reg.info) << "): start\n";
   if (!stream) abort();
   {
-    MyMutex::Guard lock(registration_mutex);
+    std::lock_guard<std::recursive_mutex> lock(registration_mutex);
     RegistrationSet &rs(registration_map[reg.info]);
 #ifdef ALLOC_STATS
     rs.alloc_stat_name = name;
@@ -554,7 +566,7 @@ void MediaServerPluginRTSPServer::StreamMapEntry::remember(const Registration &r
 void MediaServerPluginRTSPServer::StreamMapEntry::forget(const Registration &reg) {
     // only called from the Registration destructor: from the worker threads, when MyFrameSource is destructed
 //  env() << "StreamMapEntry(" << id << "," << name.c_str() << ")::forget(" << SubsessionInfoToString(reg.info) << "): start\n";
-  MyMutex::Guard lock(registration_mutex);
+  std::lock_guard<std::recursive_mutex> lock(registration_mutex);
   auto it(registration_map.find(reg.info));
   if (it == registration_map.end()) abort();
     // will call the destructor of the RegistrationEntry which in turn
@@ -562,8 +574,8 @@ void MediaServerPluginRTSPServer::StreamMapEntry::forget(const Registration &reg
   const auto erase_rc = it->second.erase(reg.getWeakSelf());
   if (erase_rc != 1) abort();
   if (it->second.empty()) {
-    registration_map.erase(it);
-    if (registration_map.empty()) {
+      // cannot just erase *it from registration_map because come caller in the backtrace may still need it
+    if (registration_map.getNrOfRegistrations() == 0) {
       if (server.destructorStarted()) {
         cancelKeepAlive();
       } else {
@@ -666,7 +678,7 @@ MediaServerPluginRTSPServer::StreamMapEntry::cancelKeepAlive(void) {
 }
 
 void MediaServerPluginRTSPServer::StreamMapEntry::getSubsessions(std::set<std::string> &subsessions) const {
-  MyMutex::Guard lock(registration_mutex);
+  std::lock_guard<std::recursive_mutex> lock(registration_mutex);
   for (const auto &it : registration_map) {
     subsessions.insert(SubsessionInfoToString(*it.first));
   }
@@ -745,17 +757,26 @@ void MediaServerPluginRTSPServer::StreamMapEntry::OnFrameCallback(void* callerId
     sem.wait();
     return;
   }
-  std::unique_lock<MyMutex> lock(e.registration_mutex);
-  const auto r(e.registration_map.find(info));
+  std::lock_guard<std::recursive_mutex> lock(e.registration_mutex);
+  const RegistrationMap::iterator reg_it(e.registration_map.find(info));
     // Cannot release registration_mutex yet, because I want to make sure
     // there is no unregistration while I call the callbacks.
-  if (r != e.registration_map.end()) {
-    if (!r->second.empty()) {
-      if (0 == strcmp(info->getRtpPayloadFormatName(),"H264") ||
-          0 == strcmp(info->getRtpPayloadFormatName(),"H265")) {
-        OnH26xFrameCallback(r->second,buffer,bufferSize,frameTime);
+  if (reg_it != e.registration_map.end()) {
+    if (reg_it->second.empty()) {
+      e.registration_map.erase(reg_it);
+    } else {
+      const char* const payload_format_name = info->getRtpPayloadFormatName();
+      if (payload_format_name[0] == 'H' &&
+          payload_format_name[1] == '2' &&
+          payload_format_name[2] == '6' &&
+          (payload_format_name[3] == '4' || payload_format_name[3] == '5') &&
+          payload_format_name[4] == '\0') {
+        OnH26xFrameCallback(reg_it->second,buffer,bufferSize,frameTime);
       } else {
-        r->second.callFunctions(buffer,bufferSize,frameTime,true);
+        reg_it->second.callFunctions(buffer,bufferSize,frameTime,true);
+      }
+      if (reg_it->second.empty()) {
+        e.registration_map.erase(reg_it);
       }
     }
   }
