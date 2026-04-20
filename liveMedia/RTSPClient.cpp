@@ -1935,21 +1935,29 @@ void RTSPClient::handleResponseBytes(int newBytesRead) {
       char* responseEnd = bodyStart + contentLength;
       numExtraBytesAfterResponse = &fResponseBuffer[fResponseBytesAlreadySeen] - responseEnd;
 
-      if (fVerbosityLevel >= 1) {
-	char saved = *responseEnd;
-	*responseEnd = '\0';
-	envir() << "Received a complete "
-		<< (foundRequest != NULL ? foundRequest->commandName() : "(unknown)")
-		<< " response:\n" << fResponseBuffer << "\n";
-//GAJ  if (contentLength > 0) envir() << "body:\n" << bodyStart << "\n";
-	if (numExtraBytesAfterResponse > 0) envir() << "\t(plus " << numExtraBytesAfterResponse << " additional bytes)\n";
-	*responseEnd = saved;
-      }
-      
-      if (foundRequest != NULL) {
+      if (foundRequest == NULL) {
+        if (fVerbosityLevel >= 1) {
+          char saved = *responseEnd;
+          *responseEnd = '\0';
+          envir() << "Received a complete response without request:\n" << fResponseBuffer << "\n";
+          if (contentLength > 0) envir() << "body:\n" << bodyStart << "\n";
+          if (numExtraBytesAfterResponse > 0) envir() << "\t(plus " << numExtraBytesAfterResponse << " additional bytes)\n";
+          *responseEnd = saved;
+        }
+      } else {
 	Boolean needToResendCommand = False; // by default...
 	if (responseCode == 200) {
-	  // Do special-case response handling for some commands:
+    if (fVerbosityLevel >= 1) {
+      char saved = *responseEnd;
+      *responseEnd = '\0';
+      envir() << "Received a complete " << foundRequest->commandName()
+              << " response:\n" << fResponseBuffer << "\n";
+      //GAJ  if (contentLength > 0) envir() << "body:\n" << bodyStart << "\n";
+      if (numExtraBytesAfterResponse > 0) envir() << "\t(plus " << numExtraBytesAfterResponse << " additional bytes)\n";
+      *responseEnd = saved;
+    }
+
+    // Do special-case response handling for some commands:
 	  if (strcmp(foundRequest->commandName(), "SETUP") == 0) {
         if (!handleSETUPResponse(*foundRequest->subsession(), sessionParamsStr, transportParamsStr, foundRequest->booleanFlags()&0x1)) break;
 	  } else if (strcmp(foundRequest->commandName(), "PLAY") == 0) {
@@ -1960,7 +1968,12 @@ void RTSPClient::handleResponseBytes(int newBytesRead) {
 	    if (!handleGET_PARAMETERResponse(foundRequest->contentStr(), bodyStart, responseEnd)) break;
 	  }
 	} else if (responseCode == 401 && handleAuthenticationFailure(wwwAuthenticateParamsStr)) {
-	  // We need to resend the command, with an "Authorization:" header:
+    if (fVerbosityLevel >= 1) {
+      envir() << "Received a complete " << foundRequest->commandName()
+              << " UNAUTHORIZED response\n";
+      if (numExtraBytesAfterResponse > 0) envir() << "\t(plus " << numExtraBytesAfterResponse << " additional bytes)\n";
+    }
+    // We need to resend the command, with an "Authorization:" header:
 	  needToResendCommand = True;
 	  
 	  if (strcmp(foundRequest->commandName(), "GET") == 0) {
@@ -1970,9 +1983,28 @@ void RTSPClient::handleResponseBytes(int newBytesRead) {
 	    resetTCPSockets(); // forces the opening of a new connection for the resent command
 	  }
 	} else if (responseCode == 301 || responseCode == 302) { // redirection
+    if (fVerbosityLevel >= 1) {
+      char saved = *responseEnd;
+      *responseEnd = '\0';
+      envir() << "Received a complete " << foundRequest->commandName()
+              << " REDIRECTION response:\n" << fResponseBuffer << "\n";
+      if (contentLength > 0) envir() << "body:\n" << bodyStart << "\n";
+      if (numExtraBytesAfterResponse > 0) envir() << "\t(plus " << numExtraBytesAfterResponse << " additional bytes)\n";
+      *responseEnd = saved;
+    }
 	  resetTCPSockets(); // because we need to connect somewhere else next
 	  needToResendCommand = True;
-	}
+  } else {
+    if (fVerbosityLevel >= 1) {
+      char saved = *responseEnd;
+      *responseEnd = '\0';
+      envir() << "Received a complete " << foundRequest->commandName()
+              << " UNEXPECTED response:\n" << fResponseBuffer << "\n";
+      if (contentLength > 0) envir() << "body:\n" << bodyStart << "\n";
+      if (numExtraBytesAfterResponse > 0) envir() << "\t(plus " << numExtraBytesAfterResponse << " additional bytes)\n";
+      *responseEnd = saved;
+    }
+  }
 	
 	if (needToResendCommand) {
 	  resetResponseBuffer();
