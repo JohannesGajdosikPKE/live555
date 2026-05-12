@@ -382,16 +382,16 @@ Boolean RTPInterface::handleRead(unsigned char* buffer, unsigned bufferMaxSize,
 
 void RTPInterface::stopNetworkReading() {
   // Normal case
-  envir() << "RTPInterface(" << id << ")::stopNetworkReading: start: turnOffBackgroundReadHandling(GS " << (fGS ? fGS->socketNum() : 0) << ")\n";
+//  envir() << "RTPInterface(" << id << ")::stopNetworkReading: start: turnOffBackgroundReadHandling(GS " << (fGS ? fGS->socketNum() : 0) << ")\n";
   envir().taskScheduler().assertSameThread();
   if (fGS != NULL) envir().taskScheduler().turnOffBackgroundReadHandling(fGS->socketNum());
 
   // Also turn off read handling on each of our TCP connections:
   for (tcpStreamRecord* streams = fTCPStreams; streams != NULL; streams = streams->fNext) {
-    envir() << "RTPInterface(" << id << ")::stopNetworkReading: deregisterSocket(" << streams->fStreamSocketNum << "," << ((int)streams->fStreamChannelId) << ")\n";
+//    envir() << "RTPInterface(" << id << ")::stopNetworkReading: deregisterSocket(" << streams->fStreamSocketNum << "," << ((int)streams->fStreamChannelId) << ")\n";
     deregisterSocket(envir(), streams->fStreamSocketNum, streams->fStreamChannelId);
   }
-  envir() << "RTPInterface(" << id << ")::stopNetworkReading: end\n";
+//  envir() << "RTPInterface(" << id << ")::stopNetworkReading: end\n";
 }
 
 
@@ -444,8 +444,16 @@ Boolean RTPInterface::sendDataOverTCP(int socketNum, TLSState* tlsState,
   if (dataSize <= 0) return True; // gaj: catch silly invocations
   int sendResult;
   if (tlsState != NULL && tlsState->isNeeded) {
+#ifndef NO_OPENSSL
     TimeAccounter::Guard guard(account_id_SSLw,envir());
-    sendResult = tlsState->write((char const*)data, dataSize);
+    if (tlsState->isOpen()) {
+      sendResult = tlsState->write((char const*)data, dataSize);
+    } else {
+      envir() << "RTPInterface::sendDataOverTCP2: "
+                 "FATAL: tlsState has been closed\n";
+      abort();
+    }
+#endif
   } else {
     TimeAccounter::Guard guard(account_id_send,envir());
     sendResult = send(socketNum, (char const*)data, dataSize, MSG_NOSIGNAL/*flags*/);
@@ -465,8 +473,16 @@ Boolean RTPInterface::sendDataOverTCP(int socketNum, TLSState* tlsState,
 #endif
       makeSocketBlocking(socketNum, RTPINTERFACE_BLOCKING_WRITE_TIMEOUT_MS);
       if (tlsState != NULL && tlsState->isNeeded) {
+#ifndef NO_OPENSSL
         TimeAccounter::Guard guard(account_id_SSLw,envir());
-        sendResult = tlsState->write((char const*)(&data[numBytesSentSoFar]), numBytesRemainingToSend);
+        if (tlsState->isOpen()) {
+          sendResult = tlsState->write((char const*)(&data[numBytesSentSoFar]), numBytesRemainingToSend);
+        } else {
+          envir() << "RTPInterface::sendDataOverTCP1: "
+                     "FATAL: tlsState has been closed\n";
+          abort();
+        }
+#endif
       } else {
         TimeAccounter::Guard guard(account_id_send,envir());;
         sendResult = send(socketNum, (char const*)(&data[numBytesSentSoFar]), numBytesRemainingToSend, MSG_NOSIGNAL/*flags*/);
@@ -584,7 +600,7 @@ void SocketDescriptor
 #if defined(DEBUG_SEND)||defined(DEBUG_RECEIVE)
   fprintf(stderr, "SocketDescriptor(socket %d)::deregisterRTPInterface(channel %d)\n", fOurSocketNum, streamChannelId);
 #endif
-  fEnv << "SocketDescriptor(" << fOurSocketNum << ")::deregisterRTPInterface(" << ((int)streamChannelId) << "): fSubChannelHashTable->Remove\n";
+//  fEnv << "SocketDescriptor(" << fOurSocketNum << ")::deregisterRTPInterface(" << ((int)streamChannelId) << "): fSubChannelHashTable->Remove\n";
   fEnv.taskScheduler().assertSameThread();
   fSubChannelHashTable->Remove((char const*)(long)streamChannelId);
 

@@ -25,6 +25,9 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include <string.h>
 
+#define __STDC_FORMAT_MACROS
+#include <inttypes.h>
+
 #include <deque>
 #include <list>
 #include <sstream>
@@ -192,13 +195,14 @@ public:
 };
 
 
-
+#ifdef REGISTERED_TASKS
 template<class T>
 std::string ToString(const T &t) {
   std::ostringstream o;
   o << t;
   return o.str();
 }
+#endif
 
 static const char *SubsessionInfoToString(const SubsessionInfo &ssi) {
   return ssi.getRtpPayloadFormatName();
@@ -1171,11 +1175,11 @@ private:
         = std::static_pointer_cast<RTSPServer::RTSPClientConnection>(
             client_connection->shared_from_this());
     }
-    env << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::MyFrameSource\n";
+    env << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::MyFrameSource\n";
   }
   ~MyFrameSource(void) override {
       // I do not care from which thread this is called
-    envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::~MyFrameSource start: releasing frame_registration\n";
+    envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::~MyFrameSource start: releasing frame_registration\n";
       // release connection before cleanup so that no new framecallbacks will be deliverd
     frame_registration.reset();
 
@@ -1204,28 +1208,28 @@ private:
       envir() << ("MyFrameSource(" + ToString(id) + "," + name + ")::~MyFrameSource: no task to cancel\n").c_str();
     }
 #endif
-    envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::~MyFrameSource end\n";
+    envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::~MyFrameSource end\n";
   }
   void connect(MediaServerPluginRTSPServer::StreamMapEntry &e,
                const SubsessionInfo *info) {
     if (!client_connection) {
-      envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect(" << e.name.c_str() << "," << SubsessionInfoToString(*info) << "): "
+      envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::connect(" << e.name.c_str() << "," << SubsessionInfoToString(*info) << "): "
                  "refusing to connect this dummy FrameSource\n";
       return;
     }
-    envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect(" << e.name.c_str() << "," << SubsessionInfoToString(*info) << ")\n";
+    envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::connect(" << e.name.c_str() << "," << SubsessionInfoToString(*info) << ")\n";
     frame_registration = e.connect(info,
       [this,&server=e.server](const Frame &f) {
               // called from some thread outside the plugin
 //            if (f.size == 0) {
                 // no more frames for this SubsessionInfo
-//              envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l: empty frame received\n";
+//              envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::connect::l: empty frame received\n";
 //            } else {
                 // prevent premature deletion:
               std::shared_ptr<RTSPServer::RTSPClientSession> client_session
                 = server.lookupClientSession(client_session_id);
               if (client_session.use_count() == 0) {
-                envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l: "
+                envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::connect::l: "
                            "session has been closed, ignoring frame\n";
                 return;
               }
@@ -1245,7 +1249,7 @@ private:
                                                    "session already closed, dropping frame\n";
                     return;
                   }
-//                  envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
+//                  envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::connect::l::l: "
 //                             "frame in connection thread, dequeued task(" << (void*)task_nr << ")\n";
                   std::shared_ptr<RTSPServer::RTSPClientSession> client_session_to_delete;
 #ifdef REGISTERED_TASKS
@@ -1281,7 +1285,7 @@ private:
                   if (2*task_queue_size <= prev_task_queue_size) {
                     prev_task_queue_size = task_queue_size;
                     if (task_queue_size >= 16) {
-                      envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
+                      envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::connect::l::l: "
                                  "task_queue.size <= " << task_queue_size << "\n";
                     }
                   }
@@ -1297,13 +1301,13 @@ private:
                       if (frame_queue_size >= max_frame_queue_size) {
                         client_session_to_delete = client_session_ptr;
                       } else {
-                        envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
+                        envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::connect::l::l: "
                                    "frame_queue.size >= " << frame_queue_size << "\n";
                       }
                     }
                   }
                   if (client_session_to_delete) {
-                    envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
+                    envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::connect::l::l: "
                                "frame_queue.size = " << frame_queue_size
 #ifdef REGISTERED_TASKS
                             << " or task_queue.size = " << task_queue_size
@@ -1312,7 +1316,7 @@ private:
                                "closing session.\n";
                   } else {
                     // deliverFrame may delete MyFrameSource
-//                    envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
+//                    envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::connect::l::l: "
 //                               "end: calling deliverFrame\n";
                     deliverFrame();
                   }
@@ -1332,7 +1336,7 @@ private:
                       }
                     }
                   } else {
-                    envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l::l: "
+                    envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::connect::l::l: "
                                "WARNING: session belongs to different thread\n";
                       // close in own thread
                     client_session_ptr->envir().taskScheduler().executeCommand(
@@ -1355,7 +1359,7 @@ private:
                       });
                   }
                 });
-//              envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l: "
+//              envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::connect::l: "
 //                         "frameCb, queueing frame -> task(" << (void*)registered_task << ")\n";
               if (client_session) {
                 envir() << "FATAL programming error: client_session should have been moved to lambda object\n";
@@ -1369,7 +1373,7 @@ private:
                 if (s >= 2*prev_task_queue_size) {
                   prev_task_queue_size = s;
                   if (s >= 16) {
-                    envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::connect::l: "
+                    envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::connect::l: "
                                "task_queue.size >= " << s << "\n";
                   }
                 }
@@ -1385,13 +1389,13 @@ private:
     const u_int8_t *const frame_data = f.getData();
     const unsigned int frame_size = f.size;
     if (frame_size <= 0) {
-      envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::deliverFrame: handleClosure\n";
+      envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::deliverFrame: handleClosure\n";
         // this will destruct MyFrameSource. Do not access *this afterwards.
       handleClosure(); // teardown
       return;
     }
     if (frame_size > fMaxSize) {
-      envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::deliverFrame: frame_size(" << frame_size << ") > fMaxSize(" << fMaxSize << ")\n";
+      envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::deliverFrame: frame_size(" << frame_size << ") > fMaxSize(" << fMaxSize << ")\n";
       fFrameSize = fMaxSize;
       fNumTruncatedBytes = frame_size - fMaxSize;
     } else {
@@ -1412,7 +1416,7 @@ private:
     if (2*s <= prev_frame_queue_size) {
       prev_frame_queue_size = s;
       if (s >= 16) {
-        envir() << "MyFrameSource(session_id=" << client_session_id << ", id=" << id << "," << name.c_str() << ")::deliverFrame: "
+        envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::deliverFrame: "
                    "frame_queue.size <= " << s << "\n";
       }
     }
@@ -1759,11 +1763,11 @@ protected:
     if (e) {
       MyFrameSource *const rval = MyFrameSource::createNew(envir(),*e,info,
                                                            clientSessionId,rtsp_client_connection);
-      envir() << "MyServerMediaSubsession(" << id << ")::createFrameSource(" << clientSessionId
+      envir() << "MyServerMediaSubsession(" << id << ")::createFrameSource(" << (void*)clientSessionId
               << "): returning MyFrameSource(" << rval->id << "," << rval->name.c_str() << ")\n";
       return rval;
     } else {
-      envir() << "MyServerMediaSubsession(" << id << ")::createFrameSource(" << clientSessionId
+      envir() << "MyServerMediaSubsession(" << id << ")::createFrameSource(" << (void*)clientSessionId
               << "): the StreamMapEntry has died, returning NULL\n";
       return nullptr;
     }
@@ -2888,9 +2892,9 @@ public:
     return *this;
   }
   UsageEnvironment& operator<<(void* p) override {
-    std::ostringstream o;
-    o << p;
-    log(o.str());
+    char buff[32];
+    snprintf(buff,sizeof(buff),"0x%" PRIXPTR,(uintptr_t)p);
+    log(buff);
     return *this;
   }
   void log(int log_level,std::string &&msg) {

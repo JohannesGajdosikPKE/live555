@@ -396,12 +396,12 @@ RTSPServer::RTSPClientConnection
     fOurRTSPServer(ourServer), fClientInputSocket(fOurSocket),
     fPOSTSocketTLS(envir()), fAddressFamily(clientAddr.ss_family),
     fIsActive(True), fRecursionCount(0), fOurSessionCookie(NULL), fScheduledDelayedTask(0) {
-  envir() << "RTSPServer::RTSPClientConnection(" << getId() << ")::RTSPClientConnection\n";
+  envir() << "RTSPServer::RTSPClientConnection(" << getId() << ",this=" << this << ")::RTSPClientConnection\n";
   resetRequestBuffer();
 }
 
 RTSPServer::RTSPClientConnection::~RTSPClientConnection() {
-  envir() << "RTSPServer::RTSPClientConnection(" << getId() << ")::~RTSPClientConnection start\n";
+  envir() << "RTSPServer::RTSPClientConnection(" << getId() << ",this=" << this << ")::~RTSPClientConnection start\n";
   envir().taskScheduler().assertSameThread();
   if (fOurSessionCookie != NULL) {
     // We were being used for RTSP-over-HTTP tunneling. Also remove ourselves from the 'session cookie' hash table before we go:
@@ -811,7 +811,7 @@ void RTSPServer::RTSPClientConnection::handleAlternativeRequestByte1(u_int8_t re
     handleRequestBytes(-1);
   } else if (requestByte == 0xFE) {
     // Another hack: The new handler of the input TCP socket no longer needs it, so take back control of it:
-    envir() << "RTSPServer::RTSPClientConnection::handleAlternativeRequestByte1: calling setBackgroundHandling\n";
+//    envir() << "RTSPServer::RTSPClientConnection::handleAlternativeRequestByte1: calling setBackgroundHandling\n";
     envir().taskScheduler().setBackgroundHandling(fClientInputSocket, SOCKET_READABLE|SOCKET_EXCEPTION,
 						  incomingRequestHandler, this);
   } else {
@@ -824,8 +824,7 @@ void RTSPServer::RTSPClientConnection::handleAlternativeRequestByte1(u_int8_t re
 
 void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
   envir().taskScheduler().assertSameThread();
-//  envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << ") begin\n";
-//  fprintf(stderr,"RTSPServer::RTSPClientConnection(%p)::handleRequestBytes(%d) start, recursion: %d\n", this, newBytesRead, fRecursionCount);
+  envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << ") begin\n";
   RTSPClientConnection::newBytesRead = newBytesRead;
   numBytesRemaining = 0;
   ++fRecursionCount;
@@ -960,7 +959,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesBody(void) {
       if (strcmp(cmdName, "OPTIONS") && strcmp(cmdName, "GET_PARAMETER")) { // do not log contents of OPTIONS request
         fLastCRLF[0] = '\n'; // temporarily, for logging
         fLastCRLF[1] = '\0'; // temporarily, for logging
-        envir() << (char*)fRequestBuffer;
+        envir() << "request: " << (char*)fRequestBuffer;
         fLastCRLF[0] = '\r'; // restore
         fLastCRLF[1] = '\n'; // restore
       }
@@ -1153,9 +1152,18 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesEndOfLoop(Boolean playA
     fprintf(stderr, "sending response: %s", fResponseBuffer);
 #endif
     unsigned const numBytesToWrite = strlen((char*)fResponseBuffer);
+    if (numBytesToWrite == 0) return; // emergency close of connection
     if (fOutputTLS->isNeeded) {
+#ifndef NO_OPENSSL
         TimeAccounter::Guard guard(account_id_SSLw,envir());
-        fOutputTLS->write((char const*)fResponseBuffer, numBytesToWrite);
+        if (fOutputTLS->isOpen()) {
+          fOutputTLS->write((char const*)fResponseBuffer, numBytesToWrite);
+        } else {
+          envir() << "RTSPServer::RTSPClientConnection::handleRequestBytesEndOfLoop: "
+                     "FATAL: fOutputTLS has been closed\n";
+          abort();
+        }
+#endif
     } else {
         TimeAccounter::Guard guard(account_id_send,envir());
         send(fClientOutputSocket, (char const*)fResponseBuffer, numBytesToWrite, MSG_NOSIGNAL);
@@ -1182,19 +1190,19 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesEndOfLoop(Boolean playA
 void RTSPServer::RTSPClientConnection::handleRequestBytesFinish(void) {
   envir().taskScheduler().assertSameThread();
   --fRecursionCount;
-//  envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: fIsActive: " << (int)fIsActive << "\n";
   // If it has a scheduledDelayedTask, don't delete the instance or close the sockets. The sockets can be reused in the task.
-  if (!fIsActive) {
+  if (fIsActive) {
+    envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end\n";
+  } else {
     if (fScheduledDelayedTask <= 0) {
       if (fRecursionCount > 0) {
-        envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: "
-                   "calling closeSocketsRTSP()\n";
         closeSocketsRTSP();
-      }
-      else {
         envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: "
-                   "calling removeFromServer()\n";
+                   "closeSocketsRTSP() called\n";
+      } else {
         removeFromServer();
+        envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: "
+                   "removeFromServer() called\n";
       }
       // Note: The "fRecursionCount" test is for a pathological situation where we reenter the event loop and get called recursively
       // while handling a command (e.g., while handling a "DESCRIBE", to get a SDP description).
@@ -1204,7 +1212,6 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesFinish(void) {
                  "I would like to close but there is still a fScheduledDelayedTask\n";
     }
   }
-//  fprintf(stderr,"RTSPServer::RTSPClientConnection(%p)::handleRequestBytes(%d) end\n", this, newBytesRead);
 }
 
 void RTSPServer::RTSPClientConnection::handleRequestBytesResume(void) {
@@ -1451,6 +1458,12 @@ void RTSPServer::RTSPClientConnection
     // Change the socket number:
     fClientInputSocket = newSocketNum;
     // Change the TLS state:
+#ifndef NO_OPENSSL
+    if (fPOSTSocketTLS.isOpen()) {
+      new_env << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << newSocketNum << "): "
+                 "WARNING: assigning state to fPOSTSocketTLS although it has already been setup\n";
+    }
+#endif
     fPOSTSocketTLS.assignStateFrom(*newTLSState);
     fInputTLS = &fPOSTSocketTLS;
 
@@ -1494,6 +1507,12 @@ void RTSPServer::RTSPClientConnection
         // Change the socket number:
         fClientInputSocket = newSocketNum;
         // Change the TLS state:
+#ifndef NO_OPENSSL
+        if (fPOSTSocketTLS.isOpen()) {
+          envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << newSocketNum << "): "
+                     "WARNING: assigning state to fPOSTSocketTLS although it has already been setup\n";
+        }
+#endif
         fPOSTSocketTLS.assignStateFrom(*copiedTLSState);
         copiedTLSState->nullify(); // transfer ownership of fCtx and fCon
         delete copiedTLSState;
@@ -1525,11 +1544,13 @@ RTSPServer::RTSPClientSession
   : GenericMediaServer::ClientSession(env, ourServer, sessionId),
     fOurRTSPServer(ourServer), fIsMulticast(False), fStreamAfterSETUP(False),
     fTCPStreamIdCount(0), fNumStreamStates(0), fStreamStates(NULL) {
+  env << "RTSPClientSession::RTSPClientSession(" << (void*)sessionId << ",this=" << this << ")\n";
 }
 
 RTSPServer::RTSPClientSession::~RTSPClientSession() {
   envir().taskScheduler().assertSameThread();
   reclaimStreamStates();
+  envir() << "RTSPClientSession(" << (void*)fOurSessionId << ",this=" << this << ")::~RTSPClientSession\n";
 }
 
 void RTSPServer::RTSPClientSession::deleteStreamByTrack(unsigned trackNum) {
@@ -2051,7 +2072,9 @@ void RTSPServer::RTSPClientSession
     }
   }
   
-  setRTSPResponse(ourClientConnection, "200 OK");
+    // do not send TEARDOWN response, close connection, avoid crash
+  ourClientConnection->fResponseBuffer[0] = '\0';
+  ourClientConnection->fIsActive = False;
   
   // Optimization: If all subsessions have now been torn down, then we know that we can reclaim our object now.
   // (Without this optimization, however, this object would still get reclaimed later, as a result of a 'liveness' timeout.)

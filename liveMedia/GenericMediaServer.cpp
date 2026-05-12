@@ -581,10 +581,10 @@ GenericMediaServer::ClientConnection::~ClientConnection() {
                "programming error, not called from thread " << envir().taskScheduler().my_thread_id << "\n";
     abort();
   }
-  envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::~ClientConnection\n";
   envir().taskScheduler().addNrOfUsers(-1);
   
   closeSockets();
+  envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::~ClientConnection\n";
 }
 
 void GenericMediaServer::ClientConnection::closeSockets() {
@@ -595,21 +595,18 @@ void GenericMediaServer::ClientConnection::closeSockets() {
   }
   // Turn off background handling on our socket:
   if (fOurSocket>= 0) {
-    envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::closeSockets: disableBackgroundHandling(" << fOurSocket << ") and close socket\n";
     envir().taskScheduler().disableBackgroundHandling(fOurSocket);
     if (::closeSocket(fOurSocket)) {
       const int errnr = envir().getErrno();
-      envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::closeSockets: closeSocket(" << fOurSocket << ") failed: " << errnr << "\n";
+      envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::closeSockets: background handling disabled, but closeSocket(" << fOurSocket << ") failed: " << errnr << "\n";
     } else {
-      envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::closeSockets: closeSocket(" << fOurSocket << ") ok\n";
+      envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::closeSockets: background handling disabled, closeSocket(" << fOurSocket << ") ok\n";
     }
+    if (fClientOutputSocket == fOurSocket) fClientOutputSocket = -1;
     fOurSocket = -1;
   } else {
     envir() << "GenericMediaServer::ClientConnection(" << getId() << ")::closeSockets: already closed\n";
   }
-
-  if (fClientOutputSocket == fOurSocket) fClientOutputSocket = -1;
-  fOurSocket = -1;
 }
 
 void GenericMediaServer::ClientConnection::incomingRequestHandler(void* instance, int /*mask*/) {

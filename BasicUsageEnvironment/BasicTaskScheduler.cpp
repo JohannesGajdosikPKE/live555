@@ -510,7 +510,7 @@ void BasicTaskScheduler
 #if !defined(__WIN32__) && !defined(_WIN32) && defined(FD_SETSIZE)
   if (socketNum >= (int)(FD_SETSIZE)) return;
 #endif
-  if (envirInitialized()) {
+  if (0 && envirInitialized()) {
     char tmp[256];
     envir() << "BasicTaskScheduler::setBackgroundHandling(" << PrintSocket(tmp,sizeof(tmp),socketNum) << "): FdSets: "
             << ((conditionSet&SOCKET_READABLE) ? "+r" : "-r")
