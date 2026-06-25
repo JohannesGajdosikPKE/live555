@@ -77,7 +77,7 @@ void MPEG2TransportFileServerMediaSubsession
 	      void* rtcpRRHandlerClientData, unsigned short& rtpSeqNum,
 	      unsigned& rtpTimestamp,
 	      ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-	      void* serverRequestAlternativeByteHandlerClientData) {
+	      GenericMediaServer::ClientConnection *serverRequestAlternativeByteHandlerClientData) {
   if (fIndexFile != NULL) { // we support 'trick play'
     ClientTrickPlayState* client = lookupClient(clientSessionId);
     if (client != NULL && client->areChangingScale()) {

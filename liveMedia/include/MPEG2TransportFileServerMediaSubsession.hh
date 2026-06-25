@@ -68,7 +68,7 @@ private: // redefined virtual functions
                            unsigned short& rtpSeqNum,
                            unsigned& rtpTimestamp,
 			   ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-                           void* serverRequestAlternativeByteHandlerClientData);
+                           GenericMediaServer::ClientConnection *serverRequestAlternativeByteHandlerClientData) override;
   virtual void pauseStream(unsigned clientSessionId, void* streamToken);
   virtual void seekStream(unsigned clientSessionId, void* streamToken, double& seekNPT, double streamDuration, u_int64_t& numBytes);
   virtual void setStreamScale(unsigned clientSessionId, void* streamToken, float scale);

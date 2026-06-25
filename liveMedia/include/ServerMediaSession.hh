@@ -45,12 +45,6 @@ public:
 				       char const* miscSDPLines = NULL);
   UsageEnvironment &envir(void) const {return fEnvir;}
 
-#ifdef NOT_NEEDED
-  static Boolean lookupByName(UsageEnvironment& env,
-                              char const* mediumName,
-                              std::shared_ptr<ServerMediaSession>& resultSession);
-#endif
-
   char* generateSDPDescription(int addressFamily); // based on the entire session
       // Note: The caller is responsible for freeing the returned string
 
@@ -69,13 +63,6 @@ public:
     // called whenever a client - accessing this media - notes liveness.
     // The default implementation does nothing, but subclasses can redefine this - e.g., if you
     // want to remove long-unused "ServerMediaSession"s from the server.
-
-#ifdef NOT_NEEDED
-  unsigned referenceCount() const { return fReferenceCount; }
-  void incrementReferenceCount() { ++fReferenceCount; }
-  void decrementReferenceCount() { if (fReferenceCount > 0) --fReferenceCount; }
-  Boolean& deleteWhenUnreferenced() { return fDeleteWhenUnreferenced; }
-#endif
 
   void deleteAllSubsessions();
     // Removes and deletes all subsessions added by "addSubsession()", returning us to an 'empty' state
@@ -114,10 +101,6 @@ private:
   char* fDescriptionSDPString;
   char* fMiscSDPLines;
   struct timeval fCreationTime;
-#ifdef NOT_NEEDED
-  unsigned fReferenceCount;
-  Boolean fDeleteWhenUnreferenced;
-#endif
 };
 
 
@@ -161,7 +144,7 @@ public:
 			   unsigned short& rtpSeqNum,
 			   unsigned& rtpTimestamp,
 			   ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-			   void* serverRequestAlternativeByteHandlerClientData) = 0;
+			   GenericMediaServer::ClientConnection *serverRequestAlternativeByteHandlerClientData) = 0;
   virtual void pauseStream(unsigned clientSessionId, void* streamToken);
   virtual void seekStream(unsigned clientSessionId, void* streamToken, double& seekNPT,
 			  double streamDuration, u_int64_t& numBytes);

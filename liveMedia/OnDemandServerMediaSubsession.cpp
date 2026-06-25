@@ -247,7 +247,7 @@ void OnDemandServerMediaSubsession::startStream(unsigned clientSessionId,
 						unsigned short& rtpSeqNum,
 						unsigned& rtpTimestamp,
 						ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-						void* serverRequestAlternativeByteHandlerClientData) {
+						GenericMediaServer::ClientConnection *serverRequestAlternativeByteHandlerClientData) {
   StreamState* streamState = (StreamState*)streamToken;
   Destinations* destinations
     = (Destinations*)(fDestinationsHashTable->Lookup((char const*)clientSessionId));
@@ -554,7 +554,7 @@ void StreamState
 ::startPlaying(Destinations* dests, unsigned clientSessionId,
 	       TaskFunc* rtcpRRHandler, void* rtcpRRHandlerClientData,
 	       ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-	       void* serverRequestAlternativeByteHandlerClientData) {
+	       GenericMediaServer::ClientConnection* serverRequestAlternativeByteHandlerClientData) {
   if (dests == NULL) return;
 
   if (fRTCPInstance == NULL && fRTPSink != NULL) {

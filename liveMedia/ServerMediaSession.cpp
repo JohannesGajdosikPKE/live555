@@ -41,24 +41,6 @@ std::shared_ptr<ServerMediaSession> ServerMediaSession
   return rval;
 }
 
-#ifdef NOT_NEEDED
-Boolean ServerMediaSession
-::lookupByName(UsageEnvironment& env, char const* mediumName,
-	       ServerMediaSession*& resultSession) {
-  resultSession = NULL; // unless we succeed
-
-  Medium* medium;
-  if (!Medium::lookupByName(env, mediumName, medium)) return False;
-
-  if (!medium->isServerMediaSession()) {
-    env.setResultMsg(mediumName, " is not a 'ServerMediaSession' object");
-    return False;
-  }
-
-  resultSession = (ServerMediaSession*)medium;
-  return True;
-}
-#endif
 
 static char const* const libNameStr = "LIVE555 Streaming Media v";
 
@@ -74,13 +56,14 @@ ServerMediaSession::ServerMediaSession(GenericMediaServer &server, UsageEnvironm
   envir() << "ServerMediaSession::ServerMediaSession(" << fEnvir.taskScheduler().my_thread_id << ", " << fStreamName << ")\n";
 
   char* libNamePlusVersionStr = NULL; // by default
-  if (info == NULL || description == NULL) {
-    libNamePlusVersionStr = new char[strlen(libNameStr) + strlen(liveMediaLibraryVersionStr) + 1];
-    sprintf(libNamePlusVersionStr, "%s%s", libNameStr, liveMediaLibraryVersionStr);
-  }
+//  if (info == NULL || description == NULL) {
+//    libNamePlusVersionStr = new char[strlen(libNameStr) + strlen(liveMediaLibraryVersionStr) + 1];
+//    sprintf(libNamePlusVersionStr, "%s%s", libNameStr, liveMediaLibraryVersionStr);
+//  }
+  libNamePlusVersionStr = "";
   fInfoSDPString = strDup(info == NULL ? libNamePlusVersionStr : info);
   fDescriptionSDPString = strDup(description == NULL ? libNamePlusVersionStr : description);
-  delete[] libNamePlusVersionStr;
+//  delete[] libNamePlusVersionStr;
 
   fMiscSDPLines = strDup(miscSDPLines == NULL ? "" : miscSDPLines);
 
@@ -282,7 +265,7 @@ char* ServerMediaSession::generateSDPDescription(int addressFamily) {
       "s=%s\r\n"
       "i=%s\r\n"
       "t=0 0\r\n"
-      "a=tool:%s%s\r\n"
+//      "a=tool:%s%s\r\n"
       "a=type:broadcast\r\n"
       "a=control:*\r\n"
       "%s"
@@ -294,7 +277,7 @@ char* ServerMediaSession::generateSDPDescription(int addressFamily) {
       + 20 + 6 + 20 + 3/*IP4 or IP6*/ + ipAddressStrSize
       + strlen(fDescriptionSDPString)
       + strlen(fInfoSDPString)
-      + strlen(libNameStr) + strlen(liveMediaLibraryVersionStr)
+ //      + strlen(libNameStr) + strlen(liveMediaLibraryVersionStr)
       + strlen(sourceFilterLine)
       + strlen(rangeLine)
       + strlen(fDescriptionSDPString)
@@ -312,7 +295,7 @@ char* ServerMediaSession::generateSDPDescription(int addressFamily) {
 	     ipAddressStr.val(), // o= <address>
 	     fDescriptionSDPString, // s= <description>
 	     fInfoSDPString, // i= <info>
-	     libNameStr, liveMediaLibraryVersionStr, // a=tool:
+//	     libNameStr, liveMediaLibraryVersionStr, // a=tool:
 	     sourceFilterLine, // a=source-filter: incl (if a SSM session)
 	     rangeLine, // a=range: line
 	     fDescriptionSDPString, // a=x-qt-text-nam: line

@@ -21,8 +21,10 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // Implementation
 
 #include "RTPInterface.hh"
+#include "GenericMediaServer.hh"
 #include <GroupsockHelper.hh>
 #include <atomic>
+#include <memory>
 #include <stdio.h>
 
 ////////// Helper Functions - Definition //////////
@@ -71,9 +73,20 @@ public:
   RTPInterface* lookupRTPInterface(unsigned char streamChannelId);
   void deregisterRTPInterface(unsigned char streamChannelId);
 
-  void setServerRequestAlternativeByteHandler(ServerRequestAlternativeByteHandler* handler, void* clientData) {
+  void setServerRequestAlternativeByteHandler(ServerRequestAlternativeByteHandler* handler, GenericMediaServer::ClientConnection *clientData) {
     fServerRequestAlternativeByteHandler = handler;
-    fServerRequestAlternativeByteHandlerClientData = clientData;
+    fServerRequestAlternativeByteHandlerClientData = clientData ? clientData->weak_from_this() : std::weak_ptr<GenericMediaServer::ClientConnection>();
+    fServerRequestAlternativeByteHandlerClientData_RTSPClient = nullptr;
+  }
+  void setServerRequestAlternativeByteHandler(ServerRequestAlternativeByteHandler* handler, RTSPClient *clientData) {
+    fServerRequestAlternativeByteHandler = handler;
+    fServerRequestAlternativeByteHandlerClientData.reset();
+    fServerRequestAlternativeByteHandlerClientData_RTSPClient = clientData;
+  }
+  void clearServerRequestAlternativeByteHandler(void) {
+    fServerRequestAlternativeByteHandler = nullptr;
+    fServerRequestAlternativeByteHandlerClientData.reset();
+    fServerRequestAlternativeByteHandlerClientData_RTSPClient = nullptr;
   }
 
 private:
@@ -85,8 +98,20 @@ private:
   const int fOurSocketNum;
   TLSState* const fTLSState;
   HashTable* fSubChannelHashTable;
-  ServerRequestAlternativeByteHandler* fServerRequestAlternativeByteHandler;
-  void* fServerRequestAlternativeByteHandlerClientData;
+  ServerRequestAlternativeByteHandler* fServerRequestAlternativeByteHandler = nullptr;
+  std::weak_ptr<GenericMediaServer::ClientConnection> fServerRequestAlternativeByteHandlerClientData;
+  RTSPClient *fServerRequestAlternativeByteHandlerClientData_RTSPClient = nullptr;
+  void callAlternativeByteHandler(u_int8_t requestByte) {
+    if (fServerRequestAlternativeByteHandlerClientData_RTSPClient) {
+      (*fServerRequestAlternativeByteHandler)(fServerRequestAlternativeByteHandlerClientData_RTSPClient,requestByte);
+    } else {
+      auto client_data = fServerRequestAlternativeByteHandlerClientData.lock();
+      if (client_data) {
+        (*fServerRequestAlternativeByteHandler)(client_data.get(),requestByte);
+      }
+    }
+  }
+
   u_int8_t fStreamChannelId, fSizeByte1;
   Boolean fReadErrorOccurred, fDeleteMyselfNext, fAreInReadHandlerLoop;
   enum { AWAITING_DOLLAR, AWAITING_STREAM_CHANNEL_ID, AWAITING_SIZE1, AWAITING_SIZE2, AWAITING_PACKET_DATA } fTCPReadingState;
@@ -246,7 +271,15 @@ void RTPInterface::removeStreamSocket(int sockNum,
 }
 
 void RTPInterface::setServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum,
-							  ServerRequestAlternativeByteHandler* handler, void* clientData) {
+							  ServerRequestAlternativeByteHandler* handler, GenericMediaServer::ClientConnection *clientData) {
+  env.taskScheduler().assertSameThread();
+  SocketDescriptor* socketDescriptor = lookupSocketDescriptor(env, socketNum, NULL, False);
+
+  if (socketDescriptor != NULL) socketDescriptor->setServerRequestAlternativeByteHandler(handler, clientData);
+}
+
+void RTPInterface::setServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum,
+							  ServerRequestAlternativeByteHandler* handler, RTSPClient *clientData) {
   env.taskScheduler().assertSameThread();
   SocketDescriptor* socketDescriptor = lookupSocketDescriptor(env, socketNum, NULL, False);
 
@@ -255,7 +288,9 @@ void RTPInterface::setServerRequestAlternativeByteHandler(UsageEnvironment& env,
 
 void RTPInterface::clearServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum) {
   env.taskScheduler().assertSameThread();
-  setServerRequestAlternativeByteHandler(env, socketNum, NULL, NULL);
+  SocketDescriptor* socketDescriptor = lookupSocketDescriptor(env, socketNum, NULL, False);
+
+  if (socketDescriptor != NULL) socketDescriptor->clearServerRequestAlternativeByteHandler();
 }
 
 
@@ -524,7 +559,6 @@ Boolean RTPInterface::sendDataOverTCP(int socketNum, TLSState* tlsState,
 SocketDescriptor::SocketDescriptor(UsageEnvironment& env, int socketNum, TLSState* tlsState)
   : fEnv(env), fOurSocketNum(socketNum), fTLSState(tlsState),
     fSubChannelHashTable(HashTable::create(ONE_WORD_HASH_KEYS)),
-   fServerRequestAlternativeByteHandler(NULL), fServerRequestAlternativeByteHandlerClientData(NULL),
    fReadErrorOccurred(False), fDeleteMyselfNext(False), fAreInReadHandlerLoop(False), fTCPReadingState(AWAITING_DOLLAR) {
   fEnv.taskScheduler().assertSameThread();
 }
@@ -562,7 +596,7 @@ SocketDescriptor::~SocketDescriptor() {
     // - an error occurred when reading the TCP socket, or
     // - no error occurred, but it needs to take over control of the TCP socket once again.
     u_int8_t specialChar = fReadErrorOccurred ? 0xFF : 0xFE;
-    (*fServerRequestAlternativeByteHandler)(fServerRequestAlternativeByteHandlerClientData, specialChar);
+    callAlternativeByteHandler(specialChar);
   }
 //  fEnv << "SocketDescriptor(" << fOurSocketNum << ")::~SocketDescriptor end\n";
 }
@@ -671,8 +705,8 @@ Boolean SocketDescriptor::tcpReadHandler1(int mask) {
 	// This character is part of a RTSP request or command, which is handled separately:
 	if (fServerRequestAlternativeByteHandler != NULL && c != 0xFF && c != 0xFE) {
 	  // Hack: 0xFF and 0xFE are used as special signaling characters, so don't send them
-	  (*fServerRequestAlternativeByteHandler)(fServerRequestAlternativeByteHandlerClientData, c);
-	}
+	  callAlternativeByteHandler(c);
+        }
       }
       break;
     }

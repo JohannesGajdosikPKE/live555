@@ -35,6 +35,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "RTCP.hh"
 #endif
 
+#include "GenericMediaServer.hh"
+
 class OnDemandServerMediaSubsession: public ServerMediaSubsession {
 protected: // we're a virtual base class
   OnDemandServerMediaSubsession(UsageEnvironment& env, Boolean reuseFirstSource,
@@ -63,9 +65,9 @@ protected: // redefined virtual functions
 			   TaskFunc* rtcpRRHandler,
 			   void* rtcpRRHandlerClientData,
 			   unsigned short& rtpSeqNum,
-                           unsigned& rtpTimestamp,
+			   unsigned& rtpTimestamp,
 			   ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-                           void* serverRequestAlternativeByteHandlerClientData);
+			   GenericMediaServer::ClientConnection *serverRequestAlternativeByteHandlerClientData) override;
   virtual void pauseStream(unsigned clientSessionId, void* streamToken);
   virtual void seekStream(unsigned clientSessionId, void* streamToken, double& seekNPT, double streamDuration, u_int64_t& numBytes);
   virtual void seekStream(unsigned clientSessionId, void* streamToken, char*& absStart, char*& absEnd);
@@ -190,7 +192,7 @@ public:
   void startPlaying(Destinations* destinations, unsigned clientSessionId,
 		    TaskFunc* rtcpRRHandler, void* rtcpRRHandlerClientData,
 		    ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-                    void* serverRequestAlternativeByteHandlerClientData);
+		    GenericMediaServer::ClientConnection *serverRequestAlternativeByteHandlerClientData);
   void pause();
   void sendRTCPAppPacket(u_int8_t subtype, char const* name,
 			 u_int8_t* appDependentData, unsigned appDependentDataSize);

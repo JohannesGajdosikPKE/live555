@@ -33,6 +33,10 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <Groupsock.hh>
 #endif
 
+#include "GenericMediaServer.hh"
+
+class RTSPClient;
+
 // Typedef for an optional auxilliary handler function, to be called
 // when each new packet is read:
 typedef void AuxHandlerFunc(void* clientData, unsigned char* packet,
@@ -55,7 +59,11 @@ public:
   void addStreamSocket(int sockNum, unsigned char streamChannelId, TLSState* tlsState);
   void removeStreamSocket(int sockNum, unsigned char streamChannelId);
   static void setServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum,
-						     ServerRequestAlternativeByteHandler* handler, void* clientData);
+						     ServerRequestAlternativeByteHandler* handler,
+						     GenericMediaServer::ClientConnection *clientData);
+  static void setServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum,
+						     ServerRequestAlternativeByteHandler* handler,
+						     RTSPClient *clientData);
   static void clearServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum);
 
   Boolean sendPacket(unsigned char* packet, unsigned packetSize);

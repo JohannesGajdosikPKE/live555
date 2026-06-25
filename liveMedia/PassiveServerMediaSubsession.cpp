@@ -204,7 +204,7 @@ void PassiveServerMediaSubsession::startStream(unsigned clientSessionId,
 					       unsigned short& rtpSeqNum,
 					       unsigned& rtpTimestamp,
 					       ServerRequestAlternativeByteHandler* /*serverRequestAlternativeByteHandler*/,
-					       void* /*serverRequestAlternativeByteHandlerClientData*/) {
+					       GenericMediaServer::ClientConnection* /*serverRequestAlternativeByteHandlerClientData*/) {
   rtpSeqNum = fRTPSink.currentSeqNo();
   rtpTimestamp = fRTPSink.getLastRtpTime();
 

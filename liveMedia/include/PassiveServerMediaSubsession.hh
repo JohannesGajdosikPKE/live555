@@ -68,7 +68,7 @@ protected: // redefined virtual functions
                            unsigned short& rtpSeqNum,
                            unsigned& rtpTimestamp,
 			   ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-                           void* serverRequestAlternativeByteHandlerClientData);
+			   GenericMediaServer::ClientConnection *serverRequestAlternativeByteHandlerClientData) override;
   virtual float getCurrentNPT(void* streamToken);
   virtual void getRTPSinkandRTCP(void* streamToken,
 				 RTPSink*& rtpSink, RTCPInstance*& rtcp);

@@ -19,6 +19,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // Implementation
 
 #include "RTSPServer.hh"
+#include "ServerMediaSession.hh"
 #include "RTSPCommon.hh"
 #include "RTSPRegisterSender.hh"
 #include "Base64.hh"
@@ -29,36 +30,6 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <iostream>
 
 ////////// RTSPServer implementation //////////
-
-#ifdef NOT_NEEDED
-RTSPServer*
-RTSPServer::createNew(UsageEnvironment& env, Port ourPort,
-		      UserAuthenticationDatabase* authDatabase,
-		      unsigned reclamationSeconds) {
-  int ourSocketIPv4 = setUpOurSocket(env, ourPort, AF_INET);
-  int ourSocketIPv6 = setUpOurSocket(env, ourPort, AF_INET6);
-  if (ourSocketIPv4 < 0 && ourSocketIPv6 < 0) return NULL;
-  
-  return new RTSPServer(env, ourSocketIPv4, ourSocketIPv6, ourPort, authDatabase, reclamationSeconds);
-}
-
-Boolean RTSPServer::lookupByName(UsageEnvironment& env,
-				 char const* name,
-				 RTSPServer*& resultServer) {
-  resultServer = NULL; // unless we succeed
-  
-  Medium* medium;
-  if (!Medium::lookupByName(env, name, medium)) return False;
-  
-  if (!medium->isRTSPServer()) {
-    env.setResultMsg(name, " is not a RTSP server");
-    return False;
-  }
-  
-  resultServer = (RTSPServer*)medium;
-  return True;
-}
-#endif
 
 char* RTSPServer
 ::rtspURL(ServerMediaSession const* serverMediaSession,
@@ -431,7 +402,7 @@ void RTSPServer::RTSPClientConnection
   // By default, we implement "GET_PARAMETER" (on the entire server) just as a 'no op', and send back a dummy response.
   // (If you want to handle this type of "GET_PARAMETER" differently, you can do so by defining a subclass of "RTSPServer"
   // and "RTSPServer::RTSPClientConnection", and then reimplement this virtual function in your subclass.)
-  setRTSPResponse("200 OK", LIVEMEDIA_LIBRARY_VERSION_STRING);
+  setRTSPResponse("200 OK", (const char*)NULL /*LIVEMEDIA_LIBRARY_VERSION_STRING*/);
 }
 
 void RTSPServer::RTSPClientConnection
@@ -502,12 +473,6 @@ void RTSPServer::RTSPClientConnection
       break;
     }
     
-#ifdef NOT_NEEDED
-    // Increment the "ServerMediaSession" object's reference count, in case someone removes it
-    // while we're using it:
-    session->incrementReferenceCount();
-#endif
-
     // Then, assemble a SDP description for this session:
     sdpDescription = session->generateSDPDescription(fAddressFamily);
     if (sdpDescription == NULL) {
@@ -536,16 +501,6 @@ void RTSPServer::RTSPClientConnection
 	     sdpDescription);
   } while (0);
   
-#ifdef NOT_NEEDED
-  if (session != NULL) {
-    // Decrement its reference count, now that we're done using it:
-    session->decrementReferenceCount();
-    if (session->referenceCount() == 0 && session->deleteWhenUnreferenced()) {
-      removeServerMediaSession(session);
-    }
-  }
-#endif
-
   delete[] sdpDescription;
   delete[] rtspURL;
 }
@@ -1200,6 +1155,8 @@ void RTSPServer::RTSPClientConnection::handleRequestBytesFinish(void) {
         envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: "
                    "closeSocketsRTSP() called\n";
       } else {
+          // later envir() and getId() shall not crash:
+        const auto keep_this = shared_from_this();
         removeFromServer();
         envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: "
                    "removeFromServer() called\n";
@@ -1496,6 +1453,7 @@ void RTSPServer::RTSPClientConnection
     copiedTLSState->assignStateFrom(*newTLSState);
     envir().taskScheduler().executeCommand(
       [this, newSocketNum, copiedTLSState, copied_extraData, extraDataSize](uint64_t) {
+        envir().taskScheduler().assertSameThread();
         envir().taskScheduler().disableBackgroundHandling(fClientInputSocket);
         envir() << "RTSPServer::RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << newSocketNum << "): "
                    "disabled handling for " << fClientInputSocket << " in the old thread " << envir().taskScheduler().my_thread_id
@@ -1744,9 +1702,6 @@ void RTSPServer::RTSPClientSession
 	// We're accessing the "ServerMediaSession" for the first time.
 	fOurServerMediaSession = sms;
 	informClientConnect();
-#ifdef NOT_NEEDED
-	fOurServerMediaSession->incrementReferenceCount();
-#endif
       } else if (sms != fOurServerMediaSession) {
 	// The client asked for a stream that's different from the one originally requested for this stream id.  Bad request:
 	fOurClientConnection->handleCmd_bad();
@@ -2330,7 +2285,7 @@ void RTSPServer::RTSPClientSession
   // By default, we implement "GET_PARAMETER" just as a 'keep alive', and send back a dummy response.
   // (If you want to handle "GET_PARAMETER" properly, you can do so by defining a subclass of "RTSPServer"
   // and "RTSPServer::RTSPClientSession", and then reimplement this virtual function in your subclass.)
-  setRTSPResponse(ourClientConnection, "200 OK", fOurSessionId, LIVEMEDIA_LIBRARY_VERSION_STRING);
+  setRTSPResponse(ourClientConnection, "200 OK", fOurSessionId, NULL /*LIVEMEDIA_LIBRARY_VERSION_STRING*/);
 }
 
 void RTSPServer::RTSPClientSession

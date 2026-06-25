@@ -21,32 +21,15 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #ifndef _RTSP_SERVER_HH
 #define _RTSP_SERVER_HH
 
-#ifndef _GENERIC_MEDIA_SERVER_HH
 #include "GenericMediaServer.hh"
-#endif
-#ifndef _DIGEST_AUTHENTICATION_HH
 #include "DigestAuthentication.hh"
-#endif
 
 #include "RTSPCommon.hh"
 
+class ServerMediaSubsession;
+
 class RTSPServer: public GenericMediaServer {
 public:
-#ifdef NOT_NEEDED
-  static RTSPServer* createNew(UsageEnvironment& env, Port ourPort = 554,
-			       UserAuthenticationDatabase* authDatabase = NULL,
-			       unsigned reclamationSeconds = 65);
-      // If ourPort.num() == 0, we'll choose the port number
-      // Note: The caller is responsible for reclaiming "authDatabase"
-      // If "reclamationSeconds" > 0, then the "RTSPClientSession" state for
-      //     each client will get reclaimed (and the corresponding RTP stream(s)
-      //     torn down) if no RTSP commands - or RTCP "RR" packets - from the
-      //     client are received in at least "reclamationSeconds" seconds.
-
-  static Boolean lookupByName(UsageEnvironment& env, char const* name,
-			      RTSPServer*& resultServer);
-#endif
-
   typedef void (responseHandlerForREGISTER)(RTSPServer* rtspServer, unsigned requestId, int resultCode, char* resultString);
   unsigned registerStream(const std::shared_ptr<ServerMediaSession> &serverMediaSession,
 			  char const* remoteClientNameOrAddress, portNumBits remoteClientPortNum,

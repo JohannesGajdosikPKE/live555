@@ -20,6 +20,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // Implementation
 
 #include "GenericMediaServer.hh"
+#include "ServerMediaSession.hh"
 #include <GroupsockHelper.hh>
 #include <BasicUsageEnvironment.hh>
 
@@ -87,14 +88,6 @@ void GenericMediaServer::removeServerMediaSession(const ServerMediaSession &serv
 //  envir() << "GenericMediaServer::removeServerMediaSession(" << serverMediaSession << ") end\n";
 }
 
-#ifdef NOT_NEEDED
-void GenericMediaServer::removeServerMediaSession(UsageEnvironment &env, char const* streamName) {
-//  env << "GenericMediaServer::removeServerMediaSession(" << streamName << ") start\n";
-  lookupServerMediaSession(env, streamName, &GenericMediaServer::removeServerMediaSession);
-//  env << "GenericMediaServer::removeServerMediaSession(" << streamName << ") end\n";
-}
-#endif
-
 void GenericMediaServer::closeAllClientSessionsForServerMediaSession(const ServerMediaSession &serverMediaSession) {
 
   Semaphore sem;
@@ -133,25 +126,10 @@ void GenericMediaServer::closeAllClientSessionsForServerMediaSession(const Serve
   }
 }
 
-#ifdef NOT_NEEDED
-void GenericMediaServer::closeAllClientSessionsForServerMediaSession(char const* streamName) {
-  lookupServerMediaSession(envir(), streamName,
-			   &GenericMediaServer::closeAllClientSessionsForServerMediaSession);
-}
-#endif
-
 void GenericMediaServer::deleteServerMediaSession(const std::shared_ptr<ServerMediaSession> &serverMediaSession) {
   closeAllClientSessionsForServerMediaSession(*serverMediaSession);
   removeServerMediaSession(*serverMediaSession);
 }
-
-#ifdef NOT_NEEDED
-void GenericMediaServer::deleteServerMediaSession(UsageEnvironment &env, char const* streamName) {
-  env << "GenericMediaServer::deleteServerMediaSession(" << streamName << ") start\n";
-  lookupServerMediaSession(env, streamName, &GenericMediaServer::deleteServerMediaSession);
-  env << "GenericMediaServer::deleteServerMediaSession(" << streamName << ") end\n";
-}
-#endif
 
 void GenericMediaServer::deleteAllServerMediaSessions(char const* streamName) {
       // delete seesions with this name from all UsageEnvironments
@@ -677,17 +655,6 @@ GenericMediaServer::ClientSession::~ClientSession() {
   envir().taskScheduler().assertSameThread();
   // Turn off any liveness checking:
   envir().taskScheduler().unscheduleDelayedTask(fLivenessCheckTask);
-
-#ifdef NOT_NEEDED
-  if (fOurServerMediaSession != NULL) {
-    fOurServerMediaSession->decrementReferenceCount();
-    if (fOurServerMediaSession->referenceCount() == 0
-	&& fOurServerMediaSession->deleteWhenUnreferenced()) {
-      fOurServer.removeServerMediaSession(fOurServerMediaSession);
-      fOurServerMediaSession = NULL;
-    }
-  }
-#endif
 }
 
 void GenericMediaServer::ClientSession::deleteThis(void) {
