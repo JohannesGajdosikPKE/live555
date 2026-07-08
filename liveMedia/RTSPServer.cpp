@@ -1443,45 +1443,50 @@ void RTSPClientConnection
     ServerTLSState *copiedTLSState = new ServerTLSState(envir());
     copiedTLSState->assignStateFrom(*newTLSState);
     envir().taskScheduler().executeCommand(
-      [this, newSocketNum, copiedTLSState, copied_extraData, extraDataSize](uint64_t) {
-        envir().taskScheduler().assertSameThread();
-        envir().taskScheduler().disableBackgroundHandling(fClientInputSocket);
-        envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << newSocketNum << "): "
-                   "disabled handling for " << fClientInputSocket << " in the old thread " << envir().taskScheduler().my_thread_id
-                << " (but keeping the socket because we need it for writing)\n";
-        envir().taskScheduler().setBackgroundHandling(newSocketNum, SOCKET_READABLE|SOCKET_EXCEPTION,
-          [&env=envir(),self=weak_from_this()](int) {
-            auto c(self.lock());
-            if (c) std::static_pointer_cast<RTSPClientConnection>(c)->incomingRequestHandler();
-            env << "WARNING: RTSPClientConnection::changeClientInputSocket::l2: this would have crashed\n";
+      [&envi=envir(),weak_self=weak_from_this(), newSocketNum, copiedTLSState, copied_extraData, extraDataSize](uint64_t) {
+        const auto self(std::static_pointer_cast<RTSPClientConnection>(weak_self.lock()));
+        if (!self) {
+          envi << "WARNING: RTSPClientConnection::changeClientInputSocket::l: this would have crashed\n";
+          return;
+        }
+        envi.taskScheduler().assertSameThread();
+        envi.taskScheduler().disableBackgroundHandling(self->fClientInputSocket);
+        envi << "RTSPClientConnection(" << self->getId() << "," << self->fOurSocket << ")::changeClientInputSocket(" << newSocketNum << "): "
+                "disabled handling for " << self->fClientInputSocket << " in the old thread " << envi.taskScheduler().my_thread_id
+             << " (but keeping the socket because we need it for writing)\n";
+        envi.taskScheduler().setBackgroundHandling(newSocketNum, SOCKET_READABLE|SOCKET_EXCEPTION,
+          [&env=envi,weak_self2=weak_self](int) {
+            const auto self(std::static_pointer_cast<RTSPClientConnection>(weak_self2.lock()));
+            if (self) self->incomingRequestHandler();
+            else env << "WARNING: RTSPClientConnection::changeClientInputSocket::l::l: this would have crashed\n";
           });
-        envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << newSocketNum << ")::l: "
-                   "enabled incoming request handling for " << newSocketNum << " in the old thread " << envir().taskScheduler().my_thread_id << "\n";
+        envi << "RTSPClientConnection(" << self->getId() << "," << self->fOurSocket << ")::changeClientInputSocket(" << newSocketNum << ")::l: "
+                "enabled incoming request handling for " << newSocketNum << " in the old thread " << envi.taskScheduler().my_thread_id << "\n";
         // Change the socket number:
-        fClientInputSocket = newSocketNum;
+        self->fClientInputSocket = newSocketNum;
         // Change the TLS state:
 #ifndef NO_OPENSSL
-        if (fPOSTSocketTLS.isOpen()) {
-          envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << newSocketNum << "): "
-                     "WARNING: assigning state to fPOSTSocketTLS although it has already been setup\n";
+        if (self->fPOSTSocketTLS.isOpen()) {
+          envi << "RTSPClientConnection(" << self->getId() << "," << self->fOurSocket << ")::changeClientInputSocket(" << newSocketNum << "): "
+                  "WARNING: assigning state to fPOSTSocketTLS although it has already been setup\n";
         }
 #endif
-        fPOSTSocketTLS.assignStateFrom(*copiedTLSState);
+        self->fPOSTSocketTLS.assignStateFrom(*copiedTLSState);
         copiedTLSState->nullify(); // transfer ownership of fCtx and fCon
         delete copiedTLSState;
-        fInputTLS = &fPOSTSocketTLS;
+        self->fInputTLS = &self->fPOSTSocketTLS;
 
         // Also write any extra data to our buffer, and handle it:
         if (extraDataSize > 0) {
-          if (extraDataSize <= fRequestBufferBytesLeft/*sanity check; should always be true*/) {
-            unsigned char* ptr = &fRequestBuffer[fRequestBytesAlreadySeen];
+          if (extraDataSize <= self->fRequestBufferBytesLeft/*sanity check; should always be true*/) {
+            unsigned char* ptr = &self->fRequestBuffer[self->fRequestBytesAlreadySeen];
             for (unsigned i = 0; i < extraDataSize; ++i) {
               ptr[i] = copied_extraData[i];
             }
-            handleRequestBytes(extraDataSize);
+            self->handleRequestBytes(extraDataSize);
           } else {
-            envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << newSocketNum << ")::l: "
-                       "BIG WARNING: discarding " << extraDataSize << " bytes of request data because buffer has only " << fRequestBufferBytesLeft << " free bytes\n";
+            envi << "RTSPClientConnection(" << self->getId() << "," << self->fOurSocket << ")::changeClientInputSocket(" << newSocketNum << ")::l: "
+                    "BIG WARNING: discarding " << extraDataSize << " bytes of request data because buffer has only " << self->fRequestBufferBytesLeft << " free bytes\n";
           }
         }
         delete[] copied_extraData;
