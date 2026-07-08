@@ -2636,10 +2636,9 @@ struct MediaServerPluginRTSPServer::LookupCompletionFuncData {
   LookupCompletionFuncData(
     MediaServerPluginRTSPServer *self,
     UsageEnvironment &env, char const *streamName,
-    lookupServerMediaSessionCompletionFunc *completionFunc,
-    void *completionClientData)
+    lookupServerMediaSessionCompletionFunc &&completionFunc)
       : self(self),env(env),streamName(streamName),
-        completionFunc(completionFunc),completionClientData(completionClientData) {
+        completionFunc(std::move(completionFunc)) {
 //    env << "MediaServerPluginRTSPServer::LookupCompletionFuncData::LookupCompletionFuncData(" << streamName << ")\n";
   }
   ~LookupCompletionFuncData(void) {
@@ -2648,8 +2647,7 @@ struct MediaServerPluginRTSPServer::LookupCompletionFuncData {
   MediaServerPluginRTSPServer *self;
   UsageEnvironment &env;
   const std::string streamName;
-  lookupServerMediaSessionCompletionFunc *const completionFunc;
-  void *const completionClientData;
+  const lookupServerMediaSessionCompletionFunc completionFunc;
 };
 
 std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry>
@@ -2668,8 +2666,7 @@ MediaServerPluginRTSPServer::getStreamMapEntry(const std::string &stream_name) c
 
 void MediaServerPluginRTSPServer
 ::lookupServerMediaSession(UsageEnvironment &env, char const *streamName,
-                           lookupServerMediaSessionCompletionFunc *completionFunc,
-                           void *completionClientData, // actually RTSPClientSession
+                           lookupServerMediaSessionCompletionFunc &&completionFunc,
                            Boolean isFirstLookupInSession) {
   if (!completionFunc) abort();
   if (!streamName) abort();
@@ -2691,7 +2688,7 @@ void MediaServerPluginRTSPServer
       if (!e) {
         env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") begin: "
                "no such stream in stream_map, delegating completionFunc to stream_factory->GetStream\n";
-        LookupCompletionFuncData *context = new LookupCompletionFuncData(this,env,streamName,completionFunc,completionClientData);
+        LookupCompletionFuncData *context = new LookupCompletionFuncData(this,env,streamName,std::move(completionFunc));
           // if the client is fast, he can call this many times with the same stream,
           // leading to many accesses of the sms_map in the StreamMapEntry while getServerMediaSession still returns NULL
         stream_factory->GetStream(streamName, ContextEncoder::Encode(context), &MediaServerPluginRTSPServer::GetStreamCb);
@@ -2706,7 +2703,7 @@ void MediaServerPluginRTSPServer
     }
   }
   env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << "): calling completionFunc(" << sms.get() << ")\n";
-  (*completionFunc)(completionClientData,sms);
+  completionFunc(sms);
   env << "MediaServerPluginRTSPServer::lookupServerMediaSession(" << streamName << ") end\n";
 }
 
@@ -2782,7 +2779,7 @@ void MediaServerPluginRTSPServer::getStreamCb(const MediaServerPluginRTSPServer:
   }
   envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str()
           << "): calling completionFunc(new ServerMediaSession " << sms.get() << ")\n";
-  (*(l->completionFunc))(l->completionClientData, sms);
+  l->completionFunc(sms);
   if (new_stream_has_been_created) {
     envir() << "MediaServerPluginRTSPServer::getStreamCb(" << l->streamName.c_str()
             << "): calling registerOnFrame\n";

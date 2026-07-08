@@ -76,7 +76,6 @@ protected:
   virtual void handleCmd_GET_PARAMETER(char const* fullRequestStr); // when operating on the entire server
   virtual void handleCmd_SET_PARAMETER(char const* fullRequestStr); // when operating on the entire server
   virtual void handleCmd_DESCRIBE(char const* urlPreSuffix, char const* urlSuffix, char const* fullRequestStr);
-  static void DESCRIBELookupCompletionFunction(void* clientData, const std::shared_ptr<ServerMediaSession> &sessionLookedUp);
   virtual void handleCmd_DESCRIBE_afterLookup(const std::shared_ptr<ServerMediaSession> &session);
   virtual void handleCmd_REGISTER(char const* cmd/*"REGISTER" or "DEREGISTER"*/,
                                   char const* url, char const* urlSuffix, char const* fullRequestStr,
@@ -145,9 +144,7 @@ public:
   virtual void handleCmd_SETUP(RTSPClientConnection &ourClientConnection,
                                char const* urlPreSuffix, char const* urlSuffix, char const* fullRequestStr);
 protected:
-  static void SETUPLookupCompletionFunction1(void* clientData, const std::shared_ptr<ServerMediaSession> &sessionLookedUp);
   virtual void handleCmd_SETUP_afterLookup1(const std::shared_ptr<ServerMediaSession> &sms);
-  static void SETUPLookupCompletionFunction2(void* clientData, const std::shared_ptr<ServerMediaSession> &sessionLookedUp);
   virtual void handleCmd_SETUP_afterLookup2(const std::shared_ptr<ServerMediaSession> &sms);
 public:
   virtual void handleCmd_withinSession(RTSPClientConnection &ourClientConnection,

@@ -48,37 +48,12 @@ void GenericMediaServer::addServerMediaSession(const std::shared_ptr<ServerMedia
 
 void GenericMediaServer
 ::lookupServerMediaSession(UsageEnvironment& env, char const* streamName,
-			   lookupServerMediaSessionCompletionFunc* completionFunc,
-			   void* completionClientData,
+			   lookupServerMediaSessionCompletionFunc &&completionFunc,
 			   Boolean /*isFirstLookupInSession*/) {
   // Default implementation: Do a synchronous lookup, and call the completion function:
-  if (completionFunc != NULL) {
-    std::lock_guard<std::recursive_mutex> guard(sms_mutex);
-    (*completionFunc)(completionClientData, getServerMediaSession(env,streamName));
+  if (completionFunc) {
+    completionFunc(getServerMediaSession(env,streamName));
   }
-}
-
-struct lsmsMemberFunctionRecord {
-  GenericMediaServer* fServer;
-  void (GenericMediaServer::*fMemberFunc)(const std::shared_ptr<ServerMediaSession> &);
-};
-
-static void lsmsMemberFunctionCompletionFunc(void* clientData, const std::shared_ptr<ServerMediaSession> &sessionLookedUp) {
-  lsmsMemberFunctionRecord* memberFunctionRecord = (lsmsMemberFunctionRecord*)clientData;
-  (memberFunctionRecord->fServer->*(memberFunctionRecord->fMemberFunc))(sessionLookedUp);
-  delete memberFunctionRecord;
-}
-
-void GenericMediaServer
-::lookupServerMediaSession(UsageEnvironment& env, char const* streamName,
-			   void (GenericMediaServer::*memberFunc)(const std::shared_ptr<ServerMediaSession> &)) {
-  struct lsmsMemberFunctionRecord* memberFunctionRecord = new struct lsmsMemberFunctionRecord;
-  memberFunctionRecord->fServer = this;
-  memberFunctionRecord->fMemberFunc = memberFunc;
-  
-  GenericMediaServer
-    ::lookupServerMediaSession(env, streamName,
-			       lsmsMemberFunctionCompletionFunc, memberFunctionRecord);
 }
 
 void GenericMediaServer::removeServerMediaSession(const ServerMediaSession &serverMediaSession) {

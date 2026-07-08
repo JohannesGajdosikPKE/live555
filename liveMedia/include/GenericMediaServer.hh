@@ -42,6 +42,7 @@ class ServerMediaSession;
 #include <memory>
 #include <map>
 #include <atomic>
+#include <functional>
 
 class GenericMediaServer;
 
@@ -86,7 +87,7 @@ protected:
 };
 
 // The state of an individual client session (using one or more sequential TCP connections) handled by a server:
-class ClientSession {
+class ClientSession : public std::enable_shared_from_this<ClientSession> {
 public:
   void deleteThis(void);
   u_int32_t getOurSessionId(void) const {return fOurSessionId;}
@@ -113,22 +114,15 @@ protected:
 
 // Typedef for a handler function that gets called when "lookupServerMediaSession()"
 // (defined below) completes:
-typedef void lookupServerMediaSessionCompletionFunc(void* clientData,
-						    const std::shared_ptr<ServerMediaSession> &sessionLookedUp);
+typedef std::function<void (const std::shared_ptr<ServerMediaSession> &sessionLookedUp)> lookupServerMediaSessionCompletionFunc;
 
 class GenericMediaServer: public Medium {
 public:
   virtual void addServerMediaSession(const std::shared_ptr<ServerMediaSession> &serverMediaSession);
 
   virtual void lookupServerMediaSession(UsageEnvironment &env, char const* streamName,
-					lookupServerMediaSessionCompletionFunc* completionFunc,
-					void* completionClientData,
+					lookupServerMediaSessionCompletionFunc &&completionFunc,
 					Boolean isFirstLookupInSession = True);
-      // Note: This is a virtual function, so can be reimplemented by subclasses.
-  void lookupServerMediaSession(UsageEnvironment& env, char const* streamName,
-				void (GenericMediaServer::*memberFunc)(const std::shared_ptr<ServerMediaSession> &));
-      // Special case of "lookupServerMediaSession()" where the 'completion function' is a
-      // member function of "GenericMediaServer" (and the 'completion client data' is "this".)
 
   void removeServerMediaSession(const ServerMediaSession &serverMediaSession);
       // Removes the "ServerMediaSession" object from our lookup table, so it will no longer be accessible by new clients.

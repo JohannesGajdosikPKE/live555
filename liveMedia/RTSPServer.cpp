@@ -414,14 +414,6 @@ void RTSPClientConnection
   setRTSPResponse("200 OK");
 }
 
-struct LookupContext {
-  LookupContext(RTSPServer &server,
-                ClientConnection::IdType connection_id)
-    : server(server),connection_id(connection_id) {}
-  RTSPServer &server;
-  const ClientConnection::IdType connection_id;
-};
-
 void RTSPClientConnection
 ::handleCmd_DESCRIBE(char const* urlPreSuffix, char const* urlSuffix, char const* fullRequestStr) {
   envir().taskScheduler().assertSameThread();
@@ -443,24 +435,19 @@ void RTSPClientConnection
   // for "application/sdp", because that's what we're sending back #####
     
   // Begin by looking up the "ServerMediaSession" object for the specified "urlTotalSuffix":
-  LookupContext *context = new LookupContext(getOurRTSPServer(),getId());
-  getOurRTSPServer().lookupServerMediaSession(envir(), urlTotalSuffix, DESCRIBELookupCompletionFunction, context);
-}
-
-void RTSPClientConnection
-::DESCRIBELookupCompletionFunction(void* clientData, const std::shared_ptr<ServerMediaSession> &sessionLookedUp) {
-  LookupContext *context(reinterpret_cast<LookupContext*>(clientData));
-  const std::shared_ptr<RTSPClientConnection> connection
-    = std::static_pointer_cast<RTSPClientConnection>(context->server.getClientConnection(context->connection_id));
-  if (connection) {
-    connection->envir().taskScheduler().assertSameThread();
-    connection->handleCmd_DESCRIBE_afterLookup(sessionLookedUp);
-    connection->handleRequestBytesResume();
-  } else {
-    context->server.envir() << "RTSPClientConnection::DESCRIBELookupCompletionFunction: "
-                               "client connection " << context->connection_id << " has been closed during lookup\n";
-  }
-  delete context;
+  getOurRTSPServer().lookupServerMediaSession(envir(), urlTotalSuffix,
+    [&server=getOurRTSPServer(),connection_id=getId()](const std::shared_ptr<ServerMediaSession> &sessionLookedUp) {
+      const std::shared_ptr<RTSPClientConnection> connection
+        = std::static_pointer_cast<RTSPClientConnection>(server.getClientConnection(connection_id));
+      if (connection) {
+        connection->envir().taskScheduler().assertSameThread();
+        connection->handleCmd_DESCRIBE_afterLookup(sessionLookedUp);
+        connection->handleRequestBytesResume();
+      } else {
+        server.envir() << "WARNING: RTSPClientConnection::handleCmd_DESCRIBE::l: "
+                          "client connection " << connection_id << " has been closed during lookup\n";
+      }
+    });
 }
 
 void RTSPClientConnection
@@ -1647,14 +1634,14 @@ void RTSPClientSession
   // Begin by checking whether the specified stream name exists:
   char const* streamName = urlPreSuffix; // in the normal case
     // call the nonvirtual base implementation that just looks for existing sms and returns immediately
-  fOurServer.GenericMediaServer::lookupServerMediaSession(envir(), streamName, SETUPLookupCompletionFunction1, this,
-				                          fOurServerMediaSession == NULL);
-}
-
-void RTSPClientSession
-::SETUPLookupCompletionFunction1(void* clientData, const std::shared_ptr<ServerMediaSession> &sessionLookedUp) {
-  RTSPClientSession* session = (RTSPClientSession*)clientData;
-  session->handleCmd_SETUP_afterLookup1(sessionLookedUp);
+  fOurServer.GenericMediaServer::lookupServerMediaSession(
+    envir(), streamName,
+    [weak_self=weak_from_this(),&env=envir()](const std::shared_ptr<ServerMediaSession> &sessionLookedUp) {
+      const std::shared_ptr<RTSPClientSession> session = std::static_pointer_cast<RTSPClientSession>(weak_self.lock());
+      if (session) session->handleCmd_SETUP_afterLookup1(sessionLookedUp);
+      else env << "WARNING: RTSPClientSession::handleCmd_SETUP::l: session has been closed during lookup\n";
+    },
+    fOurServerMediaSession == NULL);
 }
 
 void RTSPClientSession
@@ -1681,15 +1668,15 @@ void RTSPClientSession
       
   // Check again:
     // call the nonvirtual base implementation that just looks for existing sms and returns immediately
-  fOurServer.GenericMediaServer::lookupServerMediaSession(envir(), streamName, SETUPLookupCompletionFunction2, this,
-				                          fOurServerMediaSession == NULL);
+  fOurServer.GenericMediaServer::lookupServerMediaSession(
+    envir(), streamName,
+    [weak_self=weak_from_this(),&env=envir()](const std::shared_ptr<ServerMediaSession> &sessionLookedUp) {
+      const std::shared_ptr<RTSPClientSession> session = std::static_pointer_cast<RTSPClientSession>(weak_self.lock());
+      if (session) session->handleCmd_SETUP_afterLookup2(sessionLookedUp);
+      else env << "WARNING: RTSPClientSession::handleCmd_SETUP_afterLookup1: session has been closed during lookup\n";
+    },
+    fOurServerMediaSession == NULL);
   delete[] concatenatedStreamName;
-}
-
-void RTSPClientSession
-::SETUPLookupCompletionFunction2(void* clientData, const std::shared_ptr<ServerMediaSession> &sessionLookedUp) {
-  RTSPClientSession* session = (RTSPClientSession*)clientData;
-  session->handleCmd_SETUP_afterLookup2(sessionLookedUp);
 }
 
 void RTSPClientSession

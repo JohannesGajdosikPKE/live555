@@ -113,8 +113,7 @@ protected:
   void getStreamCb(const LookupCompletionFuncData *l,
                    const std::shared_ptr<InterfaceMediaStream::IMStream> &stream);
   void lookupServerMediaSession(UsageEnvironment &env, char const *streamName,
-                                lookupServerMediaSessionCompletionFunc *completionFunc,
-                                void *completionClientData,
+                                lookupServerMediaSessionCompletionFunc &&completionFunc,
                                 Boolean isFirstLookupInSession = True) override;
   std::shared_ptr<ServerMediaSession> createServerMediaSession(UsageEnvironment &env,
                                                const std::shared_ptr<StreamMapEntry> &e);
