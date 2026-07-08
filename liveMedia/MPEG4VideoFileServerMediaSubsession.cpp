@@ -104,7 +104,7 @@ char const* MPEG4VideoFileServerMediaSubsession::getAuxSDPLine(RTPSink* rtpSink,
 }
 
 FramedSource* MPEG4VideoFileServerMediaSubsession
-::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate, void *rtsp_client_connection) {
+::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate, std::weak_ptr<RTSPClientConnection>) {
   estBitrate = 500; // kbps, estimate
 
   // Create the video source:

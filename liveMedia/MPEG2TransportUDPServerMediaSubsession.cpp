@@ -48,7 +48,7 @@ MPEG2TransportUDPServerMediaSubsession::
 }
 
 FramedSource* MPEG2TransportUDPServerMediaSubsession
-::createNewStreamSource(unsigned/* clientSessionId*/, unsigned& estBitrate, void *rtsp_client_connection) {
+::createNewStreamSource(unsigned/* clientSessionId*/, unsigned& estBitrate, std::weak_ptr<RTSPClientConnection>) {
   estBitrate = 5000; // kbps, estimate
 
   if (fInputGroupsock == NULL) {

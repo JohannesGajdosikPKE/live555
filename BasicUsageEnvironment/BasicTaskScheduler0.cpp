@@ -174,7 +174,7 @@ void BasicTaskScheduler0::triggerEvent(EventTriggerId eventTriggerId, void* clie
 ////////// HandlerSet (etc.) implementation //////////
 
 HandlerDescriptor::HandlerDescriptor(HandlerDescriptor* nextHandler)
-  : conditionSet(0), handlerProc(NULL) {
+  : conditionSet(0) {
   // Link this descriptor into a doubly-linked list:
   if (nextHandler == this) { // initialization
     fNextHandler = fPrevHandler = this;
@@ -205,7 +205,7 @@ HandlerSet::~HandlerSet() {
 }
 
 void HandlerSet
-::assignHandler(int socketNum, int conditionSet, TaskScheduler::BackgroundHandlerProc* handlerProc, void* clientData) {
+::assignHandler(int socketNum, int conditionSet, std::function<void(int mask)> &&f) {
   // First, see if there's already a handler for this socket:
   HandlerDescriptor* handler = lookupHandler(socketNum);
   if (handler == NULL) { // No existing handler, so create a new descr:
@@ -214,8 +214,7 @@ void HandlerSet
   }
 
   handler->conditionSet = conditionSet;
-  handler->handlerProc = handlerProc;
-  handler->clientData = clientData;
+  handler->handlerFunc = std::move(f);  
 }
 
 void HandlerSet::clearHandler(int socketNum) {

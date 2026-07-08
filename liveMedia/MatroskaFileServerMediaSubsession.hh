@@ -22,12 +22,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #ifndef _MATROSKA_FILE_SERVER_MEDIA_SUBSESSION_HH
 #define _MATROSKA_FILE_SERVER_MEDIA_SUBSESSION_HH
 
-#ifndef _FILE_SERVER_MEDIA_SUBSESSION_HH
 #include "FileServerMediaSubsession.hh"
-#endif
-#ifndef _MATROSKA_FILE_SERVER_DEMUX_HH
 #include "MatroskaFileServerDemux.hh"
-#endif
 
 class MatroskaFileServerMediaSubsession: public FileServerMediaSubsession {
 public:
@@ -43,7 +39,7 @@ protected: // redefined virtual functions
   virtual float duration() const;
   virtual void seekStreamSource(FramedSource* inputSource, double& seekNPT, double streamDuration, u_int64_t& numBytes);
   virtual FramedSource* createNewStreamSource(unsigned clientSessionId,
-					      unsigned& estBitrate, void *rtsp_client_connection) override;
+					      unsigned& estBitrate, std::weak_ptr<RTSPClientConnection>) override;
   virtual RTPSink* createNewRTPSink(Groupsock* rtpGroupsock, unsigned char rtpPayloadTypeIfDynamic, FramedSource* inputSource);
 
 protected:

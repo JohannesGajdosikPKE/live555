@@ -60,7 +60,7 @@ public:
   void removeStreamSocket(int sockNum, unsigned char streamChannelId);
   static void setServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum,
 						     ServerRequestAlternativeByteHandler* handler,
-						     GenericMediaServer::ClientConnection *clientData);
+						     std::weak_ptr<ClientConnection>clientData);
   static void setServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum,
 						     ServerRequestAlternativeByteHandler* handler,
 						     RTSPClient *clientData);

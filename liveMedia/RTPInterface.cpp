@@ -73,9 +73,9 @@ public:
   RTPInterface* lookupRTPInterface(unsigned char streamChannelId);
   void deregisterRTPInterface(unsigned char streamChannelId);
 
-  void setServerRequestAlternativeByteHandler(ServerRequestAlternativeByteHandler* handler, GenericMediaServer::ClientConnection *clientData) {
+  void setServerRequestAlternativeByteHandler(ServerRequestAlternativeByteHandler* handler, std::weak_ptr<ClientConnection>clientData) {
     fServerRequestAlternativeByteHandler = handler;
-    fServerRequestAlternativeByteHandlerClientData = clientData ? clientData->weak_from_this() : std::weak_ptr<GenericMediaServer::ClientConnection>();
+    fServerRequestAlternativeByteHandlerClientData = clientData;
     fServerRequestAlternativeByteHandlerClientData_RTSPClient = nullptr;
   }
   void setServerRequestAlternativeByteHandler(ServerRequestAlternativeByteHandler* handler, RTSPClient *clientData) {
@@ -99,7 +99,7 @@ private:
   TLSState* const fTLSState;
   HashTable* fSubChannelHashTable;
   ServerRequestAlternativeByteHandler* fServerRequestAlternativeByteHandler = nullptr;
-  std::weak_ptr<GenericMediaServer::ClientConnection> fServerRequestAlternativeByteHandlerClientData;
+  std::weak_ptr<ClientConnection> fServerRequestAlternativeByteHandlerClientData;
   RTSPClient *fServerRequestAlternativeByteHandlerClientData_RTSPClient = nullptr;
   void callAlternativeByteHandler(u_int8_t requestByte) {
     if (fServerRequestAlternativeByteHandlerClientData_RTSPClient) {
@@ -271,7 +271,7 @@ void RTPInterface::removeStreamSocket(int sockNum,
 }
 
 void RTPInterface::setServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum,
-							  ServerRequestAlternativeByteHandler* handler, GenericMediaServer::ClientConnection *clientData) {
+							  ServerRequestAlternativeByteHandler* handler, std::weak_ptr<ClientConnection> clientData) {
   env.taskScheduler().assertSameThread();
   SocketDescriptor* socketDescriptor = lookupSocketDescriptor(env, socketNum, NULL, False);
 
@@ -333,7 +333,8 @@ void RTPInterface
   envir().taskScheduler().assertSameThread();
 
   if (fGS) {
-    envir().taskScheduler().turnOnBackgroundReadHandling(fGS->socketNum(), handlerProc, fOwner);
+    envir().taskScheduler().turnOnBackgroundReadHandling(fGS->socketNum(),
+      [handlerProc,owner=fOwner](int mask){handlerProc(owner,mask);});
   }
 
   // Also, receive RTP over TCP, on each of our TCP connections:
@@ -618,7 +619,8 @@ void SocketDescriptor::registerRTPInterface(unsigned char streamChannelId,
       = (TaskScheduler::BackgroundHandlerProc*)&tcpReadHandler;
 //    fEnv << "SocketDescriptor(" << fOurSocketNum << ")::registerRTPInterface(" << ((int)streamChannelId) << "," << rtpInterface->id << "): setBackgroundHandling(tcpReadHandler)\n";
     fEnv.taskScheduler().
-      setBackgroundHandling(fOurSocketNum, SOCKET_READABLE|SOCKET_EXCEPTION, handler, this);
+      setBackgroundHandling(fOurSocketNum, SOCKET_READABLE|SOCKET_EXCEPTION,
+        [this](int mask){tcpReadHandler(this,mask);});
   }
 }
 

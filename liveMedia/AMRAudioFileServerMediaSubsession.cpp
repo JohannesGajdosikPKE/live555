@@ -41,7 +41,7 @@ AMRAudioFileServerMediaSubsession
 }
 
 FramedSource* AMRAudioFileServerMediaSubsession
-::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate, void *rtsp_client_connection) {
+::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate, std::weak_ptr<RTSPClientConnection>) {
   estBitrate = 10; // kbps, estimate
 
   return AMRAudioFileSource::createNew(envir(), fFileName);

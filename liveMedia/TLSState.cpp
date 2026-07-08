@@ -155,8 +155,7 @@ int ClientTLSState::connect(int socketNum) {
     fClient.envir().taskScheduler()
       .setBackgroundHandling(socketNum,
 			     sslGetErrorResult == SSL_ERROR_WANT_READ ? SOCKET_READABLE : SOCKET_WRITABLE,
-			     (TaskScheduler::BackgroundHandlerProc*)&RTSPClient::connectionHandler,
-			     &fClient);
+           [client=&fClient](int mask){RTSPClient::connectionHandler(client,mask);});
     return 0; // connection is pending
   } else {
     fClient.envir().setResultErrMsg("TLS connection to server failed: ", sslGetErrorResult);

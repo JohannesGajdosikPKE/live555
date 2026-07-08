@@ -47,7 +47,7 @@ private:
 private: // redefined virtual functions
   virtual void seekStreamSource(FramedSource* inputSource, double& seekNPT, double streamDuration, u_int64_t& numBytes);
   virtual FramedSource* createNewStreamSource(unsigned clientSessionId,
-                                              unsigned& estBitrate, void *rtsp_client_connection) override;
+                                              unsigned& estBitrate, std::weak_ptr<class RTSPClientConnection> rtsp_client_connection) override;
 
 private:
   MatroskaFileServerDemux& fOurDemux;

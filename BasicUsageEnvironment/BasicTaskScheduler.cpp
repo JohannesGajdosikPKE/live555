@@ -119,7 +119,7 @@ BasicTaskScheduler::BasicTaskScheduler(unsigned maxSchedulerGranularity)
   FD_ZERO(&fExceptionSet);
 
   if (maxSchedulerGranularity > 0) schedulerTickTask(); // ensures that we handle events frequently
-  setBackgroundHandling(command_pipe[0], SOCKET_READABLE | SOCKET_EXCEPTION, CommandRequestHandler, this);
+  setBackgroundHandling(command_pipe[0], SOCKET_READABLE | SOCKET_EXCEPTION, [this](int){commandRequestHandler();});
 }
 
 void BasicTaskScheduler::setUsageEnvironment(UsageEnvironment &e,std::ostream &log) {
@@ -395,12 +395,12 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
       if (FD_ISSET(sock, &readSet) && FD_ISSET(sock, &fReadSet)/*sanity check*/) resultConditionSet |= SOCKET_READABLE;
       if (FD_ISSET(sock, &writeSet) && FD_ISSET(sock, &fWriteSet)/*sanity check*/) resultConditionSet |= SOCKET_WRITABLE;
       if (FD_ISSET(sock, &exceptionSet) && FD_ISSET(sock, &fExceptionSet)/*sanity check*/) resultConditionSet |= SOCKET_EXCEPTION;
-      if ((resultConditionSet&handler->conditionSet) != 0 && handler->handlerProc != NULL) {
+      if ((resultConditionSet&handler->conditionSet) != 0 && handler->handlerFunc) {
         fLastHandledSocketNum = sock;
             // Note: we set "fLastHandledSocketNum" before calling the handler,
             // in case the handler calls "doEventLoop()" reentrantly.
         ANON_ACCOUNT_GUARD(envir());
-        (*handler->handlerProc)(handler->clientData, resultConditionSet);
+        handler->handlerFunc(resultConditionSet);
         break;
       }
     }
@@ -414,12 +414,12 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
         if (FD_ISSET(sock, &readSet) && FD_ISSET(sock, &fReadSet)/*sanity check*/) resultConditionSet |= SOCKET_READABLE;
         if (FD_ISSET(sock, &writeSet) && FD_ISSET(sock, &fWriteSet)/*sanity check*/) resultConditionSet |= SOCKET_WRITABLE;
         if (FD_ISSET(sock, &exceptionSet) && FD_ISSET(sock, &fExceptionSet)/*sanity check*/) resultConditionSet |= SOCKET_EXCEPTION;
-        if ((resultConditionSet&handler->conditionSet) != 0 && handler->handlerProc != NULL) {
+        if ((resultConditionSet&handler->conditionSet) != 0 && handler->handlerFunc) {
           fLastHandledSocketNum = sock;
               // Note: we set "fLastHandledSocketNum" before calling the handler,
               // in case the handler calls "doEventLoop()" reentrantly.
           ANON_ACCOUNT_GUARD(envir());
-          (*handler->handlerProc)(handler->clientData, resultConditionSet);
+          handler->handlerFunc(resultConditionSet);
           break;
         }
       }
@@ -504,7 +504,7 @@ void BasicTaskScheduler::assertValidSocketForSelect(int socketNum) {
 }
 
 void BasicTaskScheduler
-  ::setBackgroundHandling(int socketNum, int conditionSet, BackgroundHandlerProc* handlerProc, void* clientData) {
+  ::setBackgroundHandling(int socketNum, int conditionSet, std::function<void(int mask)> &&handler) {
   assertSameThread();
   if (socketNum < 0) return;
 #if !defined(__WIN32__) && !defined(_WIN32) && defined(FD_SETSIZE)
@@ -528,7 +528,7 @@ void BasicTaskScheduler
     }
   } else {
     assertValidSocketForSelect(socketNum);
-    fHandlers->assignHandler(socketNum, conditionSet, handlerProc, clientData);
+    fHandlers->assignHandler(socketNum, conditionSet, std::move(handler));
     if (socketNum+1 > fMaxNumSockets) {
       fMaxNumSockets = socketNum+1;
     }

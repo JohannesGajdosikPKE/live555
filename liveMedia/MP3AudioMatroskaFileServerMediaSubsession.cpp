@@ -52,7 +52,7 @@ void MP3AudioMatroskaFileServerMediaSubsession
 }
 
 FramedSource* MP3AudioMatroskaFileServerMediaSubsession
-::createNewStreamSource(unsigned clientSessionId, unsigned& estBitrate, void *rtsp_client_connection) {
+::createNewStreamSource(unsigned clientSessionId, unsigned& estBitrate, std::weak_ptr<RTSPClientConnection>) {
   FramedSource* baseMP3Source = fOurDemux.newDemuxedTrack(clientSessionId, fTrackNumber);
   return createNewStreamSourceCommon(baseMP3Source, 0, estBitrate);
 }

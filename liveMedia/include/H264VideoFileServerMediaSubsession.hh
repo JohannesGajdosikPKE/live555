@@ -47,7 +47,7 @@ protected: // redefined virtual functions
   virtual char const* getAuxSDPLine(RTPSink* rtpSink,
 				    FramedSource* inputSource);
   virtual FramedSource* createNewStreamSource(unsigned clientSessionId,
-					      unsigned& estBitrate, void *rtsp_client_connection) override;
+					      unsigned& estBitrate, std::weak_ptr<RTSPClientConnection>) override;
   virtual RTPSink* createNewRTPSink(Groupsock* rtpGroupsock,
                                     unsigned char rtpPayloadTypeIfDynamic,
 				    FramedSource* inputSource);

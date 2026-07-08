@@ -226,8 +226,8 @@ public:
     #define SOCKET_READABLE    (1<<1)
     #define SOCKET_WRITABLE    (1<<2)
     #define SOCKET_EXCEPTION   (1<<3)
-  virtual void setBackgroundHandling(int socketNum, int conditionSet, BackgroundHandlerProc* handlerProc, void* clientData) = 0;
-  void disableBackgroundHandling(int socketNum) { setBackgroundHandling(socketNum, 0, NULL, NULL); }
+  virtual void setBackgroundHandling(int socketNum, int conditionSet, std::function<void(int mask)> &&handler) = 0;
+  void disableBackgroundHandling(int socketNum) { setBackgroundHandling(socketNum, 0, std::function<void(int mask)>()); }
   virtual void moveSocketHandling(int oldSocketNum, int newSocketNum) = 0;
         // Changes any socket handling for "oldSocketNum" so that occurs with "newSocketNum" instead.
 
@@ -253,12 +253,12 @@ public:
       // has been handled.)
 
   // The following two functions are deprecated, and are provided for backwards-compatibility only:
-  void turnOnBackgroundReadHandling(int socketNum, BackgroundHandlerProc* handlerProc, void* clientData) {
+  void turnOnBackgroundReadHandling(int socketNum, std::function<void(int mask)> &&handler) {
     if (env) {
       env->taskScheduler().assertSameThread();
       *env << "turnOnBackgroundReadHandling: calling setBackgroundHandling\n";
     }
-    setBackgroundHandling(socketNum, SOCKET_READABLE, handlerProc, clientData);
+    setBackgroundHandling(socketNum, SOCKET_READABLE, std::move(handler));
   }
   void turnOffBackgroundReadHandling(int socketNum) { disableBackgroundHandling(socketNum); }
 

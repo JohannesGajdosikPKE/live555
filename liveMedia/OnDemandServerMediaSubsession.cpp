@@ -76,7 +76,7 @@ OnDemandServerMediaSubsession::sdpLines(int addressFamily) {
     // dummy (unused) source and "RTPSink" objects,
     // whose parameters we use for the SDP lines:
     unsigned estBitrate;
-    FramedSource* inputSource = createNewStreamSource(0, estBitrate, nullptr);
+    FramedSource* inputSource = createNewStreamSource(0, estBitrate, std::weak_ptr<RTSPClientConnection>());
     if (inputSource == NULL) return NULL; // file not found
 
     Groupsock* dummyGroupsock = createGroupsock(nullAddress(addressFamily), 0);
@@ -121,7 +121,7 @@ void OnDemandServerMediaSubsession
 		      Port& serverRTPPort,
 		      Port& serverRTCPPort,
 		      void*& streamToken,
-		      void *rtsp_client_connection) {
+		      std::weak_ptr<RTSPClientConnection> rtsp_client_connection) {
   if (addressIsNull(destinationAddress)) {
     // normal case - use the client address as the destination address:
     destinationAddress = clientAddress;
@@ -247,7 +247,7 @@ void OnDemandServerMediaSubsession::startStream(unsigned clientSessionId,
 						unsigned short& rtpSeqNum,
 						unsigned& rtpTimestamp,
 						ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-						GenericMediaServer::ClientConnection *serverRequestAlternativeByteHandlerClientData) {
+						std::weak_ptr<ClientConnection> serverRequestAlternativeByteHandlerClientData) {
   StreamState* streamState = (StreamState*)streamToken;
   Destinations* destinations
     = (Destinations*)(fDestinationsHashTable->Lookup((char const*)clientSessionId));
@@ -554,7 +554,7 @@ void StreamState
 ::startPlaying(Destinations* dests, unsigned clientSessionId,
 	       TaskFunc* rtcpRRHandler, void* rtcpRRHandlerClientData,
 	       ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-	       GenericMediaServer::ClientConnection* serverRequestAlternativeByteHandlerClientData) {
+	       std::weak_ptr<ClientConnection> serverRequestAlternativeByteHandlerClientData) {
   if (dests == NULL) return;
 
   if (fRTCPInstance == NULL && fRTPSink != NULL) {

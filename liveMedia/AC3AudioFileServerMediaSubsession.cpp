@@ -41,7 +41,7 @@ AC3AudioFileServerMediaSubsession::~AC3AudioFileServerMediaSubsession() {
 }
 
 FramedSource* AC3AudioFileServerMediaSubsession
-::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate, void *rtsp_client_connection) {
+::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate, std::weak_ptr<RTSPClientConnection>) {
   estBitrate = 48; // kbps, estimate
 
   ByteStreamFileSource* fileSource = ByteStreamFileSource::createNew(envir(), fFileName);

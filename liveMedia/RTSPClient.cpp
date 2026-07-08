@@ -414,7 +414,7 @@ RTSPClient::RTSPClient(UsageEnvironment& env, char const* rtspURL,
     // Use it, and arrange to handle responses to requests sent on it:
     fInputSocketNum = fOutputSocketNum = socketNumToServer;
     env.taskScheduler().setBackgroundHandling(fInputSocketNum, SOCKET_READABLE|SOCKET_EXCEPTION,
-						  (TaskScheduler::BackgroundHandlerProc*)&incomingDataHandler, this);
+      [this](int mask){incomingDataHandler(this,mask);});
   }
 
   // Set the "User-Agent:" header to use in each request:
@@ -965,7 +965,7 @@ int RTSPClient::connectToServer(int socketNum, portNumBits remotePortNum) {
     if (err == EINPROGRESS || err == EWOULDBLOCK) {
       // The connection is pending; we'll need to handle it later.  Wait for our socket to be 'writable', or have an exception.
       envir().taskScheduler().setBackgroundHandling(socketNum, SOCKET_WRITABLE|SOCKET_EXCEPTION,
-						    (TaskScheduler::BackgroundHandlerProc*)&connectionHandler, this);
+        [this](int mask){connectionHandler(this,mask);});
       return 0;
     }
     envir().setResultErrMsg("connect() failed: ");
@@ -975,7 +975,7 @@ int RTSPClient::connectToServer(int socketNum, portNumBits remotePortNum) {
 
   // The connection succeeded.  Arrange to handle responses to requests sent on it:
   envir().taskScheduler().setBackgroundHandling(fInputSocketNum, SOCKET_READABLE|SOCKET_EXCEPTION,
-						(TaskScheduler::BackgroundHandlerProc*)&incomingDataHandler, this);
+    [this](int mask){incomingDataHandler(this,mask);});
 
   return 1;
 }
@@ -1493,7 +1493,7 @@ void RTSPClient::handleAlternativeRequestByte1(u_int8_t requestByte) {
   } else if (requestByte == 0xFE) {
     // Another hack: The new handler of the input TCP socket no longer needs it, so take back control:
     envir().taskScheduler().setBackgroundHandling(fInputSocketNum, SOCKET_READABLE|SOCKET_EXCEPTION,
-						  (TaskScheduler::BackgroundHandlerProc*)&incomingDataHandler, this);
+      [this](int mask){incomingDataHandler(this,mask);});
   } else {
     // Normal case:
     fResponseBuffer[fResponseBytesAlreadySeen] = requestByte;
@@ -1630,7 +1630,7 @@ void RTSPClient::connectionHandler1() {
   // Restore normal handling on our sockets:
   envir().taskScheduler().disableBackgroundHandling(fOutputSocketNum);
   envir().taskScheduler().setBackgroundHandling(fInputSocketNum, SOCKET_READABLE|SOCKET_EXCEPTION,
-						(TaskScheduler::BackgroundHandlerProc*)&incomingDataHandler, this);
+    [this](int mask){incomingDataHandler(this,mask);});
 
   // Move all requests awaiting connection into a new, temporary queue, to clear "fRequestsAwaitingConnection"
   // (so that "sendRequest()" doesn't get confused by "fRequestsAwaitingConnection" being nonempty, and enqueue them all over again).

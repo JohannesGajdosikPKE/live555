@@ -32,6 +32,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 class ServerMediaSubsession; // forward
 class GenericMediaServer;
+class RTSPClientConnection;
 
 // Each single Worker thread may have an instance of a ServerMediaSession to the same stream.
 // TODO: this results in suboptimal performance
@@ -137,14 +138,14 @@ public:
 				   Port& serverRTPPort, // out
 				   Port& serverRTCPPort, // out
 				   void*& streamToken, // out
-				   void *rtsp_client_connection) = 0;
+				   std::weak_ptr<RTSPClientConnection>) = 0;
   virtual void startStream(unsigned clientSessionId, void* streamToken,
 			   TaskFunc* rtcpRRHandler,
 			   void* rtcpRRHandlerClientData,
 			   unsigned short& rtpSeqNum,
 			   unsigned& rtpTimestamp,
 			   ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-			   GenericMediaServer::ClientConnection *serverRequestAlternativeByteHandlerClientData) = 0;
+			   std::weak_ptr<ClientConnection> serverRequestAlternativeByteHandlerClientData) = 0;
   virtual void pauseStream(unsigned clientSessionId, void* streamToken);
   virtual void seekStream(unsigned clientSessionId, void* streamToken, double& seekNPT,
 			  double streamDuration, u_int64_t& numBytes);

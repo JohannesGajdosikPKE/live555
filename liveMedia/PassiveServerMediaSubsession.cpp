@@ -167,7 +167,7 @@ void PassiveServerMediaSubsession
 		      Port& serverRTPPort,
 		      Port& serverRTCPPort,
 		      void*& streamToken,
-		      void *rtsp_client_connection) {
+		      std::weak_ptr<RTSPClientConnection>) {
   isMulticast = True;
   Groupsock *gs = fRTPSink.groupsockBeingUsed();
   if (destinationTTL == 255 && gs) destinationTTL = gs->ttl();
@@ -204,7 +204,7 @@ void PassiveServerMediaSubsession::startStream(unsigned clientSessionId,
 					       unsigned short& rtpSeqNum,
 					       unsigned& rtpTimestamp,
 					       ServerRequestAlternativeByteHandler* /*serverRequestAlternativeByteHandler*/,
-					       GenericMediaServer::ClientConnection* /*serverRequestAlternativeByteHandlerClientData*/) {
+					       std::weak_ptr<ClientConnection> /*serverRequestAlternativeByteHandlerClientData*/) {
   rtpSeqNum = fRTPSink.currentSeqNo();
   rtpTimestamp = fRTPSink.getLastRtpTime();
 

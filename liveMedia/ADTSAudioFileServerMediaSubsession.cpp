@@ -41,7 +41,7 @@ ADTSAudioFileServerMediaSubsession
 }
 
 FramedSource* ADTSAudioFileServerMediaSubsession
-::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate, void *rtsp_client_connection) {
+::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate, std::weak_ptr<RTSPClientConnection>) {
   estBitrate = 96; // kbps, estimate
 
   return ADTSAudioFileSource::createNew(envir(), fFileName);

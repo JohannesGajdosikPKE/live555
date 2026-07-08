@@ -61,14 +61,14 @@ protected: // redefined virtual functions
                                    Port& serverRTPPort,
                                    Port& serverRTCPPort,
                                    void*& streamToken,
-                                   void* rtsp_client_connection) override;
+                                   std::weak_ptr<RTSPClientConnection> rtsp_client_connection) override;
   virtual void startStream(unsigned clientSessionId, void* streamToken,
 			   TaskFunc* rtcpRRHandler,
 			   void* rtcpRRHandlerClientData,
                            unsigned short& rtpSeqNum,
                            unsigned& rtpTimestamp,
 			   ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-			   GenericMediaServer::ClientConnection *serverRequestAlternativeByteHandlerClientData) override;
+			   std::weak_ptr<ClientConnection> serverRequestAlternativeByteHandlerClientData) override;
   virtual float getCurrentNPT(void* streamToken);
   virtual void getRTPSinkandRTCP(void* streamToken,
 				 RTPSink*& rtpSink, RTCPInstance*& rtcp);

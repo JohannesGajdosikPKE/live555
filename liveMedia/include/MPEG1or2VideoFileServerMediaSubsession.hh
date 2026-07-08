@@ -46,7 +46,7 @@ private:
 
 private: // redefined virtual functions
   virtual FramedSource* createNewStreamSource(unsigned clientSessionId,
-					      unsigned& estBitrate, void *rtsp_client_connection) override;
+					      unsigned& estBitrate, std::weak_ptr<RTSPClientConnection>) override;
   virtual RTPSink* createNewRTPSink(Groupsock* rtpGroupsock,
                                     unsigned char rtpPayloadTypeIfDynamic,
 				    FramedSource* inputSource);

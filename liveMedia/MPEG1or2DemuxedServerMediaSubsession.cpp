@@ -49,7 +49,7 @@ MPEG1or2DemuxedServerMediaSubsession::~MPEG1or2DemuxedServerMediaSubsession() {
 }
 
 FramedSource* MPEG1or2DemuxedServerMediaSubsession
-::createNewStreamSource(unsigned clientSessionId, unsigned& estBitrate, void *rtsp_client_connection) {
+::createNewStreamSource(unsigned clientSessionId, unsigned& estBitrate, std::weak_ptr<RTSPClientConnection>) {
   FramedSource* es = NULL;
   do {
     es = fOurDemux.newElementaryStream(clientSessionId, fStreamIdTag);

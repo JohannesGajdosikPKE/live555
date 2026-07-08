@@ -35,8 +35,7 @@ class HandlerDescriptor {
 public:
   int socketNum;
   int conditionSet;
-  TaskScheduler::BackgroundHandlerProc* handlerProc;
-  void* clientData;
+  std::function<void(int mask)> handlerFunc;
 
 private:
   // Descriptors are linked together in a doubly-linked list:
@@ -51,7 +50,7 @@ public:
   HandlerSet();
   virtual ~HandlerSet();
 
-  void assignHandler(int socketNum, int conditionSet, TaskScheduler::BackgroundHandlerProc* handlerProc, void* clientData);
+  void assignHandler(int socketNum, int conditionSet, std::function<void(int mask)> &&handler);
   void clearHandler(int socketNum);
   void moveHandler(int oldSocketNum, int newSocketNum);
 

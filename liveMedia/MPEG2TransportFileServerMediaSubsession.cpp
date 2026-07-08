@@ -77,7 +77,7 @@ void MPEG2TransportFileServerMediaSubsession
 	      void* rtcpRRHandlerClientData, unsigned short& rtpSeqNum,
 	      unsigned& rtpTimestamp,
 	      ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-	      GenericMediaServer::ClientConnection *serverRequestAlternativeByteHandlerClientData) {
+	      std::weak_ptr<ClientConnection> serverRequestAlternativeByteHandlerClientData) {
   if (fIndexFile != NULL) { // we support 'trick play'
     ClientTrickPlayState* client = lookupClient(clientSessionId);
     if (client != NULL && client->areChangingScale()) {
@@ -156,7 +156,7 @@ ClientTrickPlayState* MPEG2TransportFileServerMediaSubsession::newClientTrickPla
 }
 
 FramedSource* MPEG2TransportFileServerMediaSubsession
-::createNewStreamSource(unsigned clientSessionId, unsigned& estBitrate, void *rtsp_client_connection) {
+::createNewStreamSource(unsigned clientSessionId, unsigned& estBitrate, std::weak_ptr<RTSPClientConnection>) {
   // Create the video source:
   unsigned const inputDataChunkSize
     = TRANSPORT_PACKETS_PER_NETWORK_PACKET*TRANSPORT_PACKET_SIZE;

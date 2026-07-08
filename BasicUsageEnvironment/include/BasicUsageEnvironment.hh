@@ -80,11 +80,11 @@ protected:
 
 protected:
   // Redefined virtual functions:
-  virtual void SingleStep(unsigned maxDelayTime);
+  virtual void SingleStep(unsigned maxDelayTime) override;
 
   void assertValidSocketForSelect(int socketNum);
-  virtual void setBackgroundHandling(int socketNum, int conditionSet, BackgroundHandlerProc* handlerProc, void* clientData);
-  virtual void moveSocketHandling(int oldSocketNum, int newSocketNum);
+  virtual void setBackgroundHandling(int socketNum, int conditionSet, std::function<void(int mask)> &&handler) override;
+  virtual void moveSocketHandling(int oldSocketNum, int newSocketNum) override;
 
 protected:
   unsigned fMaxSchedulerGranularity;

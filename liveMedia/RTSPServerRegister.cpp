@@ -214,28 +214,26 @@ void RTSPServer::implementCmd_REGISTER(UsageEnvironment &env, char const* /*cmd*
 }
 
 // Special mechanism for handling our custom "REGISTER" command:
-
-RTSPServer::RTSPClientConnection::ParamsForREGISTER
+RTSPClientConnection::ParamsForREGISTER
 ::ParamsForREGISTER(char const* cmd/*"REGISTER" or "DEREGISTER"*/,
-		    RTSPServer::RTSPClientConnection* ourConnection, char const* url, char const* urlSuffix,
+		    RTSPClientConnection* ourConnection, char const* url, char const* urlSuffix,
 		    Boolean reuseConnection, Boolean deliverViaTCP, char const* proxyURLSuffix)
   : connection_env(ourConnection->envir()), connection_id(ourConnection->getId()),
     fCmd(strDup(cmd)), fOurConnection(std::static_pointer_cast<RTSPClientConnection>(ourConnection->shared_from_this())), fURL(strDup(url)), fURLSuffix(strDup(urlSuffix)),
     fReuseConnection(reuseConnection), fDeliverViaTCP(deliverViaTCP), fProxyURLSuffix(strDup(proxyURLSuffix)) {
 }
 
-RTSPServer::RTSPClientConnection::ParamsForREGISTER::~ParamsForREGISTER() {
+RTSPClientConnection::ParamsForREGISTER::~ParamsForREGISTER() {
   delete[] (char*)fCmd; delete[] fURL; delete[] fURLSuffix; delete[] fProxyURLSuffix;
 }
 
 #define DELAY_USECS_AFTER_REGISTER_RESPONSE 100000 /*100ms*/
 
-void RTSPServer
-::RTSPClientConnection::handleCmd_REGISTER(char const* cmd/*"REGISTER" or "DEREGISTER"*/,
+void RTSPClientConnection::handleCmd_REGISTER(char const* cmd/*"REGISTER" or "DEREGISTER"*/,
 					   char const* url, char const* urlSuffix, char const* fullRequestStr,
 					   Boolean reuseConnection, Boolean deliverViaTCP, char const* proxyURLSuffix) {
   char* responseStr;
-  if (fOurRTSPServer.weImplementREGISTER(envir(), cmd, proxyURLSuffix, responseStr)) {
+  if (getOurRTSPServer().weImplementREGISTER(envir(), cmd, proxyURLSuffix, responseStr)) {
     // The "REGISTER"/"DEREGISTER" command - if we implement it - may require access control:
     if (!authenticationOK(cmd, urlSuffix, fullRequestStr)) return;
     
@@ -302,26 +300,26 @@ void parseTransportHeaderForREGISTER(char const* buf,
   delete[] field;
 }
 
-void RTSPServer::RTSPClientConnection::continueHandlingREGISTER(ParamsForREGISTER* params) {
+void RTSPClientConnection::continueHandlingREGISTER(ParamsForREGISTER* params) {
   params->connection_env.taskScheduler().assertSameThread();
   const auto connection(params->fOurConnection.lock());
   if (connection) {
     connection->continueHandlingREGISTER1(params);
       // releasing connection may destruct *connection, which is in the correct thread.
   } else {
-    params->connection_env << "RTSPServer::RTSPClientConnection(" << params->connection_id << ")::continueHandlingREGISTER: "
+    params->connection_env << "RTSPClientConnection(" << params->connection_id << ")::continueHandlingREGISTER: "
                               "Connection has been closed in the meantime, "
                               "cannot do anything\n";
   }
 }
 
-void RTSPServer::RTSPClientConnection::continueHandlingREGISTER1(ParamsForREGISTER* params) {
+void RTSPClientConnection::continueHandlingREGISTER1(ParamsForREGISTER* params) {
   --fScheduledDelayedTask;
 
   // Reuse our socket if requested:
   int socketNumToBackEndServer = params->fReuseConnection ? fClientOutputSocket : -1;
 
-  RTSPServer* ourServer = &fOurRTSPServer; // copy the pointer now, in case we "delete this" below
+  RTSPServer* ourServer = &getOurRTSPServer(); // copy the pointer now, in case we "delete this" below
   UsageEnvironment &env(envir());
   
   if (socketNumToBackEndServer >= 0) {
@@ -330,10 +328,10 @@ void RTSPServer::RTSPClientConnection::continueHandlingREGISTER1(ParamsForREGIST
     // deleting this.
     fClientInputSocket = fClientOutputSocket = -1; // so the socket doesn't get closed when we get deleted
       // may result in destructing of *this, thread is already ok.
-    ourServer->removeClientConnection(this);
+    ourServer->removeClientConnection(*this);
   } else if (!fIsActive && fRecursionCount <= 0 && fScheduledDelayedTask <= 0) {
       // may result in destructing of *this, thread is already ok.
-    ourServer->removeClientConnection(this);
+    ourServer->removeClientConnection(*this);
   }
   
   ourServer->implementCmd_REGISTER(env, params->fCmd,

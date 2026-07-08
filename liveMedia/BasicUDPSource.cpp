@@ -50,7 +50,7 @@ void BasicUDPSource::doGetNextFrame() {
   if (!fHaveStartedReading) {
     // Await incoming packets:
     envir().taskScheduler().turnOnBackgroundReadHandling(fInputGS->socketNum(),
-	 (TaskScheduler::BackgroundHandlerProc*)&incomingPacketHandler, this);
+      [this](int){incomingPacketHandler1();});
     fHaveStartedReading = True;
   }
 }

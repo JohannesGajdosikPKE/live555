@@ -126,7 +126,7 @@ void MP3FileSource::doGetNextFrame() {
   if (!fHaveStartedReading) {
     // Await readable data from the file:
     envir().taskScheduler().turnOnBackgroundReadHandling(fileno(fFid),
-		 (TaskScheduler::BackgroundHandlerProc*)&fileReadableHandler, this);
+      [this](int mask){fileReadableHandler(this,mask);});
     fHaveStartedReading = True;
     return;
   }

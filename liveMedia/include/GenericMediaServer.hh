@@ -43,6 +43,89 @@ class ServerMediaSession;
 #include <map>
 #include <atomic>
 
+class GenericMediaServer;
+
+  // The state of a TCP connection used by a client:
+class ClientConnection : public std::enable_shared_from_this<ClientConnection> {
+protected:
+  ClientConnection(UsageEnvironment& threaded_env,GenericMediaServer& ourServer,
+                   int clientSocket, struct sockaddr_storage const& clientAddr,
+                   Boolean useTLS);
+  void afterConstruction(void);
+public:
+  virtual ~ClientConnection();
+  UsageEnvironment& envir() { return threaded_env; }
+  typedef void *IdType;
+  IdType getId(void) const {return id;}
+  int getSocket(void) const {return fOurSocket;}
+  int getClientOutputSocket(void) const {return fClientOutputSocket;}
+  const struct sockaddr_storage &getClientAddr(void) const {return fClientAddr;}
+protected:
+  void closeSockets();
+
+  static void incomingRequestHandler(void*, int /*mask*/);
+  void incomingRequestHandler();
+  virtual void handleRequestBytes(int newBytesRead) = 0;
+  void resetRequestBuffer();
+
+protected:
+  UsageEnvironment &threaded_env;
+/*
+  void lookupServerMediaSession(UsageEnvironment& env, char const* streamName,
+                                void *context,
+                                lookupServerMediaSessionCompletionFunc* completionFunc,
+                                Boolean isFirstLookupInSession = True) {
+    fOurServer.lookupServerMediaSession(env, streamName, completionFunc, context, isFirstLookupInSession);
+  }
+  void removeServerMediaSession(const ServerMediaSession &serverMediaSession) {
+    fOurServer.removeServerMediaSession(serverMediaSession);
+  }
+  void removeFromServer(void) {
+    fOurServer.removeClientConnection(this);
+  }
+*/
+  GenericMediaServer &fOurServer;
+  const IdType id;
+protected:
+  int fOurSocket;
+  int fClientOutputSocket; // for RTSPClientConnection only
+  struct sockaddr_storage fClientAddr;
+  unsigned char fRequestBuffer[REQUEST_BUFFER_SIZE];
+  unsigned char fResponseBuffer[RESPONSE_BUFFER_SIZE];
+  unsigned fRequestBytesAlreadySeen, fRequestBufferBytesLeft;
+
+    // Optional support for TLS:
+  ServerTLSState fTLS;
+  ServerTLSState* fInputTLS; // by default, just points to "fTLS", but subclasses may change
+  ServerTLSState* fOutputTLS; // ditto
+};
+
+// The state of an individual client session (using one or more sequential TCP connections) handled by a server:
+class ClientSession {
+public:
+  void deleteThis(void);
+  u_int32_t getOurSessionId(void) const {return fOurSessionId;}
+  std::shared_ptr<ServerMediaSession> getOurServerMediaSession(void) const {return fOurServerMediaSession;}
+protected:
+  ClientSession(UsageEnvironment& threaded_env, GenericMediaServer& ourServer, u_int32_t sessionId);
+  virtual ~ClientSession();
+
+public:
+  UsageEnvironment &envir() {return threaded_env;}
+  void noteLiveness();
+protected:
+  static void noteClientLiveness(ClientSession* clientSession);
+  static void livenessTimeoutTask(ClientSession* clientSession);
+
+protected:
+  UsageEnvironment &threaded_env;
+  GenericMediaServer& fOurServer;
+  const u_int32_t fOurSessionId;
+  std::shared_ptr<ServerMediaSession> fOurServerMediaSession;
+  TaskToken fLivenessCheckTask;
+};
+
+
 // Typedef for a handler function that gets called when "lookupServerMediaSession()"
 // (defined below) completes:
 typedef void lookupServerMediaSessionCompletionFunc(void* clientData,
@@ -85,6 +168,24 @@ public:
     return (unsigned)fClientSessions.size();
   }
 
+  void addClientConnection(const std::shared_ptr<ClientConnection> &c) {
+    std::lock_guard<std::recursive_mutex> guard(fClientConnections_mutex);
+    auto rc(fClientConnections.insert(std::pair<ClientConnection::IdType,std::shared_ptr<ClientConnection> >(c->getId(),c)));
+    if (!rc.second) {
+      envir() << "GenericMediaServer::addClientConnection(" << c->getId() << "): fatal: double id\n";
+      abort();
+    }
+  }
+
+  void removeClientConnection(ClientConnection &client_connection) {
+    std::lock_guard<std::recursive_mutex> guard(fClientConnections_mutex);
+    fClientConnections.erase(client_connection.getId());
+  }
+  void removeClientConnection(std::weak_ptr<ClientConnection> c) {
+    auto client_connection(c.lock());
+    if (client_connection) removeClientConnection(*client_connection);
+  }
+
   // https://stackoverflow.com/questions/4792449/c0x-has-no-semaphores-how-to-synchronize-threads
   class Semaphore {
       std::mutex m;
@@ -125,85 +226,8 @@ protected:
 
   void setTLSFileNames(char const* certFileName, char const* privKeyFileName);
 
-public: // should be protected, but some old compilers complain otherwise
-  // The state of a TCP connection used by a client:
-  class ClientConnection : public std::enable_shared_from_this<ClientConnection> {
-  protected:
-    ClientConnection(UsageEnvironment& threaded_env,GenericMediaServer& ourServer,
-		     int clientSocket, struct sockaddr_storage const& clientAddr,
-		     Boolean useTLS);
-    void afterConstruction(void);
-  public:
-    virtual ~ClientConnection();
-    UsageEnvironment& envir() { return threaded_env; }
-    typedef void *IdType;
-    IdType getId(void) const {return id;}
-    int getSocket(void) const {return fOurSocket;}
-    const struct sockaddr_storage &getClientAddr(void) const {return fClientAddr;}
-  protected:
-    void closeSockets();
-
-    static void incomingRequestHandler(void*, int /*mask*/);
-    void incomingRequestHandler();
-    virtual void handleRequestBytes(int newBytesRead) = 0;
-    void resetRequestBuffer();
-
-  protected:
-    UsageEnvironment &threaded_env;
-    void lookupServerMediaSession(UsageEnvironment& env, char const* streamName,
-                                  void *context,
-                                  lookupServerMediaSessionCompletionFunc* completionFunc,
-                                  Boolean isFirstLookupInSession = True) {
-      fOurServer.lookupServerMediaSession(env, streamName, completionFunc, context, isFirstLookupInSession);
-    }
-    void removeServerMediaSession(const ServerMediaSession &serverMediaSession) {
-      fOurServer.removeServerMediaSession(serverMediaSession);
-    }
-    void removeFromServer(void) {
-      fOurServer.removeClientConnection(this);
-    }
-  private:
-      // tread safety: do not allow wild access to fOurServer
-    GenericMediaServer& fOurServer;
-    const IdType id;
-  protected:
-    int fOurSocket;
-    int fClientOutputSocket; // for RTSPClientConnection only
-    struct sockaddr_storage fClientAddr;
-    unsigned char fRequestBuffer[REQUEST_BUFFER_SIZE];
-    unsigned char fResponseBuffer[RESPONSE_BUFFER_SIZE];
-    unsigned fRequestBytesAlreadySeen, fRequestBufferBytesLeft;
-
-    // Optional support for TLS:
-    ServerTLSState fTLS;
-    ServerTLSState* fInputTLS; // by default, just points to "fTLS", but subclasses may change
-    ServerTLSState* fOutputTLS; // ditto
-  };
-
-  // The state of an individual client session (using one or more sequential TCP connections) handled by a server:
-  class ClientSession {
-  public:
-    void deleteThis(void);
-    u_int32_t getOurSessionId(void) const {return fOurSessionId;}
-    std::shared_ptr<ServerMediaSession> getOurServerMediaSession(void) const {return fOurServerMediaSession;}
-  protected:
-    ClientSession(UsageEnvironment& threaded_env, GenericMediaServer& ourServer, u_int32_t sessionId);
-    virtual ~ClientSession();
-
-  public:
-    UsageEnvironment &envir() {return threaded_env;}
-    void noteLiveness();
-  protected:
-    static void noteClientLiveness(ClientSession* clientSession);
-    static void livenessTimeoutTask(ClientSession* clientSession);
-
-  protected:
-    UsageEnvironment &threaded_env;
-    GenericMediaServer& fOurServer;
-    const u_int32_t fOurSessionId;
-    std::shared_ptr<ServerMediaSession> fOurServerMediaSession;
-    TaskToken fLivenessCheckTask;
-  };
+  friend class ClientConnection;
+  friend class ClientSession;
 
 protected:
   void createNewClientConnection(int clientSocket, struct sockaddr_storage const& clientAddr) {
@@ -226,17 +250,6 @@ protected:
   std::shared_ptr<ClientSession> lookupClientSession(u_int32_t sessionId);
   std::shared_ptr<ClientSession> lookupClientSession(char const* sessionIdStr);
 
-  // An iterator over our "ServerMediaSession" objects:
-  // while using you must lock the sms_mutex
-/*  class ServerMediaSessionIterator {
-  public:
-    ServerMediaSessionIterator(GenericMediaServer& server);
-    virtual ~ServerMediaSessionIterator();
-    ServerMediaSession* next();
-  private:
-    HashTable::Iterator* fOurIterator;
-  };
-*/
 protected:
     // The basic, synchronous "ServerMediaSession" lookup operation; only for subclasses:
   std::shared_ptr<ServerMediaSession> getServerMediaSession(UsageEnvironment &env,char const* streamName);
@@ -257,18 +270,6 @@ protected:
   UsageEnvironment& getBestThreadedUsageEnvironment(void);
 
   virtual UsageEnvironment *createNewUsageEnvironment(TaskScheduler &scheduler);
-  void addClientConnection(const std::shared_ptr<ClientConnection> &c) {
-    std::lock_guard<std::recursive_mutex> guard(fClientConnections_mutex);
-    auto rc(fClientConnections.insert(std::pair<ClientConnection::IdType,std::shared_ptr<ClientConnection> >(c->getId(),c)));
-    if (!rc.second) {
-      envir() << "GenericMediaServer::addClientConnection(" << c->getId() << "): fatal: double id\n";
-      abort();
-    }
-  }
-  void removeClientConnection(ClientConnection *c) {
-    std::lock_guard<std::recursive_mutex> guard(fClientConnections_mutex);
-    fClientConnections.erase(c->getId());
-  }
   
   typedef std::map<std::string,std::weak_ptr<ServerMediaSession> > ServerMediaSessionMap;
   typedef std::map<UsageEnvironment*,ServerMediaSessionMap> ServerMediaSessionEnvMap;

@@ -67,8 +67,8 @@ private: // redefined virtual functions
                            void* rtcpRRHandlerClientData,
                            unsigned short& rtpSeqNum,
                            unsigned& rtpTimestamp,
-			   ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-                           GenericMediaServer::ClientConnection *serverRequestAlternativeByteHandlerClientData) override;
+			                     ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
+                           std::weak_ptr<ClientConnection> serverRequestAlternativeByteHandlerClientData) override;
   virtual void pauseStream(unsigned clientSessionId, void* streamToken);
   virtual void seekStream(unsigned clientSessionId, void* streamToken, double& seekNPT, double streamDuration, u_int64_t& numBytes);
   virtual void setStreamScale(unsigned clientSessionId, void* streamToken, float scale);
@@ -76,7 +76,7 @@ private: // redefined virtual functions
 
   // The virtual functions that are usually implemented by "ServerMediaSubsession"s:
   virtual FramedSource* createNewStreamSource(unsigned clientSessionId,
-					      unsigned& estBitrate, void *rtsp_client_connection) override;
+					      unsigned& estBitrate, std::weak_ptr<RTSPClientConnection>) override;
   virtual RTPSink* createNewRTPSink(Groupsock* rtpGroupsock,
                                     unsigned char rtpPayloadTypeIfDynamic,
 				    FramedSource* inputSource);

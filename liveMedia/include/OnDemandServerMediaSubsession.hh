@@ -22,18 +22,10 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #ifndef _ON_DEMAND_SERVER_MEDIA_SUBSESSION_HH
 #define _ON_DEMAND_SERVER_MEDIA_SUBSESSION_HH
 
-#ifndef _SERVER_MEDIA_SESSION_HH
 #include "ServerMediaSession.hh"
-#endif
-#ifndef _RTP_SINK_HH
 #include "RTPSink.hh"
-#endif
-#ifndef _BASIC_UDP_SINK_HH
 #include "BasicUDPSink.hh"
-#endif
-#ifndef _RTCP_HH
 #include "RTCP.hh"
-#endif
 
 #include "GenericMediaServer.hh"
 
@@ -60,14 +52,14 @@ protected: // redefined virtual functions
                                    Port& serverRTPPort,
                                    Port& serverRTCPPort,
                                    void*& streamToken,
-                                   void *rtsp_client_connection) override;
+                                   std::weak_ptr<RTSPClientConnection>) override;
   virtual void startStream(unsigned clientSessionId, void* streamToken,
 			   TaskFunc* rtcpRRHandler,
 			   void* rtcpRRHandlerClientData,
 			   unsigned short& rtpSeqNum,
 			   unsigned& rtpTimestamp,
 			   ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-			   GenericMediaServer::ClientConnection *serverRequestAlternativeByteHandlerClientData) override;
+			   std::weak_ptr<ClientConnection> serverRequestAlternativeByteHandlerClientData) override;
   virtual void pauseStream(unsigned clientSessionId, void* streamToken);
   virtual void seekStream(unsigned clientSessionId, void* streamToken, double& seekNPT, double streamDuration, u_int64_t& numBytes);
   virtual void seekStream(unsigned clientSessionId, void* streamToken, char*& absStart, char*& absEnd);
@@ -98,7 +90,7 @@ protected: // new virtual functions, possibly redefined by subclasses
 
 protected: // new virtual functions, defined by all subclasses
   virtual FramedSource* createNewStreamSource(unsigned clientSessionId,
-					      unsigned& estBitrate, void *rtsp_client_connection) = 0;
+					      unsigned& estBitrate, std::weak_ptr<RTSPClientConnection>) = 0;
       // "estBitrate" is the stream's estimated bitrate, in kbps
   virtual RTPSink* createNewRTPSink(Groupsock* rtpGroupsock,
 				    unsigned char rtpPayloadTypeIfDynamic,
@@ -192,7 +184,7 @@ public:
   void startPlaying(Destinations* destinations, unsigned clientSessionId,
 		    TaskFunc* rtcpRRHandler, void* rtcpRRHandlerClientData,
 		    ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-		    GenericMediaServer::ClientConnection *serverRequestAlternativeByteHandlerClientData);
+		    std::weak_ptr<ClientConnection> serverRequestAlternativeByteHandlerClientData);
   void pause();
   void sendRTCPAppPacket(u_int8_t subtype, char const* name,
 			 u_int8_t* appDependentData, unsigned appDependentDataSize);

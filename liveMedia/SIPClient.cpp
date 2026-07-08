@@ -300,7 +300,7 @@ char* SIPClient::invite1(Authenticator* authenticator) {
     fEventLoopStopFlag = 0;
     TaskScheduler& sched = envir().taskScheduler(); // abbrev.
     sched.turnOnBackgroundReadHandling(fOurSocket->socketNum(),
-				       &inviteResponseHandler, this);
+      [this](int mask){inviteResponseHandler(this,mask);});
     fTimerALen = 1*fT1; // initially
     fTimerACount = 0; // initially
     fTimerA = sched.scheduleDelayedTask(fTimerALen, timerAHandler, this);

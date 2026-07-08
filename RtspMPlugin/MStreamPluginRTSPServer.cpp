@@ -230,12 +230,12 @@ void PrintBytes(const uint8_t *data, int size, int64_t time) {
   std::cout << std::dec << std::endl;
 }
 
-class MediaServerPluginRTSPServer::MyRTSPClientSession : public RTSPServer::RTSPClientSession {
+class MediaServerPluginRTSPServer::MyRTSPClientSession : public RTSPClientSession {
 public:
   MyRTSPClientSession(UsageEnvironment& env, RTSPServer& ourServer, u_int32_t sessionId)
     : RTSPClientSession(env, ourServer, sessionId) {}
   ~MyRTSPClientSession(void);
-  int getSocket(void) const {return fOurClientConnection ? fOurClientConnection->getSocket() : 0;}
+  int getSocket(void) const {const auto c(getOurClientConnection());return c ? c->getSocket() : 0;}
   using RTSPClientSession::fOurServerMediaSession;
 protected:
   void informClientConnect(void) override;
@@ -247,7 +247,7 @@ protected:
   std::shared_ptr<IMStream> stream;
 };
 
-std::shared_ptr<GenericMediaServer::ClientSession> MediaServerPluginRTSPServer::createNewClientSession(UsageEnvironment& env, u_int32_t sessionId) {
+std::shared_ptr<ClientSession> MediaServerPluginRTSPServer::createNewClientSession(UsageEnvironment& env, u_int32_t sessionId) {
   return std::make_shared<MyRTSPClientSession>(env, *this, sessionId);
 }
 
@@ -1013,11 +1013,11 @@ MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(ServerType type, UsageE
   }
   if (m_HTTPServerSocketIPv4 >= 0) {
     env.taskScheduler().turnOnBackgroundReadHandling(m_HTTPServerSocketIPv4,
-      IncomingConnectionHandlerHTTPIPv4, this);
+      [this](int){incomingConnectionHandlerHTTPIPv4();});
   }
   if (m_HTTPServerSocketIPv6 >= 0) {
     env.taskScheduler().turnOnBackgroundReadHandling(m_HTTPServerSocketIPv6,
-      IncomingConnectionHandlerHTTPIPv6, this);
+      [this](int){incomingConnectionHandlerHTTPIPv6();});
   }
   env << "MediaServerPluginRTSPServer::MediaServerPluginRTSPServer(" << ServerTypeToString(type) << "): end\n";
 }
@@ -1128,14 +1128,13 @@ public:
                                   MediaServerPluginRTSPServer::StreamMapEntry &e,
                                   const SubsessionInfo *info,
                                   unsigned clientSessionId,
-                                  void *rtsp_client_connection) {
+                                  std::weak_ptr<RTSPClientConnection> rtsp_client_connection) {
     std::ostringstream o;
     o << e.name << ',' << info->getRtpPayloadFormatName()
       << ",0x" << std::hex << std::setw(8) << std::setfill('0')
       << clientSessionId << std::dec;
-    RTSPServer::RTSPClientConnection *const client_connection
-      = reinterpret_cast<RTSPServer::RTSPClientConnection*>(rtsp_client_connection);
-    if (rtsp_client_connection) {
+    const std::shared_ptr<RTSPClientConnection> client_connection(rtsp_client_connection.lock());
+    if (client_connection) {
       const struct sockaddr_storage& addr(client_connection->getClientAddr());
       if (((struct sockaddr*)&addr)->sa_family == AF_INET) { // no AF_INET6
         const unsigned int ip = ntohl(((struct sockaddr_in*)&addr)->sin_addr.s_addr);
@@ -1168,13 +1167,9 @@ private:
   MyFrameSource &operator=(MyFrameSource&);
   MyFrameSource(UsageEnvironment &env,const std::string &name,
                 unsigned clientSessionId,
-                RTSPServer::RTSPClientConnection *client_connection)
-      : FramedSource(env),name(name),client_session_id(clientSessionId) {
-    if (client_connection) {
-      MyFrameSource::client_connection
-        = std::static_pointer_cast<RTSPServer::RTSPClientConnection>(
-            client_connection->shared_from_this());
-    }
+                std::shared_ptr<RTSPClientConnection> client_connection)
+      : FramedSource(env),name(name),client_session_id(clientSessionId),
+        client_connection(client_connection) {
     env << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::MyFrameSource\n";
   }
   ~MyFrameSource(void) override {
@@ -1226,7 +1221,7 @@ private:
 //              envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::connect::l: empty frame received\n";
 //            } else {
                 // prevent premature deletion:
-              std::shared_ptr<RTSPServer::RTSPClientSession> client_session
+              std::shared_ptr<RTSPClientSession> client_session
                 = server.lookupClientSession(client_session_id);
               if (client_session.use_count() == 0) {
                 envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::connect::l: "
@@ -1251,7 +1246,7 @@ private:
                   }
 //                  envir() << "MyFrameSource(session_id=" << (void*)client_session_id << ",id=" << id << "," << name.c_str() << ")::connect::l::l: "
 //                             "frame in connection thread, dequeued task(" << (void*)task_nr << ")\n";
-                  std::shared_ptr<RTSPServer::RTSPClientSession> client_session_to_delete;
+                  std::shared_ptr<RTSPClientSession> client_session_to_delete;
 #ifdef REGISTERED_TASKS
                   unsigned int task_queue_size;
                   {
@@ -1322,9 +1317,8 @@ private:
                   }
                   if (client_session_ptr->envir().taskScheduler().isSameThread()) {
                     if (client_session_to_delete) {
-                      RTSPServer::RTSPClientConnection* const client_connection(client_session_to_delete->getOurClientConnection());
+                      const std::shared_ptr<RTSPClientConnection> client_connection(client_session_to_delete->getOurClientConnection());
                       if (client_connection) {
-                        auto tmp(client_connection->shared_from_this());
                         client_session_to_delete->reclaimStreamStates();
                         client_session_to_delete->deleteThis();
                           // here the FrameSource will get destructed
@@ -1343,9 +1337,8 @@ private:
                       [client_session=std::move(client_session_ptr),
                        to_delete=std::move(client_session_to_delete)](uint64_t task_nr) {
                         if (to_delete) {
-                          RTSPServer::RTSPClientConnection* const client_connection(to_delete->getOurClientConnection());
+                          const std::shared_ptr<RTSPClientConnection> client_connection(to_delete->getOurClientConnection());
                           if (client_connection) {
-                            auto tmp(client_connection->shared_from_this());
                             to_delete->reclaimStreamStates();
                             to_delete->deleteThis();
                               // here the FrameSource will get destructed
@@ -1429,7 +1422,7 @@ public:
   const std::string name;
   const unsigned int client_session_id;
 private:
-  std::shared_ptr<RTSPServer::RTSPClientConnection> client_connection;
+  const std::shared_ptr<RTSPClientConnection> client_connection;
   std::deque<Frame> my_frame_queue;
 #ifdef REGISTERED_TASKS
   std::list<uint64_t> registered_tasks;
@@ -1758,7 +1751,7 @@ protected:
     envir() << "MyServerMediaSubsession(" << id << ")::MyServerMediaSubsession(" << entry->name.c_str() << "," << SubsessionInfoToString(*info) << ")\n";
     entry->keepAlive();
   }
-  MyFrameSource *createFrameSource(unsigned clientSessionId, void *rtsp_client_connection) {
+  MyFrameSource *createFrameSource(unsigned clientSessionId, std::weak_ptr<RTSPClientConnection> rtsp_client_connection) {
     const std::shared_ptr<MediaServerPluginRTSPServer::StreamMapEntry> e(entry.lock());
     if (e) {
       MyFrameSource *const rval = MyFrameSource::createNew(envir(),*e,info,
@@ -1897,7 +1890,7 @@ protected:
   const char *getAuxSDPLine(RTPSink*,FramedSource*) override {return info->getExtraInfo();}
   FramedSource *createNewStreamSource(unsigned clientSessionId,
                                       unsigned &estBitrate,
-                                      void *rtsp_client_connection) override {
+                                      std::weak_ptr<RTSPClientConnection> rtsp_client_connection) override {
     FramedSource *rval = createFrameSource(clientSessionId, rtsp_client_connection);
     if (rval) {
       estBitrate = info->getEstBitrate(); // kbps, estimate
@@ -1949,7 +1942,7 @@ protected:
   const char *getAuxSDPLine(RTPSink*,FramedSource*) override {return info->getExtraInfo();}
   FramedSource *createNewStreamSource(unsigned clientSessionId,
                                       unsigned &estBitrate,
-                                      void *rtsp_client_connection) override {
+                                      std::weak_ptr<RTSPClientConnection> rtsp_client_connection) override {
     FramedSource *rval = createFrameSource(clientSessionId, rtsp_client_connection);
     if (rval) {
       estBitrate = info->getEstBitrate(); // kbps, estimate
@@ -1992,7 +1985,7 @@ public:
 protected:
   FramedSource *createNewStreamSource(unsigned clientSessionId,
                                       unsigned &estBitrate,
-                                      void *rtsp_client_connection) override {
+                                      std::weak_ptr<RTSPClientConnection> rtsp_client_connection) override {
     FramedSource *rval = createFrameSource(clientSessionId, rtsp_client_connection);
     if (rval) {
       estBitrate = info->getEstBitrate(); // kbps, estimate
@@ -2402,7 +2395,7 @@ public:
 protected:
   FramedSource *createNewStreamSource(unsigned clientSessionId,
                                       unsigned &estBitrate,
-                                      void *rtsp_client_connection) override {
+                                      std::weak_ptr<RTSPClientConnection> rtsp_client_connection) override {
     FramedSource *rval = createFrameSource(clientSessionId, rtsp_client_connection);
     if (rval) {
       estBitrate = info->getEstBitrate(); // kbps, estimate
@@ -2532,7 +2525,7 @@ public:
 protected:
   FramedSource *createNewStreamSource(unsigned clientSessionId,
                                       unsigned &estBitrate,
-                                      void *rtsp_client_connection) override {
+                                      std::weak_ptr<RTSPClientConnection> rtsp_client_connection) override {
     FramedSource *rval = createFrameSource(clientSessionId, rtsp_client_connection);
     if (rval) {
       estBitrate = info->getEstBitrate(); // kbps, estimate
@@ -2572,7 +2565,7 @@ public:
 protected:
   FramedSource *createNewStreamSource(unsigned clientSessionId,
                                       unsigned &estBitrate,
-                                      void *rtsp_client_connection) override {
+                                      std::weak_ptr<RTSPClientConnection> rtsp_client_connection) override {
     FramedSource *rval = createFrameSource(clientSessionId, rtsp_client_connection);
     if (rval) {
       estBitrate = info->getEstBitrate();
@@ -2676,7 +2669,7 @@ MediaServerPluginRTSPServer::getStreamMapEntry(const std::string &stream_name) c
 void MediaServerPluginRTSPServer
 ::lookupServerMediaSession(UsageEnvironment &env, char const *streamName,
                            lookupServerMediaSessionCompletionFunc *completionFunc,
-                           void *completionClientData, // actually RTSPServer::RTSPClientSession
+                           void *completionClientData, // actually RTSPClientSession
                            Boolean isFirstLookupInSession) {
   if (!completionFunc) abort();
   if (!streamName) abort();
