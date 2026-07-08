@@ -203,8 +203,7 @@ void PassiveServerMediaSubsession::startStream(unsigned clientSessionId,
 					       void* rtcpRRHandlerClientData,
 					       unsigned short& rtpSeqNum,
 					       unsigned& rtpTimestamp,
-					       ServerRequestAlternativeByteHandler* /*serverRequestAlternativeByteHandler*/,
-					       std::weak_ptr<ClientConnection> /*serverRequestAlternativeByteHandlerClientData*/) {
+					       ServerRequestAlternativeByteHandler && /*serverRequestAlternativeByteHandler*/) {
   rtpSeqNum = fRTPSink.currentSeqNo();
   rtpTimestamp = fRTPSink.getLastRtpTime();
 

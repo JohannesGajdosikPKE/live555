@@ -76,8 +76,7 @@ void MPEG2TransportFileServerMediaSubsession
 ::startStream(unsigned clientSessionId, void* streamToken, TaskFunc* rtcpRRHandler,
 	      void* rtcpRRHandlerClientData, unsigned short& rtpSeqNum,
 	      unsigned& rtpTimestamp,
-	      ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-	      std::weak_ptr<ClientConnection> serverRequestAlternativeByteHandlerClientData) {
+	      ServerRequestAlternativeByteHandler &&serverRequestAlternativeByteHandler) {
   if (fIndexFile != NULL) { // we support 'trick play'
     ClientTrickPlayState* client = lookupClient(clientSessionId);
     if (client != NULL && client->areChangingScale()) {
@@ -94,7 +93,7 @@ void MPEG2TransportFileServerMediaSubsession
   OnDemandServerMediaSubsession::startStream(clientSessionId, streamToken,
 					     rtcpRRHandler, rtcpRRHandlerClientData,
 					     rtpSeqNum, rtpTimestamp,
-					     serverRequestAlternativeByteHandler, serverRequestAlternativeByteHandlerClientData);
+					     std::move(serverRequestAlternativeByteHandler));
 }
 
 void MPEG2TransportFileServerMediaSubsession

@@ -63,27 +63,12 @@ public:
 protected:
   void closeSockets();
 
-  static void incomingRequestHandler(void*, int /*mask*/);
   void incomingRequestHandler();
   virtual void handleRequestBytes(int newBytesRead) = 0;
   void resetRequestBuffer();
 
 protected:
   UsageEnvironment &threaded_env;
-/*
-  void lookupServerMediaSession(UsageEnvironment& env, char const* streamName,
-                                void *context,
-                                lookupServerMediaSessionCompletionFunc* completionFunc,
-                                Boolean isFirstLookupInSession = True) {
-    fOurServer.lookupServerMediaSession(env, streamName, completionFunc, context, isFirstLookupInSession);
-  }
-  void removeServerMediaSession(const ServerMediaSession &serverMediaSession) {
-    fOurServer.removeServerMediaSession(serverMediaSession);
-  }
-  void removeFromServer(void) {
-    fOurServer.removeClientConnection(this);
-  }
-*/
   GenericMediaServer &fOurServer;
   const IdType id;
 protected:

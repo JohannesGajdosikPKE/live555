@@ -35,6 +35,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include "GenericMediaServer.hh"
 
+#include <functional>
+
 class RTSPClient;
 
 // Typedef for an optional auxilliary handler function, to be called
@@ -42,7 +44,7 @@ class RTSPClient;
 typedef void AuxHandlerFunc(void* clientData, unsigned char* packet,
 			    unsigned& packetSize);
 
-typedef void ServerRequestAlternativeByteHandler(void* instance, u_int8_t requestByte);
+typedef std::function<void(u_int8_t requestByte)> ServerRequestAlternativeByteHandler;
 // A hack that allows a handler for RTP/RTCP packets received over TCP to process RTSP commands that may also appear within
 // the same TCP connection.  A RTSP server implementation would supply a function like this - as a parameter to
 // "ServerMediaSubsession::startStream()".
@@ -59,11 +61,7 @@ public:
   void addStreamSocket(int sockNum, unsigned char streamChannelId, TLSState* tlsState);
   void removeStreamSocket(int sockNum, unsigned char streamChannelId);
   static void setServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum,
-						     ServerRequestAlternativeByteHandler* handler,
-						     std::weak_ptr<ClientConnection>clientData);
-  static void setServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum,
-						     ServerRequestAlternativeByteHandler* handler,
-						     RTSPClient *clientData);
+                                                     ServerRequestAlternativeByteHandler &&handler);
   static void clearServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum);
 
   Boolean sendPacket(unsigned char* packet, unsigned packetSize);

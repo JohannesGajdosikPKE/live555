@@ -67,8 +67,7 @@ private: // redefined virtual functions
                            void* rtcpRRHandlerClientData,
                            unsigned short& rtpSeqNum,
                            unsigned& rtpTimestamp,
-			                     ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-                           std::weak_ptr<ClientConnection> serverRequestAlternativeByteHandlerClientData) override;
+                           ServerRequestAlternativeByteHandler &&serverRequestAlternativeByteHandler) override;
   virtual void pauseStream(unsigned clientSessionId, void* streamToken);
   virtual void seekStream(unsigned clientSessionId, void* streamToken, double& seekNPT, double streamDuration, u_int64_t& numBytes);
   virtual void setStreamScale(unsigned clientSessionId, void* streamToken, float scale);

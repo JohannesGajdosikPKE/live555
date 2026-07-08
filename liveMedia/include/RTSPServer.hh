@@ -38,7 +38,7 @@ public:
   class ParamsForREGISTER {
   public:
     ParamsForREGISTER(char const* cmd/*"REGISTER" or "DEREGISTER"*/,
-                      RTSPClientConnection *ourConnection, char const* url, char const* urlSuffix,
+                      RTSPClientConnection& ourConnection, char const* url, char const* urlSuffix,
                       Boolean reuseConnection, Boolean deliverViaTCP, char const* proxyURLSuffix);
     virtual ~ParamsForREGISTER();
     UsageEnvironment &connection_env;
@@ -103,7 +103,6 @@ protected:
 protected:
   void resetRequestBuffer();
   void closeSocketsRTSP();
-  static void handleAlternativeRequestByte(void*, u_int8_t requestByte);
   void handleAlternativeRequestByte1(u_int8_t requestByte);
   Boolean authenticationOK(char const* cmdName, char const* urlSuffix, char const* fullRequestStr);
   void changeClientInputSocket(int newSocketNum, ServerTLSState const* newTLSState,
@@ -143,7 +142,7 @@ public:
   std::shared_ptr<RTSPClientConnection> getOurClientConnection(void) const {return fOurClientConnection.lock();}
 public:
     // Make the handler functions for each command virtual, to allow subclasses to redefine them:
-  virtual void handleCmd_SETUP(RTSPClientConnection* ourClientConnection,
+  virtual void handleCmd_SETUP(RTSPClientConnection &ourClientConnection,
                                char const* urlPreSuffix, char const* urlSuffix, char const* fullRequestStr);
 protected:
   static void SETUPLookupCompletionFunction1(void* clientData, const std::shared_ptr<ServerMediaSession> &sessionLookedUp);
@@ -151,20 +150,20 @@ protected:
   static void SETUPLookupCompletionFunction2(void* clientData, const std::shared_ptr<ServerMediaSession> &sessionLookedUp);
   virtual void handleCmd_SETUP_afterLookup2(const std::shared_ptr<ServerMediaSession> &sms);
 public:
-  virtual void handleCmd_withinSession(RTSPClientConnection* ourClientConnection,
+  virtual void handleCmd_withinSession(RTSPClientConnection &ourClientConnection,
                                        char const* cmdName,
                                        char const* urlPreSuffix, char const* urlSuffix,
                                        char const* fullRequestStr);
 protected:
-  virtual void handleCmd_TEARDOWN(RTSPClientConnection* ourClientConnection,
+  virtual void handleCmd_TEARDOWN(RTSPClientConnection &ourClientConnection,
                                   ServerMediaSubsession* subsession);
-  virtual void handleCmd_PLAY(RTSPClientConnection* ourClientConnection,
+  virtual void handleCmd_PLAY(RTSPClientConnection &ourClientConnection,
                               ServerMediaSubsession* subsession, char const* fullRequestStr);
-  virtual void handleCmd_PAUSE(RTSPClientConnection* ourClientConnection,
+  virtual void handleCmd_PAUSE(RTSPClientConnection &ourClientConnection,
                                ServerMediaSubsession* subsession);
-  virtual void handleCmd_GET_PARAMETER(RTSPClientConnection* ourClientConnection,
+  virtual void handleCmd_GET_PARAMETER(RTSPClientConnection &ourClientConnection,
                                        ServerMediaSubsession* subsession, char const* fullRequestStr);
-  virtual void handleCmd_SET_PARAMETER(RTSPClientConnection* ourClientConnection,
+  virtual void handleCmd_SET_PARAMETER(RTSPClientConnection &ourClientConnection,
                                        ServerMediaSubsession* subsession, char const* fullRequestStr);
 public:
   void deleteStreamByTrack(unsigned trackNum);
@@ -173,13 +172,6 @@ public:
   Boolean isMulticast() const { return fIsMulticast; }
 protected:
 
-    // Shortcuts for setting up a RTSP response (prior to sending it):
-///  static void setRTSPResponse(RTSPClientConnection* ourClientConnection, char const* responseStr) { ourClientConnection->setRTSPResponse(responseStr); }
-///  static void setRTSPResponse(RTSPClientConnection* ourClientConnection, char const* responseStr, u_int32_t sessionId) { ourClientConnection->setRTSPResponse(responseStr, sessionId); }
-///  static void setRTSPResponse(RTSPClientConnection* ourClientConnection, char const* responseStr, char const* contentStr) { ourClientConnection->setRTSPResponse(responseStr, contentStr); }
-///  static void setRTSPResponse(RTSPClientConnection* ourClientConnection, char const* responseStr, u_int32_t sessionId, char const* contentStr) { ourClientConnection->setRTSPResponse(responseStr, sessionId, contentStr); }
-
-protected:
   RTSPServer &getOurRTSPServer(void);
   const RTSPServer &getOurRTSPServer(void) const;
   Boolean fIsMulticast, fStreamAfterSETUP;

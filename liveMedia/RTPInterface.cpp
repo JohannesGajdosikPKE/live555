@@ -73,20 +73,11 @@ public:
   RTPInterface* lookupRTPInterface(unsigned char streamChannelId);
   void deregisterRTPInterface(unsigned char streamChannelId);
 
-  void setServerRequestAlternativeByteHandler(ServerRequestAlternativeByteHandler* handler, std::weak_ptr<ClientConnection>clientData) {
-    fServerRequestAlternativeByteHandler = handler;
-    fServerRequestAlternativeByteHandlerClientData = clientData;
-    fServerRequestAlternativeByteHandlerClientData_RTSPClient = nullptr;
-  }
-  void setServerRequestAlternativeByteHandler(ServerRequestAlternativeByteHandler* handler, RTSPClient *clientData) {
-    fServerRequestAlternativeByteHandler = handler;
-    fServerRequestAlternativeByteHandlerClientData.reset();
-    fServerRequestAlternativeByteHandlerClientData_RTSPClient = clientData;
+  void setServerRequestAlternativeByteHandler(ServerRequestAlternativeByteHandler &&handler) {
+    fServerRequestAlternativeByteHandler = std::move(handler);
   }
   void clearServerRequestAlternativeByteHandler(void) {
-    fServerRequestAlternativeByteHandler = nullptr;
-    fServerRequestAlternativeByteHandlerClientData.reset();
-    fServerRequestAlternativeByteHandlerClientData_RTSPClient = nullptr;
+    fServerRequestAlternativeByteHandler = ServerRequestAlternativeByteHandler();
   }
 
 private:
@@ -98,19 +89,7 @@ private:
   const int fOurSocketNum;
   TLSState* const fTLSState;
   HashTable* fSubChannelHashTable;
-  ServerRequestAlternativeByteHandler* fServerRequestAlternativeByteHandler = nullptr;
-  std::weak_ptr<ClientConnection> fServerRequestAlternativeByteHandlerClientData;
-  RTSPClient *fServerRequestAlternativeByteHandlerClientData_RTSPClient = nullptr;
-  void callAlternativeByteHandler(u_int8_t requestByte) {
-    if (fServerRequestAlternativeByteHandlerClientData_RTSPClient) {
-      (*fServerRequestAlternativeByteHandler)(fServerRequestAlternativeByteHandlerClientData_RTSPClient,requestByte);
-    } else {
-      auto client_data = fServerRequestAlternativeByteHandlerClientData.lock();
-      if (client_data) {
-        (*fServerRequestAlternativeByteHandler)(client_data.get(),requestByte);
-      }
-    }
-  }
+  ServerRequestAlternativeByteHandler fServerRequestAlternativeByteHandler;
 
   u_int8_t fStreamChannelId, fSizeByte1;
   Boolean fReadErrorOccurred, fDeleteMyselfNext, fAreInReadHandlerLoop;
@@ -271,19 +250,11 @@ void RTPInterface::removeStreamSocket(int sockNum,
 }
 
 void RTPInterface::setServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum,
-							  ServerRequestAlternativeByteHandler* handler, std::weak_ptr<ClientConnection> clientData) {
+							  ServerRequestAlternativeByteHandler &&handler) {
   env.taskScheduler().assertSameThread();
   SocketDescriptor* socketDescriptor = lookupSocketDescriptor(env, socketNum, NULL, False);
 
-  if (socketDescriptor != NULL) socketDescriptor->setServerRequestAlternativeByteHandler(handler, clientData);
-}
-
-void RTPInterface::setServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum,
-							  ServerRequestAlternativeByteHandler* handler, RTSPClient *clientData) {
-  env.taskScheduler().assertSameThread();
-  SocketDescriptor* socketDescriptor = lookupSocketDescriptor(env, socketNum, NULL, False);
-
-  if (socketDescriptor != NULL) socketDescriptor->setServerRequestAlternativeByteHandler(handler, clientData);
+  if (socketDescriptor != NULL) socketDescriptor->setServerRequestAlternativeByteHandler(std::move(handler));
 }
 
 void RTPInterface::clearServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum) {
@@ -592,12 +563,12 @@ SocketDescriptor::~SocketDescriptor() {
   }
 
   // Finally:
-  if (fServerRequestAlternativeByteHandler != NULL) {
+  if (fServerRequestAlternativeByteHandler) {
     // Hack: Pass a special character to our alternative byte handler, to tell it that either
     // - an error occurred when reading the TCP socket, or
     // - no error occurred, but it needs to take over control of the TCP socket once again.
     u_int8_t specialChar = fReadErrorOccurred ? 0xFF : 0xFE;
-    callAlternativeByteHandler(specialChar);
+    fServerRequestAlternativeByteHandler(specialChar);
   }
 //  fEnv << "SocketDescriptor(" << fOurSocketNum << ")::~SocketDescriptor end\n";
 }
@@ -705,9 +676,9 @@ Boolean SocketDescriptor::tcpReadHandler1(int mask) {
 	fTCPReadingState = AWAITING_STREAM_CHANNEL_ID;
       } else {
 	// This character is part of a RTSP request or command, which is handled separately:
-	if (fServerRequestAlternativeByteHandler != NULL && c != 0xFF && c != 0xFE) {
+	if (fServerRequestAlternativeByteHandler && c != 0xFF && c != 0xFE) {
 	  // Hack: 0xFF and 0xFE are used as special signaling characters, so don't send them
-	  callAlternativeByteHandler(c);
+	  fServerRequestAlternativeByteHandler(c);
         }
       }
       break;

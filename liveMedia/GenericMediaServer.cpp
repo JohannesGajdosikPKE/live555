@@ -588,11 +588,6 @@ void ClientConnection::closeSockets() {
   }
 }
 
-void ClientConnection::incomingRequestHandler(void* instance, int /*mask*/) {
-  ClientConnection* connection = (ClientConnection*)instance;
-  connection->incomingRequestHandler();
-}
-
 void ClientConnection::incomingRequestHandler() {
     // this is called from the tasksceduler, asserting does not hurt:
   envir().taskScheduler().assertSameThread();

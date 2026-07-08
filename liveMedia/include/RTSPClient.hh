@@ -306,7 +306,6 @@ private:
   Boolean handleAuthenticationFailure(char const* wwwAuthenticateParamsStr);
   Boolean resendCommand(RequestRecord* request);
   char const* sessionURL(MediaSession const& session) const;
-  static void handleAlternativeRequestByte(void*, u_int8_t requestByte);
   void handleAlternativeRequestByte1(u_int8_t requestByte);
   void constructSubsessionURL(MediaSubsession const& subsession,
 			      char const*& prefix,

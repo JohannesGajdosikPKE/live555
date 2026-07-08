@@ -755,11 +755,6 @@ void RTSPClientConnection::closeSocketsRTSP() {
   closeSockets(); // closes fClientInputSocket
 }
 
-void RTSPClientConnection::handleAlternativeRequestByte(void* instance, u_int8_t requestByte) {
-  RTSPClientConnection* connection = (RTSPClientConnection*)instance;
-  connection->handleAlternativeRequestByte1(requestByte);
-}
-
 void RTSPClientConnection::handleAlternativeRequestByte1(u_int8_t requestByte) {
   envir().taskScheduler().assertSameThread();
   if (requestByte == 0xFF) {
@@ -993,7 +988,7 @@ void RTSPClientConnection::handleRequestBytesBody(void) {
 	  }
 	}
 	if (clientSession) {
-	  clientSession->handleCmd_SETUP(this, urlPreSuffix, urlSuffix, (char const*)fRequestBuffer);
+	  clientSession->handleCmd_SETUP(*this, urlPreSuffix, urlSuffix, (char const*)fRequestBuffer);
 	  playAfterSetup = clientSession->getStreamAfterSETUP();
 	} else if (areAuthenticated) {
 #ifdef DEBUG
@@ -1007,7 +1002,7 @@ void RTSPClientConnection::handleRequestBytesBody(void) {
 		 || strcmp(cmdName, "GET_PARAMETER") == 0
 		 || strcmp(cmdName, "SET_PARAMETER") == 0) {
 	if (clientSession) {
-	  clientSession->handleCmd_withinSession(this, cmdName, urlPreSuffix, urlSuffix, (char const*)fRequestBuffer);
+	  clientSession->handleCmd_withinSession(*this, cmdName, urlPreSuffix, urlSuffix, (char const*)fRequestBuffer);
 	} else {
 #ifdef DEBUG
 	  fprintf(stderr, "Calling handleCmd_sessionNotFound() (case 3)\n");
@@ -1132,7 +1127,7 @@ void RTSPClientConnection::handleRequestBytesEndOfLoop(Boolean playAfterSetup,st
     if (playAfterSetup) {
       // The client has asked for streaming to commence now, rather than after a
       // subsequent "PLAY" command.  So, simulate the effect of a "PLAY" command:
-      clientSession->handleCmd_withinSession(this, "PLAY", urlPreSuffix, urlSuffix, (char const*)fRequestBuffer);
+      clientSession->handleCmd_withinSession(*this, "PLAY", urlPreSuffix, urlSuffix, (char const*)fRequestBuffer);
     }
     
     // Check whether there are extra bytes remaining in the buffer, after the end of the request (a rare case).
@@ -1637,7 +1632,7 @@ static Boolean parsePlayNowHeader(char const* buf) {
 }
 
 void RTSPClientSession
-::handleCmd_SETUP(RTSPClientConnection* ourClientConnection,
+::handleCmd_SETUP(RTSPClientConnection &ourClientConnection,
 		  char const* urlPreSuffix, char const* urlSuffix, char const* fullRequestStr) {
   envir().taskScheduler().assertSameThread();
   // Normally, "urlPreSuffix" should be the session (stream) name, and "urlSuffix" should be the subsession (track) name.
@@ -1645,7 +1640,7 @@ void RTSPClientSession
   // in the special case where we have only a single track.  I.e., in this case, we also handle:
   //    "urlPreSuffix" is empty and "urlSuffix" is the session (stream) name, or
   //    "urlPreSuffix" concatenated with "urlSuffix" (with "/" inbetween) is the session (stream) name.
-  fOurClientConnection = std::static_pointer_cast<RTSPClientConnection>(ourClientConnection->shared_from_this());
+  fOurClientConnection = std::static_pointer_cast<RTSPClientConnection>(ourClientConnection.shared_from_this());
   fURLPreSuffix = urlPreSuffix; fURLSuffix = urlSuffix; fFullRequestStr = fullRequestStr;
   fTrackId = urlSuffix; // in the normal case
 
@@ -1963,7 +1958,7 @@ void RTSPClientSession
 }
 
 void RTSPClientSession
-::handleCmd_withinSession(RTSPClientConnection* ourClientConnection,
+::handleCmd_withinSession(RTSPClientConnection &ourClientConnection,
 			  char const* cmdName,
 			  char const* urlPreSuffix, char const* urlSuffix,
 			  char const* fullRequestStr) {
@@ -1978,7 +1973,7 @@ void RTSPClientSession
   ServerMediaSubsession* subsession;
   
   if (fOurServerMediaSession == NULL) { // There wasn't a previous SETUP!
-    ourClientConnection->handleCmd_notSupported();
+    ourClientConnection.handleCmd_notSupported();
     return;
   } else if (urlSuffix[0] != '\0' && strcmp(fOurServerMediaSession->streamName(), urlPreSuffix) == 0) {
     // Non-aggregated operation.
@@ -1988,7 +1983,7 @@ void RTSPClientSession
       if (strcmp(subsession->trackId(), urlSuffix) == 0) break; // success
     }
     if (subsession == NULL) { // no such track!
-      ourClientConnection->handleCmd_notFound();
+      ourClientConnection.handleCmd_notFound();
       return;
     }
   } else if (strcmp(fOurServerMediaSession->streamName(), urlSuffix) == 0 ||
@@ -2003,11 +1998,11 @@ void RTSPClientSession
 	strcmp(&(fOurServerMediaSession->streamName())[urlPreSuffixLen+1], urlSuffix) == 0) {
       subsession = NULL;
     } else {
-      ourClientConnection->handleCmd_notFound();
+      ourClientConnection.handleCmd_notFound();
       return;
     }
   } else { // the request doesn't match a known stream and/or track at all!
-    ourClientConnection->handleCmd_notFound();
+    ourClientConnection.handleCmd_notFound();
     return;
   }
   
@@ -2030,7 +2025,7 @@ void  RTSPClientConnection
 }
 
 void RTSPClientSession
-::handleCmd_TEARDOWN(RTSPClientConnection* ourClientConnection,
+::handleCmd_TEARDOWN(RTSPClientConnection &ourClientConnection,
 		     ServerMediaSubsession* subsession) {
   envir().taskScheduler().assertSameThread();
   unsigned i;
@@ -2046,8 +2041,8 @@ void RTSPClientSession
   }
   
     // do not send TEARDOWN response, close connection, avoid crash
-  ourClientConnection->fResponseBuffer[0] = '\0';
-  ourClientConnection->fIsActive = False;
+  ourClientConnection.fResponseBuffer[0] = '\0';
+  ourClientConnection.fIsActive = False;
   
   // Optimization: If all subsessions have now been torn down, then we know that we can reclaim our object now.
   // (Without this optimization, however, this object would still get reclaimed later, as a result of a 'liveness' timeout.)
@@ -2062,11 +2057,11 @@ void RTSPClientSession
 }
 
 void RTSPClientSession
-::handleCmd_PLAY(RTSPClientConnection* ourClientConnection,
+::handleCmd_PLAY(RTSPClientConnection &ourClientConnection,
 		 ServerMediaSubsession* subsession, char const* fullRequestStr) {
   envir().taskScheduler().assertSameThread();
   char* rtspURL
-    = getOurRTSPServer().rtspURL(fOurServerMediaSession.get(), ourClientConnection->fClientInputSocket);
+    = getOurRTSPServer().rtspURL(fOurServerMediaSession.get(), ourClientConnection.fClientInputSocket);
   unsigned rtspURLSize = strlen(rtspURL);
   
   // Parse the client's "Scale:" header, if any:
@@ -2231,7 +2226,10 @@ void RTSPClientSession
 					       fStreamStates[i].streamToken,
 					       (TaskFunc*)noteClientLiveness, this,
 					       rtpSeqNum, rtpTimestamp,
-					       RTSPClientConnection::handleAlternativeRequestByte, ourClientConnection->weak_from_this());
+                 [weak_connection=ourClientConnection.weak_from_this()](uint8_t c) {
+                   const std::shared_ptr<RTSPClientConnection> connection(std::static_pointer_cast<RTSPClientConnection>(weak_connection.lock()));
+                   if (connection) connection->handleAlternativeRequestByte1(c);
+                 });
       const char *urlSuffix = fStreamStates[i].subsession->trackId();
       char* prevRTPInfo = rtpInfo;
       unsigned rtpInfoSize = rtpInfoFmtSize
@@ -2262,7 +2260,7 @@ void RTSPClientSession
   }
   
   // Fill in the response:
-  snprintf((char*)ourClientConnection->fResponseBuffer, sizeof ourClientConnection->fResponseBuffer,
+  snprintf((char*)ourClientConnection.fResponseBuffer, sizeof ourClientConnection.fResponseBuffer,
 	   "RTSP/1.0 200 OK\r\n"
 	   "CSeq: %s\r\n"
 	   "%s"
@@ -2270,7 +2268,7 @@ void RTSPClientSession
 	   "%s"
 	   "Session: %08X\r\n"
 	   "%s\r\n",
-	   ourClientConnection->fCurrentCSeq,
+	   ourClientConnection.fCurrentCSeq,
 	   dateHeader(),
 	   scaleHeader,
 	   rangeHeader,
@@ -2281,7 +2279,7 @@ void RTSPClientSession
 }
 
 void RTSPClientSession
-::handleCmd_PAUSE(RTSPClientConnection* ourClientConnection,
+::handleCmd_PAUSE(RTSPClientConnection &ourClientConnection,
 		  ServerMediaSubsession* subsession) {
   envir().taskScheduler().assertSameThread();
   for (unsigned i = 0; i < fNumStreamStates; ++i) {
@@ -2293,27 +2291,27 @@ void RTSPClientSession
     }
   }
   
-  ourClientConnection->setRTSPResponse("200 OK", fOurSessionId);
+  ourClientConnection.setRTSPResponse("200 OK", fOurSessionId);
 }
 
 void RTSPClientSession
-::handleCmd_GET_PARAMETER(RTSPClientConnection* ourClientConnection,
+::handleCmd_GET_PARAMETER(RTSPClientConnection &ourClientConnection,
 			  ServerMediaSubsession* /*subsession*/, char const* /*fullRequestStr*/) {
   envir().taskScheduler().assertSameThread();
   // By default, we implement "GET_PARAMETER" just as a 'keep alive', and send back a dummy response.
   // (If you want to handle "GET_PARAMETER" properly, you can do so by defining a subclass of "RTSPServer"
   // and "RTSPClientSession", and then reimplement this virtual function in your subclass.)
-  ourClientConnection->setRTSPResponse("200 OK", fOurSessionId, NULL /*LIVEMEDIA_LIBRARY_VERSION_STRING*/);
+  ourClientConnection.setRTSPResponse("200 OK", fOurSessionId, NULL /*LIVEMEDIA_LIBRARY_VERSION_STRING*/);
 }
 
 void RTSPClientSession
-::handleCmd_SET_PARAMETER(RTSPClientConnection* ourClientConnection,
+::handleCmd_SET_PARAMETER(RTSPClientConnection &ourClientConnection,
 			  ServerMediaSubsession* /*subsession*/, char const* /*fullRequestStr*/) {
   envir().taskScheduler().assertSameThread();
   // By default, we implement "SET_PARAMETER" just as a 'keep alive', and send back an empty response.
   // (If you want to handle "SET_PARAMETER" properly, you can do so by defining a subclass of "RTSPServer"
   // and "RTSPClientSession", and then reimplement this virtual function in your subclass.)
-  ourClientConnection->setRTSPResponse("200 OK", fOurSessionId);
+  ourClientConnection.setRTSPResponse("200 OK", fOurSessionId);
 }
 
 void RTSPServer::createNewClientConnectionImpl(UsageEnvironment& env, int clientSocket, struct sockaddr_storage const& clientAddr) {

@@ -1292,7 +1292,7 @@ Boolean RTSPClient::handleSETUPResponse(MediaSubsession& subsession, char const*
 	increaseReceiveBufferTo(envir(), fInputSocketNum, 50*1024);
       }
       if (subsession.rtcpInstance() != NULL) subsession.rtcpInstance()->setStreamSocket(fInputSocketNum, subsession.rtcpChannelId, fInputTLS);
-      RTPInterface::setServerRequestAlternativeByteHandler(envir(), fInputSocketNum, handleAlternativeRequestByte, this);
+      RTPInterface::setServerRequestAlternativeByteHandler(envir(), fInputSocketNum, [this](uint8_t c){handleAlternativeRequestByte1(c);});
     } else {
       // Normal case.
       // Set the RTP and RTCP sockets' destination address and port from the information in the SETUP response (if present):
@@ -1480,10 +1480,6 @@ char const* RTSPClient::sessionURL(MediaSession const& session) const {
   if (url == NULL || strcmp(url, "*") == 0) url = fBaseURL;
 
   return url;
-}
-
-void RTSPClient::handleAlternativeRequestByte(void* rtspClient, u_int8_t requestByte) {
-  ((RTSPClient*)rtspClient)->handleAlternativeRequestByte1(requestByte);
 }
 
 void RTSPClient::handleAlternativeRequestByte1(u_int8_t requestByte) {

@@ -58,8 +58,7 @@ protected: // redefined virtual functions
 			   void* rtcpRRHandlerClientData,
 			   unsigned short& rtpSeqNum,
 			   unsigned& rtpTimestamp,
-			   ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-			   std::weak_ptr<ClientConnection> serverRequestAlternativeByteHandlerClientData) override;
+			   ServerRequestAlternativeByteHandler &&serverRequestAlternativeByteHandler) override;
   virtual void pauseStream(unsigned clientSessionId, void* streamToken);
   virtual void seekStream(unsigned clientSessionId, void* streamToken, double& seekNPT, double streamDuration, u_int64_t& numBytes);
   virtual void seekStream(unsigned clientSessionId, void* streamToken, char*& absStart, char*& absEnd);
@@ -183,8 +182,7 @@ public:
 
   void startPlaying(Destinations* destinations, unsigned clientSessionId,
 		    TaskFunc* rtcpRRHandler, void* rtcpRRHandlerClientData,
-		    ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-		    std::weak_ptr<ClientConnection> serverRequestAlternativeByteHandlerClientData);
+		    ServerRequestAlternativeByteHandler &&serverRequestAlternativeByteHandler);
   void pause();
   void sendRTCPAppPacket(u_int8_t subtype, char const* name,
 			 u_int8_t* appDependentData, unsigned appDependentDataSize);

@@ -246,15 +246,14 @@ void OnDemandServerMediaSubsession::startStream(unsigned clientSessionId,
 						void* rtcpRRHandlerClientData,
 						unsigned short& rtpSeqNum,
 						unsigned& rtpTimestamp,
-						ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-						std::weak_ptr<ClientConnection> serverRequestAlternativeByteHandlerClientData) {
+						ServerRequestAlternativeByteHandler &&serverRequestAlternativeByteHandler) {
   StreamState* streamState = (StreamState*)streamToken;
   Destinations* destinations
     = (Destinations*)(fDestinationsHashTable->Lookup((char const*)clientSessionId));
   if (streamState != NULL) {
     streamState->startPlaying(destinations, clientSessionId,
 			      rtcpRRHandler, rtcpRRHandlerClientData,
-			      serverRequestAlternativeByteHandler, serverRequestAlternativeByteHandlerClientData);
+			      std::move(serverRequestAlternativeByteHandler));
     RTPSink* rtpSink = streamState->rtpSink(); // alias
     if (rtpSink != NULL) {
       rtpSeqNum = rtpSink->currentSeqNo();
@@ -553,8 +552,7 @@ StreamState::~StreamState() {
 void StreamState
 ::startPlaying(Destinations* dests, unsigned clientSessionId,
 	       TaskFunc* rtcpRRHandler, void* rtcpRRHandlerClientData,
-	       ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-	       std::weak_ptr<ClientConnection> serverRequestAlternativeByteHandlerClientData) {
+	       ServerRequestAlternativeByteHandler &&serverRequestAlternativeByteHandler) {
   if (dests == NULL) return;
 
   if (fRTCPInstance == NULL && fRTPSink != NULL) {
@@ -571,7 +569,7 @@ void StreamState
       fRTPSink->addStreamSocket(dests->tcpSocketNum, dests->rtpChannelId, dests->tlsState);
       RTPInterface
 	::setServerRequestAlternativeByteHandler(fRTPSink->envir(), dests->tcpSocketNum,
-						 serverRequestAlternativeByteHandler, serverRequestAlternativeByteHandlerClientData);
+						 std::move(serverRequestAlternativeByteHandler));
         // So that we continue to handle RTSP commands from the client
     }
     if (fRTCPInstance != NULL) {
@@ -642,6 +640,7 @@ void StreamState::endPlaying(Destinations* dests, unsigned clientSessionId) {
     if (fRTPSink != NULL) {
       // Comment out the following, because it prevents the "RTSPClientConnection" object
       // from being closed after handling a "TEARDOWN": #####
+      // TODO: think again! Why not call clearServerRequestAlternativeByteHandler?
       //RTPInterface::clearServerRequestAlternativeByteHandler(fRTPSink->envir(), dests->tcpSocketNum);
       fRTPSink->removeStreamSocket(dests->tcpSocketNum, dests->rtpChannelId);
     }

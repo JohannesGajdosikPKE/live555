@@ -67,8 +67,7 @@ protected: // redefined virtual functions
 			   void* rtcpRRHandlerClientData,
                            unsigned short& rtpSeqNum,
                            unsigned& rtpTimestamp,
-			   ServerRequestAlternativeByteHandler* serverRequestAlternativeByteHandler,
-			   std::weak_ptr<ClientConnection> serverRequestAlternativeByteHandlerClientData) override;
+			   ServerRequestAlternativeByteHandler &&serverRequestAlternativeByteHandler) override;
   virtual float getCurrentNPT(void* streamToken);
   virtual void getRTPSinkandRTCP(void* streamToken,
 				 RTPSink*& rtpSink, RTCPInstance*& rtcp);

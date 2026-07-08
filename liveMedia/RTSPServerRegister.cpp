@@ -216,10 +216,10 @@ void RTSPServer::implementCmd_REGISTER(UsageEnvironment &env, char const* /*cmd*
 // Special mechanism for handling our custom "REGISTER" command:
 RTSPClientConnection::ParamsForREGISTER
 ::ParamsForREGISTER(char const* cmd/*"REGISTER" or "DEREGISTER"*/,
-		    RTSPClientConnection* ourConnection, char const* url, char const* urlSuffix,
+		    RTSPClientConnection &ourConnection, char const* url, char const* urlSuffix,
 		    Boolean reuseConnection, Boolean deliverViaTCP, char const* proxyURLSuffix)
-  : connection_env(ourConnection->envir()), connection_id(ourConnection->getId()),
-    fCmd(strDup(cmd)), fOurConnection(std::static_pointer_cast<RTSPClientConnection>(ourConnection->shared_from_this())), fURL(strDup(url)), fURLSuffix(strDup(urlSuffix)),
+  : connection_env(ourConnection.envir()), connection_id(ourConnection.getId()),
+    fCmd(strDup(cmd)), fOurConnection(std::static_pointer_cast<RTSPClientConnection>(ourConnection.shared_from_this())), fURL(strDup(url)), fURLSuffix(strDup(urlSuffix)),
     fReuseConnection(reuseConnection), fDeliverViaTCP(deliverViaTCP), fProxyURLSuffix(strDup(proxyURLSuffix)) {
 }
 
@@ -247,7 +247,7 @@ void RTSPClientConnection::handleCmd_REGISTER(char const* cmd/*"REGISTER" or "DE
     setRTSPResponse(responseStr == NULL ? "200 OK" : responseStr);
     delete[] responseStr;
     
-    ParamsForREGISTER* registerParams = new ParamsForREGISTER(cmd, this, url, urlSuffix, reuseConnection, deliverViaTCP, proxyURLSuffix);
+    ParamsForREGISTER* registerParams = new ParamsForREGISTER(cmd, *this, url, urlSuffix, reuseConnection, deliverViaTCP, proxyURLSuffix);
     envir().taskScheduler().scheduleDelayedTask(reuseConnection ? DELAY_USECS_AFTER_REGISTER_RESPONSE : 0,
 						(TaskFunc*)continueHandlingREGISTER, registerParams);
     ++fScheduledDelayedTask;
