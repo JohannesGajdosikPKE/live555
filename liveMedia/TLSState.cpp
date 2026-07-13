@@ -172,13 +172,22 @@ Boolean ClientTLSState::setup(int socketNum) {
     initLibrary();
 
     SSL_METHOD const* meth = SSLv23_client_method();
-    if (meth == NULL) break;
+    if (meth == NULL) {
+      fClient.envir() << "ClientTLSState::setup(" << socketNum << "): SSLv23_client_method() failed\n";
+      break;
+    }
 
     fCtx = SSL_CTX_new(meth);
-    if (fCtx == NULL) break;
+    if (fCtx == NULL) {
+      fClient.envir() << "ClientTLSState::setup(" << socketNum << "): SSL_CTX_new() failed\n";
+      break;
+    }
 
     fCon = SSL_new(fCtx);
-    if (fCon == NULL) break;
+    if (fCon == NULL) {
+      fClient.envir() << "ClientTLSState::setup(" << socketNum << "): SSL_new() failed\n";
+      break;
+    }
 
     BIO* bio = BIO_new_socket(socketNum, BIO_NOCLOSE);
     SSL_set_bio(fCon, bio, bio);
@@ -257,13 +266,27 @@ Boolean ServerTLSState::setup(int socketNum) {
   do {
     initLibrary();
 
-    SSL_METHOD const* meth = SSLv23_server_method();
-    if (meth == NULL) break;
+    SSL_METHOD const* meth = TLS_server_method();
+    if (meth == NULL) {
+      fEnv << "ServerTLSState::setup: TLS_server_method() failed\n";
+      break;
+    }
 
     fCtx = SSL_CTX_new(meth);
-    if (fCtx == NULL) break;
+    if (fCtx == NULL) {
+      fEnv << "ServerTLSState::setup: SSL_CTX_new() failed\n";
+      break;
+    }
 
-    if (SSL_CTX_set_ecdh_auto(fCtx, 1) != 1) break;
+    if (0 == SSL_CTX_set_min_proto_version(fCtx, TLS1_3_VERSION)) {
+      fEnv << "ServerTLSState::setup: SSL_CTX_set_min_proto_version(TLS1_3) failed\n";
+      break;
+    }
+
+    if (SSL_CTX_set_ecdh_auto(fCtx, 1) != 1) {
+      fEnv << "ServerTLSState::setup: SSL_CTX_set_ecdh_auto(1) failed\n";
+      break;
+    }
 
     // CertificateFileName might contain own certificate data instead of a file path
     const bool bFileContainsCertData = 
@@ -279,29 +302,58 @@ Boolean ServerTLSState::setup(int socketNum) {
       using EVP_PKEY_ptr = std::unique_ptr <EVP_PKEY, decltype(&EVP_PKEY_free)>;
 
       BIO_ptr cert_bio(BIO_new_mem_buf((const void*) fCertificateFileName, -1), BIO_free);
-      if (!cert_bio.get())
+      if (!cert_bio.get()) {
+        fEnv << "ServerTLSState::setup: cert_bio creation failed\n";
         break;
+      }
 
       X509_ptr cert (PEM_read_bio_X509(cert_bio.get(), nullptr, nullptr, nullptr), X509_free);
-      if (!cert || SSL_CTX_use_certificate(fCtx, cert.get()) != 1) break;
+      if (!cert) {
+        fEnv << "ServerTLSState::setup: PEM_read_bio_X509() failed\n";
+        break;
+      }
+
+      if (SSL_CTX_use_certificate(fCtx, cert.get()) != 1) {
+        fEnv << "ServerTLSState::setup: SSL_CTX_use_certificate() failed\n";
+        break;
+      }
 
       BIO_ptr pk_bio(BIO_new_mem_buf((const void*)fPrivateKeyFileName, -1), BIO_free);
-      if (!pk_bio.get())
+      if (!pk_bio.get()) {
+        fEnv << "ServerTLSState::setup: pk_bio creation failed\n";
         break;
+      }
 
       EVP_PKEY_ptr pkey(PEM_read_bio_PrivateKey(pk_bio.get(), nullptr, nullptr, nullptr), EVP_PKEY_free);
-      if (!pkey || SSL_CTX_use_PrivateKey(fCtx, pkey.get()) != 1) break;
+      if (!pkey) {
+        fEnv << "ServerTLSState::setup: PEM_read_bio_PrivateKey() failed\n";
+        break;
+      }
+
+      if (SSL_CTX_use_PrivateKey(fCtx, pkey.get()) != 1) {
+        fEnv << "ServerTLSState::setup: SSL_CTX_use_PrivateKey() failed\n";
+        break;
+      }
 
     }
     else
     {
-      if (SSL_CTX_use_certificate_chain_file(fCtx, fCertificateFileName) != 1) break;
+      if (SSL_CTX_use_certificate_chain_file(fCtx, fCertificateFileName) != 1) {
+        fEnv << "ServerTLSState::setup: SSL_CTX_use_certificate_chain_file(" << fCertificateFileName << ") failed\n";
+        break;
+      }
 
-      if (SSL_CTX_use_PrivateKey_file(fCtx, fPrivateKeyFileName, SSL_FILETYPE_PEM) != 1) break;
+      if (SSL_CTX_use_PrivateKey_file(fCtx, fPrivateKeyFileName, SSL_FILETYPE_PEM) != 1) {
+        fEnv << "ServerTLSState::setup: SSL_CTX_use_PrivateKey_file(" << fPrivateKeyFileName << ") failed\n";
+        break;
+      }
     }
 
     fCon = SSL_new(fCtx);
-    if (fCon == NULL) break;
+    if (fCon == NULL) {
+      fEnv << "ServerTLSState::setup: SSL_new() failed\n";
+      break;
+    }
 
     BIO* bio = BIO_new_socket(socketNum, BIO_NOCLOSE);
     SSL_set_bio(fCon, bio, bio);
