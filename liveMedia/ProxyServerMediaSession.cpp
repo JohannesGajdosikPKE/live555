@@ -41,7 +41,7 @@ public:
 private: // redefined virtual functions
   virtual FramedSource* createNewStreamSource(unsigned clientSessionId,
                                               unsigned& estBitrate,
-                                              void *rtsp_client_connection) override;
+                                              std::weak_ptr<RTSPClientConnection> rtsp_client_connection) override;
   virtual void closeStreamSource(FramedSource *inputSource);
   virtual RTPSink* createNewRTPSink(Groupsock* rtpGroupsock,
                                     unsigned char rtpPayloadTypeIfDynamic,
@@ -529,7 +529,14 @@ ProxyServerMediaSubsession::~ProxyServerMediaSubsession() {
 }
 
 FramedSource* ProxyServerMediaSubsession::createNewStreamSource(unsigned clientSessionId, unsigned& estBitrate,
-                                                                void *rtsp_client_connection) {
+                                                                std::weak_ptr<RTSPClientConnection> weak_rtsp_client_connection) {
+  const std::shared_ptr<RTSPClientConnection> strong_rtsp_client_connection(weak_rtsp_client_connection.lock());
+  if (!strong_rtsp_client_connection) {
+    envir() << *this << "::createNewStreamSource(session id " << clientSessionId << "): FATAL: no client_connection\n";
+    abort();
+  }
+  RTSPClientConnection *const rtsp_client_connection = strong_rtsp_client_connection.get();
+
   ProxyServerMediaSession* const sms = (ProxyServerMediaSession*)fParentSession;
 
   if (verbosityLevel() > 0) {

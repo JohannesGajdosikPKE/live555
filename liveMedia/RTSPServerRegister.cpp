@@ -445,7 +445,7 @@ void RTSPServerWithREGISTERProxying
     delete[] proxyStreamURL;
   } else { // "DEREGISTER"
     //    deleteServerMediaSession(lookupServerMediaSession(proxyStreamName));
-    lookupServerMediaSession(env, proxyStreamName, &GenericMediaServer::deleteServerMediaSession);
+    lookupServerMediaSession(env, proxyStreamName, [this](const std::shared_ptr<ServerMediaSession> &sessionLookedUp){GenericMediaServer::deleteServerMediaSession(sessionLookedUp);});
   }
 }
 
