@@ -33,11 +33,29 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #ifndef _TLS_STATE_HH
 #include "TLSState.hh"
 #endif
-#ifndef OMIT_REGISTER_HANDLING
+#ifdef IMPLEMENT_REGISTER_COMMAND
 #ifndef _RTSP_SERVER_HH
 #include "RTSPServer.hh" // For the optional "HandlerForREGISTERCommand" mini-server
 #endif
 #endif
+
+class ClientTLSState: public TLSState {
+  // ClientTLSState objects are member objects of RTSPClient,
+  // so it is ok to keep a reference to the containing object
+public:
+  ClientTLSState(class RTSPClient& client);
+  virtual ~ClientTLSState();
+
+  int connect(int socketNum); // returns: <0 (error), 0 (pending), >0 (success)
+
+#ifndef NO_OPENSSL
+private:
+  Boolean setup(int socketNum);
+
+private:
+  class RTSPClient& fClient;
+#endif
+};
 
 class RTSPClient: public Medium {
 public:
@@ -372,7 +390,7 @@ private:  unsigned fSessionTimeoutParameter; // optionally set in response "Sess
 };
 
 
-#ifndef OMIT_REGISTER_HANDLING
+#ifdef IMPLEMENT_REGISTER_COMMAND
 ////////// HandlerServerForREGISTERCommand /////////
 
 // A simple server that creates a new "RTSPClient" object whenever a "REGISTER" request arrives (specifying the "rtsp://" URL

@@ -216,14 +216,14 @@ set(PLUGIN_SOURCES
   ../liveMedia/include/RTPInterface.hh
   ../liveMedia/include/RTPSink.hh
   ../liveMedia/include/RTPSource.hh
-  ../liveMedia/include/RTSPClient.hh
+#  ../liveMedia/include/RTSPClient.hh
   ../liveMedia/include/RTSPCommon.hh
   ../liveMedia/include/RTSPRegisterSender.hh
   ../liveMedia/include/RTSPServer.hh
   ../liveMedia/include/RawVideoFrameParameters.hh
   ../liveMedia/include/RawVideoRTPSink.hh
   ../liveMedia/include/RawVideoRTPSource.hh
-  ../liveMedia/include/SIPClient.hh
+#  ../liveMedia/include/SIPClient.hh
   ../liveMedia/include/SRTPCryptographicContext.hh
   ../liveMedia/include/ServerMediaSession.hh
   ../liveMedia/include/SimpleRTPSink.hh
@@ -412,14 +412,14 @@ set(PLUGIN_SOURCES
   ../liveMedia/RTPInterface.cpp
   ../liveMedia/RTPSink.cpp
   ../liveMedia/RTPSource.cpp
-  ../liveMedia/RTSPClient.cpp
+#  ../liveMedia/RTSPClient.cpp
   ../liveMedia/RTSPCommon.cpp
   ../liveMedia/RTSPRegisterSender.cpp
   ../liveMedia/RTSPServer.cpp
   ../liveMedia/RTSPServerRegister.cpp
   ../liveMedia/RawVideoRTPSink.cpp
   ../liveMedia/RawVideoRTPSource.cpp
-  ../liveMedia/SIPClient.cpp
+#  ../liveMedia/SIPClient.cpp
   ../liveMedia/SRTPCryptographicContext.cpp
   ../liveMedia/ServerMediaSession.cpp
   ../liveMedia/SimpleRTPSink.cpp
@@ -471,8 +471,6 @@ target_include_directories(${PLUGIN} PRIVATE ${OPENSSL_INCLUDE_PATH})
 
 add_executable(${TESTPROG} RtspMStreamPluginTestMain.cpp)
 target_link_libraries(${TESTPROG} ${PLUGIN})
-
-target_compile_options(${PLUGIN} PRIVATE -DNO_PROXY_SERVER)
 
 if (WIN32)
   target_compile_options(${PLUGIN} PRIVATE -DLIVE555_FORCE_BOOLEAN_TYPE=char)

@@ -19,11 +19,126 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // Implementation
 
 #include "RTSPClient.hh"
+#include "TLSState.hh"
 #include "RTSPCommon.hh"
 #include "Base64.hh"
 #include "Locale.hh"
 #include <GroupsockHelper.hh>
 #include "ourMD5.hh"
+
+////////// ClientTLSState implementation //////////
+
+ClientTLSState::ClientTLSState(RTSPClient& client)
+#ifndef NO_OPENSSL
+  : fClient(client)
+#endif
+{
+}
+
+ClientTLSState::~ClientTLSState() {
+}
+
+int ClientTLSState::connect(int socketNum) {
+#ifndef NO_OPENSSL
+  if (!fHasBeenSetup && !setup(socketNum)) return -1; // error
+  
+  // Complete the SSL-level connection to the server:
+  int sslConnectResult = SSL_connect(fCon);
+  int sslGetErrorResult = SSL_get_error(fCon, sslConnectResult);
+
+  if (sslConnectResult > 0) {
+    if (!fClient.verifyServerCertificate(fCon)) {
+      fClient.envir() << "ClientTLSState::connect: Error: Certificate not accepted\n";
+      return -1;
+    }
+/*
+    X509* cert = SSL_get_peer_certificate(fCon);
+    if (!cert) {
+      fClient.envir() << "ClientTLSState::connect: Error: No certificate\n";
+      return -1;
+    }
+    X509_NAME *issuerName = X509_get_issuer_name(cert);
+    if (!issuerName) {
+      fClient.envir() << "ClientTLSState::connect: Error: No issuer of the certificate -> is that a root certificate?\n";
+      return -1;
+    }
+    const char *issuer = X509_NAME_oneline(issuerName, 0, 0);
+    const int idx = X509_NAME_get_index_by_NID(issuerName, NID_commonName, -1);
+    if (idx < 0) {
+      fClient.envir() << "ClientTLSState::connect: Error: ClientTLSState::connect: Error: No CN in the certificate " << issuer << "\n";
+      return -1;
+    }
+    X509_NAME_ENTRY *e = X509_NAME_get_entry(issuerName, idx);
+    if (!e) {
+      fClient.envir() << "ClientTLSState::connect: Error: No X509_NAME_ENTRY in the certificate " << issuer << "\n";
+      return -1;
+    }
+    ASN1_STRING *as = X509_NAME_ENTRY_get_data(e);
+    if (!as) {
+      fClient.envir() << "ClientTLSState::connect: Error: No X509_NAME_ENTRY data in the certificate " << issuer << "\n";
+      return -1;
+    }
+    const char *cn = (const char*)(as->data);
+    fClient.envir() << "ClientTLSState::connect: Certificate "  << issuer << " accepted: " << cn << "s\n";
+*/
+    return sslConnectResult; // connection has completed
+  } else if (sslConnectResult < 0
+	      && (sslGetErrorResult == SSL_ERROR_WANT_READ ||
+		  sslGetErrorResult == SSL_ERROR_WANT_WRITE)) {
+    // We need to wait until the socket is readable or writable:
+    fClient.envir().taskScheduler()
+      .setBackgroundHandling(socketNum,
+			     sslGetErrorResult == SSL_ERROR_WANT_READ ? SOCKET_READABLE : SOCKET_WRITABLE,
+           [client=&fClient](int mask){RTSPClient::connectionHandler(client,mask);});
+    return 0; // connection is pending
+  } else {
+    fClient.envir().setResultErrMsg("TLS connection to server failed: ", sslGetErrorResult);
+    return -1; // error
+  }
+#else
+  return -1;	   
+#endif
+}
+
+#ifndef NO_OPENSSL
+Boolean ClientTLSState::setup(int socketNum) {
+  do {
+    initLibrary();
+
+    SSL_METHOD const* meth = SSLv23_client_method();
+    if (meth == NULL) {
+      fClient.envir() << "ClientTLSState::setup(" << socketNum << "): SSLv23_client_method() failed\n";
+      break;
+    }
+
+    fCtx = SSL_CTX_new(meth);
+    if (fCtx == NULL) {
+      fClient.envir() << "ClientTLSState::setup(" << socketNum << "): SSL_CTX_new() failed\n";
+      break;
+    }
+
+    fCon = SSL_new(fCtx);
+    if (fCon == NULL) {
+      fClient.envir() << "ClientTLSState::setup(" << socketNum << "): SSL_new() failed\n";
+      break;
+    }
+
+    BIO* bio = BIO_new_socket(socketNum, BIO_NOCLOSE);
+    SSL_set_bio(fCon, bio, bio);
+
+    SSL_set_connect_state(fCon);
+
+    fHasBeenSetup = True;
+    return True;
+  } while (0);
+
+  // An error occurred:
+  reset();
+  return False;
+}
+#endif
+
+
 
 RTSPClient* RTSPClient::createNew(UsageEnvironment& env, char const* rtspURL,
 				  int verbosityLevel,
@@ -2172,7 +2287,7 @@ void RTSPClient::RequestQueue::reset() {
 }
 
 
-#ifndef OMIT_REGISTER_HANDLING
+#ifdef IMPLEMENT_REGISTER_COMMAND
 ////////// HandlerServerForREGISTERCommand implementation /////////
 
 HandlerServerForREGISTERCommand* HandlerServerForREGISTERCommand

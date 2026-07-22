@@ -19,6 +19,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // another (unicast or multicast) RTSP/RTP stream.
 // Implementation
 
+#ifdef IMPLEMENT_REGISTER_COMMAND
+
 #include "liveMedia.hh"
 #include "RTSPCommon.hh"
 #include "GroupsockHelper.hh" // for "our_random()"
@@ -955,3 +957,5 @@ void PresentationTimeSubsessionNormalizer::afterGettingFrame(unsigned frameSize,
 void PresentationTimeSubsessionNormalizer::doGetNextFrame() {
   fInputSource->getNextFrame(fTo, fMaxSize, afterGettingFrame, this, FramedSource::handleClosure, this);
 }
+
+#endif

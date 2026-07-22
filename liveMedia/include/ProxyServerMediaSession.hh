@@ -19,6 +19,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // another (unicast or multicast) RTSP/RTP stream.
 // C++ header
 
+#ifdef IMPLEMENT_REGISTER_COMMAND
+
 #ifndef _PROXY_SERVER_MEDIA_SESSION_HH
 #define _PROXY_SERVER_MEDIA_SESSION_HH
 
@@ -234,5 +236,7 @@ private:
 
   struct timeval fPTAdjustment; // Added to (RTCP-synced) subsession presentation times to 'normalize' them with wall-clock time.
 };
+
+#endif
 
 #endif

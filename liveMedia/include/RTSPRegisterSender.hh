@@ -19,6 +19,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // to a specified client.
 // C++ header
 
+#ifdef IMPLEMENT_REGISTER_COMMAND
+
 #ifndef _RTSP_REGISTER_SENDER_HH
 #define _RTSP_REGISTER_SENDER_HH
 
@@ -134,5 +136,7 @@ public: // Some compilers complain if this is "protected:"
     char const* rtspURLToDeregister() const { return fRTSPURLToRegisterOrDeregister; }
   };
 };
+
+#endif
 
 #endif

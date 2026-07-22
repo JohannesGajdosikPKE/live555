@@ -169,8 +169,10 @@ RTSPServer::RTSPServer(UsageEnvironment& env,
   : GenericMediaServer(env, ourSocketIPv4, ourSocketIPv6, ourPort, reclamationSeconds),
     fHTTPServerSocketIPv4(-1), fHTTPServerSocketIPv6(-1), fHTTPServerPort(0),
     fTCPStreamingDatabase(HashTable::create(ONE_WORD_HASH_KEYS)),
+#ifdef IMPLEMENT_REGISTER_COMMAND
     fPendingRegisterOrDeregisterRequests(HashTable::create(ONE_WORD_HASH_KEYS)),
     fRegisterOrDeregisterRequestCounter(0), fAuthDB(authDatabase),
+#endif
     fAllowStreamingRTPOverTCP(True),
     fOurConnectionsUseTLS(False), fWeServeSRTP(False) {
 }
@@ -202,12 +204,14 @@ RTSPServer::~RTSPServer() {
   
   cleanup(); // Removes all "ClientSession" and "ClientConnection" objects, and their tables.
   
+#ifdef IMPLEMENT_REGISTER_COMMAND
   // Delete any pending REGISTER requests:
   RTSPRegisterOrDeregisterSender* r;
   while ((r = (RTSPRegisterOrDeregisterSender*)fPendingRegisterOrDeregisterRequests->getFirst()) != NULL) {
     delete r;
   }
   delete fPendingRegisterOrDeregisterRequests;
+#endif
   }
   {
   // Empty out and close "fTCPStreamingDatabase":
@@ -996,7 +1000,9 @@ void RTSPClientConnection::handleRequestBytesBody(void) {
 #endif
 	  handleCmd_sessionNotFound();
 	}
-      } else if (strcmp(cmdName, "REGISTER") == 0 || strcmp(cmdName, "DEREGISTER") == 0) {
+      } else
+#ifdef IMPLEMENT_REGISTER_COMMAND
+      if (strcmp(cmdName, "REGISTER") == 0 || strcmp(cmdName, "DEREGISTER") == 0) {
 	// Because - unlike other commands - an implementation of this command needs
 	// the entire URL, we re-parse the command to get it:
 	char* url = strDupSize((char*)fRequestBuffer);
@@ -1012,7 +1018,9 @@ void RTSPClientConnection::handleRequestBytesBody(void) {
 	  handleCmd_bad();
 	}
 	delete[] url;
-      } else {
+      } else
+#endif      
+      {
 	// The command is one that we don't handle:
 	handleCmd_notSupported();
       }

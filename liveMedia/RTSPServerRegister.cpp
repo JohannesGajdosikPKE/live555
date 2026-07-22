@@ -18,12 +18,12 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // A RTSP server
 // Implementation of functionality related to the "REGISTER" and "DEREGISTER" commands
 
+#ifdef IMPLEMENT_REGISTER_COMMAND
+
 #include "RTSPServer.hh"
 #include "RTSPCommon.hh"
 #include "RTSPRegisterSender.hh"
-#ifndef NO_PROXY_SERVER
 #include "ProxyServerMediaSession.hh"
-#endif
 #include "GroupsockHelper.hh"
 #include "BasicUsageEnvironment.hh"
 
@@ -340,7 +340,6 @@ void RTSPClientConnection::continueHandlingREGISTER1(ParamsForREGISTER* params) 
   delete params;
 }
 
-#ifndef NO_PROXY_SERVER
 ///////// RTSPServerWithREGISTERProxying implementation /////////
 
 RTSPServerWithREGISTERProxying* RTSPServerWithREGISTERProxying

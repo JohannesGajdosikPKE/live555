@@ -61,43 +61,4 @@ protected:
 #endif
 };
 
-class ClientTLSState: public TLSState {
-public:
-  ClientTLSState(class RTSPClient& client);
-  virtual ~ClientTLSState();
-
-  int connect(int socketNum); // returns: <0 (error), 0 (pending), >0 (success)
-
-#ifndef NO_OPENSSL
-private:
-  Boolean setup(int socketNum);
-
-private:
-  class RTSPClient& fClient;
-#endif
-};
-
-class ServerTLSState: public TLSState {
-public:
-  ServerTLSState(UsageEnvironment& env);
-  virtual ~ServerTLSState();
-
-  void setCertificateAndPrivateKeyFileNames(char const* certFileName, char const* privKeyFileName);
-  void assignStateFrom(ServerTLSState const& from);
-
-  int accept(int socketNum); // returns: <0 (error), 0 (pending), >0 (success)
-
-  Boolean tlsAcceptIsNeeded;
-
-#ifndef NO_OPENSSL
-private:
-  Boolean setup(int socketNum);
-
-private:
-  UsageEnvironment& fEnv;
-  char const* fCertificateFileName;
-  char const* fPrivateKeyFileName;
-#endif
-};
-
 #endif

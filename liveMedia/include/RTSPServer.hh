@@ -34,6 +34,7 @@ class ServerMediaSubsession;
 class RTSPClientConnection: public ClientConnection {
 public:
   static void create(UsageEnvironment &threaded_env, RTSPServer &ourServer, int clientSocket, struct sockaddr_storage const& clientAddr, Boolean useTLS);
+#ifdef IMPLEMENT_REGISTER_COMMAND
   // A data structure that's used to implement the "REGISTER" command:
   class ParamsForREGISTER {
   public:
@@ -52,6 +53,7 @@ public:
     Boolean fReuseConnection, fDeliverViaTCP;
     char* fProxyURLSuffix;
   };
+#endif
   void pretendClientHasClosed(void);
 protected: // redefined virtual functions:
   virtual void handleRequestBytes(int newBytesRead);
@@ -77,11 +79,13 @@ protected:
   virtual void handleCmd_SET_PARAMETER(char const* fullRequestStr); // when operating on the entire server
   virtual void handleCmd_DESCRIBE(char const* urlPreSuffix, char const* urlSuffix, char const* fullRequestStr);
   virtual void handleCmd_DESCRIBE_afterLookup(const std::shared_ptr<ServerMediaSession> &session);
+#ifdef IMPLEMENT_REGISTER_COMMAND
   virtual void handleCmd_REGISTER(char const* cmd/*"REGISTER" or "DEREGISTER"*/,
                                   char const* url, char const* urlSuffix, char const* fullRequestStr,
                                   Boolean reuseConnection, Boolean deliverViaTCP, char const* proxyURLSuffix);
         // You probably won't need to subclass/reimplement this function;
         //     reimplement "RTSPServer::weImplementREGISTER()" and "RTSPServer::implementCmd_REGISTER()" instead.
+#endif
   virtual void handleCmd_bad();
   virtual void handleCmd_notSupported();
   virtual void handleCmd_redirect(char const* urlSuffix);
@@ -107,9 +111,10 @@ protected:
   void changeClientInputSocket(int newSocketNum, ServerTLSState const* newTLSState,
                                UsageEnvironment &new_env, unsigned char const* extraData, unsigned extraDataSize);
     // used to implement RTSP-over-HTTP tunneling
+#ifdef IMPLEMENT_REGISTER_COMMAND
   static void continueHandlingREGISTER(ParamsForREGISTER* params);
   virtual void continueHandlingREGISTER1(ParamsForREGISTER* params);
-
+#endif
     // Shortcuts for setting up a RTSP response (prior to sending it):
   void setRTSPResponse(char const* responseStr);
   void setRTSPResponse(char const* responseStr, u_int32_t sessionId);
@@ -188,6 +193,7 @@ protected:
 
 class RTSPServer: public GenericMediaServer {
 public:
+#ifdef IMPLEMENT_REGISTER_COMMAND
   typedef void (responseHandlerForREGISTER)(RTSPServer* rtspServer, unsigned requestId, int resultCode, char* resultString);
   unsigned registerStream(const std::shared_ptr<ServerMediaSession> &serverMediaSession,
 			  char const* remoteClientNameOrAddress, portNumBits remoteClientPortNum,
@@ -213,6 +219,7 @@ public:
 			    char const* username = NULL, char const* password = NULL,
 			    char const* proxyURLSuffix = NULL);
   // Used to turn off a previous "registerStream()" - using our custom "DEREGISTER" RTSP command.
+#endif
   
   char* rtspURL(ServerMediaSession const* serverMediaSession,
 		int clientSocket = -1, Boolean useIPv6 = False) const;
@@ -266,6 +273,7 @@ protected:
   virtual ~RTSPServer();
 
   virtual char const* allowedCommandNames(); // used to implement "RTSPClientConnection::handleCmd_OPTIONS()"
+#ifdef IMPLEMENT_REGISTER_COMMAND
   virtual Boolean weImplementREGISTER(UsageEnvironment& env, char const* cmd/*"REGISTER" or "DEREGISTER"*/,
 				      char const* proxyURLSuffix, char*& responseStr);
       // used to implement "RTSPClientConnection::handleCmd_REGISTER()"
@@ -274,7 +282,7 @@ protected:
 				     char const* url, char const* urlSuffix, int socketToRemoteServer,
 				     Boolean deliverViaTCP, char const* proxyURLSuffix);
       // used to implement "RTSPClientConnection::handleCmd_REGISTER()"
-
+#endif
   virtual UserAuthenticationDatabase* getAuthenticationDatabaseForCommand(char const* cmdName);
   virtual Boolean specialClientAccessCheck(int clientSocket,
 					   struct sockaddr_storage const& clientAddr,
@@ -334,8 +342,10 @@ private:
   HashTable* fTCPStreamingDatabase;
   mutable std::recursive_mutex fTCPStreamingDatabase_mutex; // protectes fTCPStreamingDatabase only
     // maps TCP socket numbers to ids of sessions that are streaming over it (RTP/RTCP-over-TCP)
+#ifdef IMPLEMENT_REGISTER_COMMAND
   HashTable* fPendingRegisterOrDeregisterRequests;
   unsigned fRegisterOrDeregisterRequestCounter;
+#endif
   UserAuthenticationDatabase* fAuthDB;
   Boolean fAllowStreamingRTPOverTCP; // by default, True
   Boolean fOurConnectionsUseTLS; // by default, False
@@ -345,6 +355,7 @@ private:
 };
 
 
+#ifdef IMPLEMENT_REGISTER_COMMAND
 ////////// A subclass of "RTSPServer" that implements the "REGISTER" command to set up proxying on the specified URL //////////
 
 class RTSPServerWithREGISTERProxying: public RTSPServer {
@@ -385,6 +396,7 @@ private:
   char* fBackEndUsername;
   char* fBackEndPassword;
 }; 
+#endif
 
 inline RTSPServer &RTSPClientConnection::getOurRTSPServer(void) {
   return static_cast<RTSPServer&>(fOurServer);
@@ -403,11 +415,13 @@ inline const RTSPServer &RTSPClientSession::getOurRTSPServer(void) const {
 }
 
 
+#ifdef IMPLEMENT_REGISTER_COMMAND
 // A special version of "parseTransportHeader()", used just for parsing the "Transport:" header
 // in an incoming "REGISTER" command:
 void parseTransportHeaderForREGISTER(char const* buf, // in
 				     Boolean &reuseConnection, // out
 				     Boolean& deliverViaTCP, // out
 				     char*& proxyURLSuffix); // out
+#endif
 
 #endif

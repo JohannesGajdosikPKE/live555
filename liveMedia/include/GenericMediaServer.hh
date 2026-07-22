@@ -46,6 +46,29 @@ class ServerMediaSession;
 
 class GenericMediaServer;
 
+class ServerTLSState: public TLSState {
+public:
+  ServerTLSState(UsageEnvironment& env);
+  virtual ~ServerTLSState();
+
+  void setCertificateAndPrivateKeyFileNames(char const* certFileName, char const* privKeyFileName);
+  void assignStateFrom(ServerTLSState const& from);
+
+  int accept(int socketNum); // returns: <0 (error), 0 (pending), >0 (success)
+
+  Boolean tlsAcceptIsNeeded;
+
+#ifndef NO_OPENSSL
+private:
+  Boolean setup(int socketNum);
+
+private:
+  UsageEnvironment& fEnv;
+  char const* fCertificateFileName;
+  char const* fPrivateKeyFileName;
+#endif
+};
+
   // The state of a TCP connection used by a client:
 class ClientConnection : public std::enable_shared_from_this<ClientConnection> {
 protected:

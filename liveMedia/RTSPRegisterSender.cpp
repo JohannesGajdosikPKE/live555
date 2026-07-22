@@ -19,6 +19,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // to a specified client.
 // Implementation
 
+#ifdef IMPLEMENT_REGISTER_COMMAND
+
 #include "RTSPRegisterSender.hh"
 
 ////////// RTSPRegisterOrDeregisterSender implementation /////////
@@ -225,3 +227,5 @@ RTSPDeregisterSender::RequestRecord_DEREGISTER
 
 RTSPDeregisterSender::RequestRecord_DEREGISTER::~RequestRecord_DEREGISTER() {
 }
+
+#endif

@@ -24,6 +24,10 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <GroupsockHelper.hh>
 #include <BasicUsageEnvironment.hh>
 
+#ifndef NO_OPENSSL
+#include <openssl/err.h>
+#endif
+
 #include <thread>
 #include <vector>
 #include <iostream>
@@ -32,6 +36,187 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #if defined(__WIN32__) || defined(_WIN32) || defined(_QNX4)
 #define snprintf _snprintf
 #endif
+
+////////// ServerTLSState implementation //////////
+
+ServerTLSState::ServerTLSState(UsageEnvironment& env)
+  : tlsAcceptIsNeeded(False)
+#ifndef NO_OPENSSL
+  , fEnv(env), fCertificateFileName(NULL), fPrivateKeyFileName(NULL)
+#endif
+{
+}
+
+ServerTLSState::~ServerTLSState() {
+}
+
+void ServerTLSState
+::setCertificateAndPrivateKeyFileNames(char const* certFileName, char const* privKeyFileName) {
+#ifndef NO_OPENSSL
+  fCertificateFileName = certFileName;
+  fPrivateKeyFileName = privKeyFileName;
+#endif
+}
+
+void ServerTLSState::assignStateFrom(ServerTLSState const& from) {
+#ifndef NO_OPENSSL
+  isNeeded = from.isNeeded;
+  fHasBeenSetup = from.fHasBeenSetup;
+  fCtx = from.fCtx;
+  fCon = from.fCon;
+
+  fCertificateFileName = from.fCertificateFileName;
+  fPrivateKeyFileName = from.fPrivateKeyFileName;
+#endif
+}
+
+int ServerTLSState::accept(int socketNum) {
+#ifndef NO_OPENSSL
+  if (!fHasBeenSetup && !setup(socketNum)) return -1; // error
+  
+  int sslAcceptResult = SSL_accept(fCon);
+  int sslGetErrorResult = SSL_get_error(fCon, sslAcceptResult);
+
+  if (sslAcceptResult > 0) {
+    return sslAcceptResult; // success
+  } else if (sslAcceptResult < 0 && sslGetErrorResult == SSL_ERROR_WANT_READ) {
+    // We need to wait until the socket is readable:
+    return 0; // connection is pending
+  } else {
+    fEnv.setResultErrMsg("SSL_accept() call failed: ", sslGetErrorResult);
+    char tmp[256];
+    fEnv << "ServerTLSState::accept(" << PrintSocket(tmp,sizeof(tmp),socketNum) << "): " << fEnv.getResultMsg() << "\n";
+    return -1; // error
+  }
+#else
+  return -1;	   
+#endif
+}
+
+#ifndef NO_OPENSSL
+Boolean ServerTLSState::setup(int socketNum) {
+  do {
+    initLibrary();
+
+    SSL_METHOD const* meth = TLS_server_method();
+    if (meth == NULL) {
+      fEnv << "ServerTLSState::setup: TLS_server_method() failed\n";
+      break;
+    }
+
+    fCtx = SSL_CTX_new(meth);
+    if (fCtx == NULL) {
+      fEnv << "ServerTLSState::setup: SSL_CTX_new() failed\n";
+      break;
+    }
+
+    if (0 == SSL_CTX_set_min_proto_version(fCtx, TLS1_3_VERSION)) {
+      fEnv << "ServerTLSState::setup: SSL_CTX_set_min_proto_version(TLS1_3) failed\n";
+      break;
+    }
+
+    if (SSL_CTX_set_ecdh_auto(fCtx, 1) != 1) {
+      fEnv << "ServerTLSState::setup: SSL_CTX_set_ecdh_auto(1) failed\n";
+      break;
+    }
+
+    // CertificateFileName might contain own certificate data instead of a file path
+    const bool bFileContainsCertData = 
+      strstr(fCertificateFileName,"-----BEGIN CERTIFICATE-----") != nullptr;
+    const bool bFileContainsPKeyData =
+      strstr(fPrivateKeyFileName, "-----BEGIN PRIVATE KEY-----") != nullptr;
+
+    if (bFileContainsCertData && bFileContainsPKeyData)
+    {
+      using BIO_ptr = std::unique_ptr<BIO, decltype(&BIO_free)>;
+      using X509_ptr = std::unique_ptr<X509, decltype(&X509_free)>;
+      using RSA_ptr = std::unique_ptr<RSA, decltype(&RSA_free)>;
+      using EVP_PKEY_ptr = std::unique_ptr <EVP_PKEY, decltype(&EVP_PKEY_free)>;
+
+      BIO_ptr cert_bio(BIO_new_mem_buf((const void*) fCertificateFileName, -1), BIO_free);
+      if (!cert_bio.get()) {
+        fEnv << "ServerTLSState::setup: cert_bio creation failed\n";
+        break;
+      }
+
+      X509_ptr cert (PEM_read_bio_X509(cert_bio.get(), nullptr, nullptr, nullptr), X509_free);
+      if (!cert) {
+        fEnv << "ServerTLSState::setup: PEM_read_bio_X509() failed\n";
+        break;
+      }
+
+      if (SSL_CTX_use_certificate(fCtx, cert.get()) != 1) {
+        fEnv << "ServerTLSState::setup: SSL_CTX_use_certificate() failed\n";
+        break;
+      }
+
+      BIO_ptr pk_bio(BIO_new_mem_buf((const void*)fPrivateKeyFileName, -1), BIO_free);
+      if (!pk_bio.get()) {
+        fEnv << "ServerTLSState::setup: pk_bio creation failed\n";
+        break;
+      }
+
+      EVP_PKEY_ptr pkey(PEM_read_bio_PrivateKey(pk_bio.get(), nullptr, nullptr, nullptr), EVP_PKEY_free);
+      if (!pkey) {
+        fEnv << "ServerTLSState::setup: PEM_read_bio_PrivateKey() failed\n";
+        break;
+      }
+
+      if (SSL_CTX_use_PrivateKey(fCtx, pkey.get()) != 1) {
+        fEnv << "ServerTLSState::setup: SSL_CTX_use_PrivateKey() failed\n";
+        break;
+      }
+
+    }
+    else
+    {
+      if (SSL_CTX_use_certificate_chain_file(fCtx, fCertificateFileName) != 1) {
+        fEnv << "ServerTLSState::setup: SSL_CTX_use_certificate_chain_file(" << fCertificateFileName << ") failed\n";
+        break;
+      }
+
+      if (SSL_CTX_use_PrivateKey_file(fCtx, fPrivateKeyFileName, SSL_FILETYPE_PEM) != 1) {
+        fEnv << "ServerTLSState::setup: SSL_CTX_use_PrivateKey_file(" << fPrivateKeyFileName << ") failed\n";
+        break;
+      }
+    }
+
+    fCon = SSL_new(fCtx);
+    if (fCon == NULL) {
+      fEnv << "ServerTLSState::setup: SSL_new() failed\n";
+      break;
+    }
+
+    BIO* bio = BIO_new_socket(socketNum, BIO_NOCLOSE);
+    SSL_set_bio(fCon, bio, bio);
+
+    fHasBeenSetup = True;
+    return True;
+  } while (0);
+
+  // An error occurred:
+//  ERR_print_errors_fp(stderr);
+
+  {
+    char tmp[16*1024];
+    fEnv << "ServerTLSState::setup(" << PrintSocket(tmp,sizeof(tmp),socketNum) << "): accumulated SSL errors: ";
+    BIO *bio = BIO_new(BIO_s_mem());
+    ERR_print_errors(bio);
+    char *buf;
+    size_t len = BIO_get_mem_data(bio, &buf);
+    if (len > sizeof(tmp)-2) len = sizeof(tmp)-2;
+    memcpy(tmp,buf,len);
+    tmp[len-1] = '\n';
+    tmp[len] = '\0';
+    BIO_free(bio);
+    fEnv << tmp;
+  }
+
+  reset();
+  return False;
+}
+#endif
+
 
 ////////// GenericMediaServer implementation //////////
 
