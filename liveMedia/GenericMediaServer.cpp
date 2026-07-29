@@ -744,7 +744,7 @@ void ClientConnection::closeSockets() {
     if (fClientOutputSocket == fOurSocket) fClientOutputSocket = -1;
     fOurSocket = -1;
   } else {
-    envir() << "ClientConnection(" << getId() << ")::closeSockets: already closed\n";
+///    envir() << "ClientConnection(" << getId() << ")::closeSockets: already closed\n";
   }
 }
 

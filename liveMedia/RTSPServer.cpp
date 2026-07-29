@@ -252,17 +252,17 @@ void RTSPServer::incomingConnectionHandlerHTTPIPv6() {
 }
 
 void RTSPServer
-::noteTCPStreamingOnSocket(int socketNum, RTSPClientSession* clientSession, unsigned trackNum) {
+::noteTCPStreamingOnSocket(int socketNum, u_int32_t clientSessionId, unsigned trackNum) {
   std::lock_guard<std::recursive_mutex> guard(fTCPStreamingDatabase_mutex);
   streamingOverTCPRecord* sotcpCur
     = (streamingOverTCPRecord*)fTCPStreamingDatabase->Lookup((char const*)socketNum);
   streamingOverTCPRecord* sotcpNew
-    = new streamingOverTCPRecord(clientSession->getOurSessionId(), trackNum, sotcpCur);
+    = new streamingOverTCPRecord(clientSessionId, trackNum, sotcpCur);
   fTCPStreamingDatabase->Add((char const*)socketNum, sotcpNew);
 }
 
 void RTSPServer
-::unnoteTCPStreamingOnSocket(int socketNum, RTSPClientSession* clientSession, unsigned trackNum) {
+::unnoteTCPStreamingOnSocket(int socketNum, u_int32_t clientSessionId, unsigned trackNum) {
   std::lock_guard<std::recursive_mutex> guard(fTCPStreamingDatabase_mutex);
   if (socketNum < 0) return;
   streamingOverTCPRecord* sotcpHead
@@ -273,7 +273,7 @@ void RTSPServer
   streamingOverTCPRecord* sotcp = sotcpHead;
   streamingOverTCPRecord* sotcpPrev = sotcpHead;
   do {
-    if (sotcp->fSessionId == clientSession->getOurSessionId() && sotcp->fTrackNum == trackNum) break;
+    if (sotcp->fSessionId == clientSessionId && sotcp->fTrackNum == trackNum) break;
     sotcpPrev = sotcp;
     sotcp = sotcp->fNext;
   } while (sotcp != NULL);
@@ -334,7 +334,13 @@ void RTSPServer::stopTCPStreamingOnSocket(int socketNum) {
       if (scheduler.isSameThread()) {
         it.first->deleteStreamByTrack(it.second);
       } else {
+        envir() << "WARNING: RTSPServer::stopTCPStreamingOnSocket(" << socketNum << "): "
+                   "found a Clientsession(" << it.first->getOurSessionId()
+                << ") belonging to another thread(" << scheduler.my_thread_id << ")\n";
           // Before returning I must wait for all lambdas to complete.
+        // I do not like this. One scheduler waitung for other schedulers. Could cause deadlock.
+        // Why would there be an entry in fTCPStreamingDatabase with the wrong thread?
+        // Passing the shared_pointer in the lambda does no harm because I wait for the semaphore anyway.
         scheduler.executeCommand(
           [this,clientSession=std::move(it.first),track_nr=it.second,&sem](uint64_t) {
             clientSession->deleteStreamByTrack(track_nr);
@@ -370,7 +376,11 @@ RTSPClientConnection
   : ClientConnection(threaded_env, ourServer, clientSocket, clientAddr, useTLS),
     fClientInputSocket(fOurSocket),
     fPOSTSocketTLS(envir()), fAddressFamily(clientAddr.ss_family),
-    fIsActive(True), fRecursionCount(0), fOurSessionCookie(NULL), fScheduledDelayedTask(0) {
+    fIsActive(True), fRecursionCount(0), fOurSessionCookie(NULL)
+#ifdef IMPLEMENT_REGISTER_COMMAND
+   ,fScheduledDelayedTask(0)
+#endif
+{
   envir() << "RTSPClientConnection(" << getId() << ",this=" << this << ")::RTSPClientConnection\n";
   resetRequestBuffer();
 }
@@ -738,7 +748,7 @@ void RTSPClientConnection::closeSocketsRTSP() {
     }
   } else {
     if (fClientOutputSocket < 0) {
-      envir() << "RTSPClientConnection(" << getId() << ")::closeSocketsRTSP: output socket already closed\n";
+///      envir() << "RTSPClientConnection(" << getId() << ")::closeSocketsRTSP: output socket already closed\n";
     }
   }
   fClientOutputSocket = -1;
@@ -770,7 +780,7 @@ void RTSPClientConnection::handleAlternativeRequestByte1(u_int8_t requestByte) {
 
 void RTSPClientConnection::handleRequestBytes(int newBytesRead) {
   envir().taskScheduler().assertSameThread();
-  envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << ") begin\n";
+//  envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << ") begin\n";
   RTSPClientConnection::newBytesRead = newBytesRead;
   numBytesRemaining = 0;
   ++fRecursionCount;
@@ -1142,27 +1152,28 @@ void RTSPClientConnection::handleRequestBytesFinish(void) {
   --fRecursionCount;
   // If it has a scheduledDelayedTask, don't delete the instance or close the sockets. The sockets can be reused in the task.
   if (fIsActive) {
-    envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end\n";
-  } else {
-    if (fScheduledDelayedTask <= 0) {
-      if (fRecursionCount > 0) {
-        closeSocketsRTSP();
-        envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: "
-                   "closeSocketsRTSP() called\n";
-      } else {
-          // later envir() and getId() shall not crash:
-        const auto keep_this = shared_from_this();
-        fOurServer.removeClientConnection(*this);
-        envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: "
-                   "removeFromServer() called\n";
-      }
-      // Note: The "fRecursionCount" test is for a pathological situation where we reenter the event loop and get called recursively
-      // while handling a command (e.g., while handling a "DESCRIBE", to get a SDP description).
-      // In such a case we don't want to actually delete ourself until we leave the outermost call.
-    } else {
-      envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: "
-                 "I would like to close but there is still a fScheduledDelayedTask\n";
+//    envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end\n";
+  } else
+#ifdef IMPLEMENT_REGISTER_COMMAND
+  if (fScheduledDelayedTask > 0) {
+    envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: "
+               "I would like to close but there are still " << fScheduledDelayedTask << " scheduled delayed tasks\n";
+  } else
+#endif
+  {
+    closeSocketsRTSP(); // close sockets once and for all
+//    envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: "
+//               "closeSocketsRTSP() called\n";
+    if (fRecursionCount <= 0) {
+        // later envir() and getId() shall not crash:
+      const auto keep_this = shared_from_this();
+      fOurServer.removeClientConnection(*this);
+//      envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: "
+//                 "removeFromServer() called\n";
     }
+    // Note: The "fRecursionCount" test is for a pathological situation where we reenter the event loop and get called recursively
+    // while handling a command (e.g., while handling a "DESCRIBE", to get a SDP description).
+    // In such a case we don't want to actually delete ourself until we leave the outermost call.
   }
 }
 
@@ -1542,7 +1553,7 @@ void RTSPClientSession::reclaimStreamStates() {
   envir().taskScheduler().assertSameThread();
   for (unsigned i = 0; i < fNumStreamStates; ++i) {
     if (fStreamStates[i].subsession != NULL) {
-      getOurRTSPServer().unnoteTCPStreamingOnSocket(fStreamStates[i].tcpSocketNum, this, i);
+      getOurRTSPServer().unnoteTCPStreamingOnSocket(fStreamStates[i].tcpSocketNum, getOurSessionId(), i);
       fStreamStates[i].subsession->deleteStream(fOurSessionId, fStreamStates[i].streamToken);
     }
   }
@@ -1778,7 +1789,7 @@ void RTSPClientSession
       // We already handled a "SETUP" for this track (to the same client),
       // so stop any existing streaming of it, before we set it up again:
       subsession->pauseStream(fOurSessionId, token);
-      getOurRTSPServer().unnoteTCPStreamingOnSocket(fStreamStates[trackNum].tcpSocketNum, this, trackNum);
+      getOurRTSPServer().unnoteTCPStreamingOnSocket(fStreamStates[trackNum].tcpSocketNum, getOurSessionId(), trackNum);
       subsession->deleteStream(fOurSessionId, token);
     }
 
@@ -1825,7 +1836,7 @@ void RTSPClientSession
     if (streamingMode == RTP_TCP) {
       // Note that we'll be streaming over the RTSP TCP connection:
       fStreamStates[trackNum].tcpSocketNum = our_client_connection->getClientOutputSocket();
-      getOurRTSPServer().noteTCPStreamingOnSocket(fStreamStates[trackNum].tcpSocketNum, this, trackNum);
+      getOurRTSPServer().noteTCPStreamingOnSocket(fStreamStates[trackNum].tcpSocketNum, getOurSessionId(), trackNum);
     }
     struct sockaddr_storage destinationAddress = nullAddress();
         // used to indicate that the address is 'unassigned'
@@ -2033,7 +2044,7 @@ void RTSPClientSession
     if (subsession == NULL /* means: aggregated operation */
 	|| subsession == fStreamStates[i].subsession) {
       if (fStreamStates[i].subsession != NULL) {
-	getOurRTSPServer().unnoteTCPStreamingOnSocket(fStreamStates[i].tcpSocketNum, this, i);
+	getOurRTSPServer().unnoteTCPStreamingOnSocket(fStreamStates[i].tcpSocketNum, getOurSessionId(), i);
 	fStreamStates[i].subsession->deleteStream(fOurSessionId, fStreamStates[i].streamToken);
 	fStreamStates[i].subsession = NULL;
       }

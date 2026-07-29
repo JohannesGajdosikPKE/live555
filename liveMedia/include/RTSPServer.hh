@@ -133,7 +133,9 @@ protected:
   Authenticator fCurrentAuthenticator; // used if access control is needed
   char* fOurSessionCookie; // used for optional RTSP-over-HTTP tunneling
   unsigned fBase64RemainderCount; // used for optional RTSP-over-HTTP tunneling (possible values: 0,1,2,3)
+#ifdef IMPLEMENT_REGISTER_COMMAND
   unsigned fScheduledDelayedTask;
+#endif
 };
 
 // The state of an individual client session (using one or more sequential TCP connections) handled by a RTSP server:
@@ -325,8 +327,8 @@ private:
   static void incomingConnectionHandlerHTTPIPv6(void*, int /*mask*/);
   void incomingConnectionHandlerHTTPIPv6();
 
-  void noteTCPStreamingOnSocket(int socketNum, RTSPClientSession* clientSession, unsigned trackNum);
-  void unnoteTCPStreamingOnSocket(int socketNum, RTSPClientSession* clientSession, unsigned trackNum);
+  void noteTCPStreamingOnSocket(int socketNum, u_int32_t clientSessionId, unsigned trackNum);
+  void unnoteTCPStreamingOnSocket(int socketNum, u_int32_t clientSessionId, unsigned trackNum);
   void stopTCPStreamingOnSocket(int socketNum);
 
 private:
