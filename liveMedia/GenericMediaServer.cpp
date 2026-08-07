@@ -661,7 +661,7 @@ static ClientConnection::IdType GenerateId(void) {
 
 ClientConnection
 ::ClientConnection(UsageEnvironment &threaded_env, GenericMediaServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr, Boolean useTLS)
-  : threaded_env(threaded_env), fOurServer(ourServer), id(GenerateId()), fOurSocket(clientSocket), fClientOutputSocket(clientSocket), fClientAddr(clientAddr), fTLS(threaded_env) {
+  : threaded_env(threaded_env), fOurServer(ourServer), id(GenerateId()), fOurSocket(clientSocket), fClientAddr(clientAddr), fTLS(threaded_env) {
   envir().taskScheduler().assertSameThread();
   fInputTLS = fOutputTLS = &fTLS;
     char peer_host_str[INET6_ADDRSTRLEN + 1];
@@ -741,7 +741,6 @@ void ClientConnection::closeSockets() {
     } else {
       envir() << "ClientConnection(" << getId() << ")::closeSockets: background handling disabled, closeSocket(" << fOurSocket << ") ok\n";
     }
-    if (fClientOutputSocket == fOurSocket) fClientOutputSocket = -1;
     fOurSocket = -1;
   } else {
 ///    envir() << "ClientConnection(" << getId() << ")::closeSockets: already closed\n";

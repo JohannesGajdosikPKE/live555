@@ -123,7 +123,12 @@ protected:
 
   RTSPServer &getOurRTSPServer(void);
   const RTSPServer &getOurRTSPServer(void) const;
-  int& fClientInputSocket; // aliased to ::fOurSocket
+  void clearClientInputSocket(void) {fOurSocket = -1;}
+  void setClientInputSocket(int s) {fOurSocket = s;}
+  int getClientInputSocket(void) const {return fOurSocket;}
+  void clearClientOutputSocket(void) {fClientOutputSocket = -1;}
+  int getClientOutputSocket(void) const {return fClientOutputSocket;}
+  int fClientOutputSocket;
   ServerTLSState fPOSTSocketTLS; // used only for RTSP-over-HTTPS
   int fAddressFamily;
   Boolean fIsActive;

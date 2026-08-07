@@ -317,7 +317,7 @@ void RTSPClientConnection::continueHandlingREGISTER1(ParamsForREGISTER* params) 
   --fScheduledDelayedTask;
 
   // Reuse our socket if requested:
-  int socketNumToBackEndServer = params->fReuseConnection ? fClientOutputSocket : -1;
+  int socketNumToBackEndServer = params->fReuseConnection ? getClientOutputSocket() : -1;
 
   RTSPServer* ourServer = &getOurRTSPServer(); // copy the pointer now, in case we "delete this" below
   UsageEnvironment &env(envir());
@@ -326,7 +326,7 @@ void RTSPClientConnection::continueHandlingREGISTER1(ParamsForREGISTER* params) 
     // Because our socket will no longer be used by the server to handle incoming requests, we can now delete this
     // "RTSPClientConnection" object.  We do this now, in case the "implementCmd_REGISTER()" call below would also end up
     // deleting this.
-    fClientInputSocket = fClientOutputSocket = -1; // so the socket doesn't get closed when we get deleted
+    clearClientInputSocket();clearClientOutputSocket(); // so the socket doesn't get closed when we get deleted
       // may result in destructing of *this, thread is already ok.
     ourServer->removeClientConnection(*this);
   } else if (!fIsActive && fRecursionCount <= 0 && fScheduledDelayedTask <= 0) {

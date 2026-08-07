@@ -82,7 +82,6 @@ public:
   typedef void *IdType;
   IdType getId(void) const {return id;}
   int getSocket(void) const {return fOurSocket;}
-  int getClientOutputSocket(void) const {return fClientOutputSocket;}
   const struct sockaddr_storage &getClientAddr(void) const {return fClientAddr;}
 protected:
   void closeSockets();
@@ -97,7 +96,6 @@ protected:
   const IdType id;
 protected:
   int fOurSocket;
-  int fClientOutputSocket; // for RTSPClientConnection only
   struct sockaddr_storage fClientAddr;
   unsigned char fRequestBuffer[REQUEST_BUFFER_SIZE];
   unsigned char fResponseBuffer[RESPONSE_BUFFER_SIZE];

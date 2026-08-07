@@ -171,8 +171,9 @@ RTSPServer::RTSPServer(UsageEnvironment& env,
     fTCPStreamingDatabase(HashTable::create(ONE_WORD_HASH_KEYS)),
 #ifdef IMPLEMENT_REGISTER_COMMAND
     fPendingRegisterOrDeregisterRequests(HashTable::create(ONE_WORD_HASH_KEYS)),
-    fRegisterOrDeregisterRequestCounter(0), fAuthDB(authDatabase),
+    fRegisterOrDeregisterRequestCounter(0),
 #endif
+    fAuthDB(authDatabase),
     fAllowStreamingRTPOverTCP(True),
     fOurConnectionsUseTLS(False), fWeServeSRTP(False) {
 }
@@ -371,10 +372,10 @@ void RTSPClientConnection::create(UsageEnvironment& threaded_env, RTSPServer& ou
 
 RTSPClientConnection
 ::RTSPClientConnection(UsageEnvironment& threaded_env, RTSPServer& ourServer,
-		       int clientSocket, struct sockaddr_storage const& clientAddr,
-		       Boolean useTLS)
+                      const int clientSocket, struct sockaddr_storage const& clientAddr,
+                      const Boolean useTLS)
   : ClientConnection(threaded_env, ourServer, clientSocket, clientAddr, useTLS),
-    fClientInputSocket(fOurSocket),
+    fClientOutputSocket(clientSocket),
     fPOSTSocketTLS(envir()), fAddressFamily(clientAddr.ss_family),
     fIsActive(True), fRecursionCount(0), fOurSessionCookie(NULL)
 #ifdef IMPLEMENT_REGISTER_COMMAND
@@ -486,7 +487,7 @@ void RTSPClientConnection
     
     // Also, generate our RTSP URL, for the "Content-Base:" header
     // (which is necessary to ensure that the correct URL gets used in subsequent "SETUP" requests).
-    rtspURL = getOurRTSPServer().rtspURL(session.get(), fClientInputSocket);
+    rtspURL = getOurRTSPServer().rtspURL(session.get(), getClientInputSocket());
     
     snprintf((char*)fResponseBuffer, sizeof fResponseBuffer,
 	     "RTSP/1.0 200 OK\r\nCSeq: %s\r\n"
@@ -542,7 +543,7 @@ void RTSPClientConnection::handleCmd_notSupported() {
 }
 
 void RTSPClientConnection::handleCmd_redirect(char const* urlSuffix) {
-  char* urlPrefix = getOurRTSPServer().rtspURLPrefix(fClientInputSocket);
+  char* urlPrefix = getOurRTSPServer().rtspURLPrefix(getClientInputSocket());
   snprintf((char*)fResponseBuffer, sizeof fResponseBuffer,
 	   "RTSP/1.0 301 Moved Permanently\r\n"
 	   "CSeq: %s\r\n"
@@ -662,7 +663,7 @@ void RTSPClientConnection::handleHTTPCmd_TunnelingGET(char const* sessionCookie)
     return;
   }
 #ifdef DEBUG
-  fprintf(stderr, "Handled HTTP \"GET\" request (client output socket: %d)\n", fClientOutputSocket);
+  fprintf(stderr, "Handled HTTP \"GET\" request (client output socket: %d)\n", getClientOutputSocket());
 #endif
   
   // Construct our response:
@@ -679,6 +680,14 @@ void RTSPClientConnection::handleHTTPCmd_TunnelingGET(char const* sessionCookie)
 Boolean RTSPClientConnection
 ::handleHTTPCmd_TunnelingPOST(char const* sessionCookie, unsigned char const* extraData, unsigned extraDataSize) {
   envir().taskScheduler().assertSameThread();
+  if (getClientInputSocket() != getClientOutputSocket()) {
+    envir() << "RTSPClientConnection("  << getId() << ")::handleHTTPCmd_TunnelingPOST: "
+               "input socket " << getClientInputSocket() << " is already different from output socket " << getClientOutputSocket()
+            << ": I do not allow a second tunneling request\n";
+    handleHTTPCmd_notSupported();
+    fIsActive = False; // triggers deletion of ourself
+    return False;
+  }
   // Use the "sessionCookie" string to look up the separate "RTSPClientConnection" object that should have been used to handle
   // an earlier HTTP "GET" request:
   std::shared_ptr<RTSPClientConnection> prevClientConnection;
@@ -690,23 +699,40 @@ Boolean RTSPClientConnection
       prevClientConnection = it->second.lock();
     }
   }
-  if (!prevClientConnection || prevClientConnection.get() == this) {
-    // Either there was no previous HTTP "GET" request, or it was on the same connection; treat this "POST" request as bad:
+  if (!prevClientConnection) {
+    // there was no previous HTTP "GET" request; treat this "POST" request as bad:
+    envir() << "RTSPClientConnection("  << getId() << ")::handleHTTPCmd_TunnelingPOST: "
+               "no previous HTTP GET for session cookie " << sessionCookie << ": not allowed\n";
+    handleHTTPCmd_notSupported();
+    fIsActive = False; // triggers deletion of ourself
+    return False;
+  }
+  if (prevClientConnection.get() == this) {
+    // previous HTTP "GET" request on the same connection; treat this "POST" request as bad:
+    envir() << "RTSPClientConnection("  << getId() << ")::handleHTTPCmd_TunnelingPOST: "
+               "previous HTTP GET for session cookie " << sessionCookie << " on the same connection: not allowed\n";
+    handleHTTPCmd_notSupported();
+    fIsActive = False; // triggers deletion of ourself
+    return False;
+  }
+  if (prevClientConnection->getClientInputSocket() != prevClientConnection->getClientOutputSocket()) {
+    envir() << "RTSPClientConnection("  << getId() << ")::handleHTTPCmd_TunnelingPOST: "
+               "previous HTTP GET for session cookie " << sessionCookie << " has already had a TunnelingPOST request: not allowed\n";
     handleHTTPCmd_notSupported();
     fIsActive = False; // triggers deletion of ourself
     return False;
   }
 #ifdef DEBUG
-  fprintf(stderr, "Handled HTTP \"POST\" request (client input socket: %d)\n", fClientInputSocket);
+  fprintf(stderr, "Handled HTTP \"POST\" request (client input socket: %d)\n", getClientInputSocket());
 #endif
   envir() << "RTSPClientConnection("  << getId() << ")::handleHTTPCmd_TunnelingPOST: "
-             "transfering socket " << fClientInputSocket << " and handling from thread " << envir().taskScheduler().my_thread_id
+             "transfering socket " << getClientInputSocket() << " and handling from thread " << envir().taskScheduler().my_thread_id
           << " to " << prevClientConnection->getId() << " in thread " << prevClientConnection->envir().taskScheduler().my_thread_id << "\n";
   // Change the previous "RTSPClientSession" object's input socket to ours.  It will be used for subsequent requests:
-  prevClientConnection->changeClientInputSocket(fClientInputSocket, fInputTLS,
+  prevClientConnection->changeClientInputSocket(getClientInputSocket(), fInputTLS,
 						envir(), extraData, extraDataSize);
     // revoke ownership of the socket:
-  fClientInputSocket = fClientOutputSocket = -1; // so the socket doesn't get closed when we get deleted
+  clearClientInputSocket();clearClientOutputSocket(); // so the socket doesn't get closed when we get deleted
   fInputTLS->nullify(); // so that our destructor doesn't reset the copied TLS state
 
   UsageEnvironment& prev_env(prevClientConnection->envir());
@@ -734,26 +760,29 @@ void RTSPClientConnection::resetRequestBuffer() {
 void RTSPClientConnection::closeSocketsRTSP() {
   envir().taskScheduler().assertSameThread();
   // First, tell our server to stop any streaming that it might be doing over our output socket:
-  getOurRTSPServer().stopTCPStreamingOnSocket(fClientOutputSocket);
+
+    // stopTCPStreamingOnSocket will cause Media destruction inside ClientSession
+  getOurRTSPServer().stopTCPStreamingOnSocket(getClientOutputSocket());
 
   // Turn off background handling on our input socket (and output socket, if different); then close it (or them):
-  if (fClientOutputSocket != fClientInputSocket && fClientOutputSocket >= 0) {
-    envir() << "RTSPClientConnection(" << getId() << ")::closeSocketsRTSP: disableBackgroundHandling(" << fClientOutputSocket << ") and close output socket\n";
-    envir().taskScheduler().disableBackgroundHandling(fClientOutputSocket);
-    if (::closeSocket(fClientOutputSocket)) {
+  if (getClientOutputSocket() != getClientInputSocket() && getClientOutputSocket() >= 0) {
+    envir() << "RTSPClientConnection(" << getId() << ")::closeSocketsRTSP: disableBackgroundHandling(" << getClientOutputSocket() << ") and close output socket\n";
+      // there should be no backgroundhandling for the output socket, close it anyway:
+    envir().taskScheduler().disableBackgroundHandling(getClientOutputSocket());
+    if (::closeSocket(getClientOutputSocket())) {
       const int errnr = envir().getErrno();
-      envir() << "RTSPClientConnection(" << getId() << ")::closeSocketsRTSP: closeSocket(" << fClientOutputSocket << ") failed: " << errnr << "\n";
+      envir() << "RTSPClientConnection(" << getId() << ")::closeSocketsRTSP: closeSocket(" << getClientOutputSocket() << ") failed: " << errnr << "\n";
     } else {
-      envir() << "RTSPClientConnection(" << getId() << ")::closeSocketsRTSP: closeSocket(" << fClientOutputSocket << ") ok\n";
+      envir() << "RTSPClientConnection(" << getId() << ")::closeSocketsRTSP: closeSocket(" << getClientOutputSocket() << ") ok\n";
     }
   } else {
-    if (fClientOutputSocket < 0) {
+///    if (getClientOutputSocket() < 0) {
 ///      envir() << "RTSPClientConnection(" << getId() << ")::closeSocketsRTSP: output socket already closed\n";
-    }
+///    }
   }
-  fClientOutputSocket = -1;
+  clearClientOutputSocket();
   
-  closeSockets(); // closes fClientInputSocket
+  closeSockets(); // closes input socket
 }
 
 void RTSPClientConnection::handleAlternativeRequestByte1(u_int8_t requestByte) {
@@ -764,7 +793,7 @@ void RTSPClientConnection::handleAlternativeRequestByte1(u_int8_t requestByte) {
   } else if (requestByte == 0xFE) {
     // Another hack: The new handler of the input TCP socket no longer needs it, so take back control of it:
 //    envir() << "RTSPClientConnection::handleAlternativeRequestByte1: calling setBackgroundHandling\n";
-    envir().taskScheduler().setBackgroundHandling(fClientInputSocket, SOCKET_READABLE|SOCKET_EXCEPTION,
+    envir().taskScheduler().setBackgroundHandling(getClientInputSocket(), SOCKET_READABLE|SOCKET_EXCEPTION,
       [&env=envir(),self=weak_from_this()](int) {
         auto c(self.lock());
         if (c) std::static_pointer_cast<RTSPClientConnection>(c)->incomingRequestHandler();
@@ -780,7 +809,7 @@ void RTSPClientConnection::handleAlternativeRequestByte1(u_int8_t requestByte) {
 
 void RTSPClientConnection::handleRequestBytes(int newBytesRead) {
   envir().taskScheduler().assertSameThread();
-//  envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << ") begin\n";
+//  envir() << "RTSPClientConnection(" << getId() << "," << getClientOutputSocket() << ")::handleRequestBytes(" << newBytesRead << ") begin\n";
   RTSPClientConnection::newBytesRead = newBytesRead;
   numBytesRemaining = 0;
   ++fRecursionCount;
@@ -797,7 +826,7 @@ void RTSPClientConnection::handleRequestBytesBody(void) {
 #ifdef DEBUG
       fprintf(stderr, "RTSPClientConnection[%p]::handleRequestBytes() read %d new bytes (of %d); terminating connection!\n", this, newBytesRead, fRequestBufferBytesLeft);
 #endif
-      envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << "): terminating connection\n";
+      envir() << "RTSPClientConnection(" << getId() << "," << getClientOutputSocket() << ")::handleRequestBytes(" << newBytesRead << "): terminating connection\n";
       fIsActive = False;
       break;
     }
@@ -810,10 +839,10 @@ void RTSPClientConnection::handleRequestBytesBody(void) {
 	    this, numBytesRemaining > 0 ? "processing" : "read", newBytesRead, ptr);
 #endif
   ptr[newBytesRead] = '\0';
-//  envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes(" << newBytesRead << "): "
+//  envir() << "RTSPClientConnection(" << getId() << "," << getClientOutputSocket() << ")::handleRequestBytes(" << newBytesRead << "): "
 //          << (numBytesRemaining > 0 ? "processing " : "read ") << (const char*)ptr << "\n";
     
-    if (fClientOutputSocket != fClientInputSocket && numBytesRemaining == 0) {
+    if (getClientOutputSocket() != getClientInputSocket() && numBytesRemaining == 0) {
       // We're doing RTSP-over-HTTP tunneling, and input commands are assumed to have been Base64-encoded.
       // We therefore Base64-decode as much of this new data as we can (i.e., up to a multiple of 4 bytes).
       
@@ -839,7 +868,7 @@ void RTSPClientConnection::handleRequestBytesBody(void) {
 	for (unsigned k = 0; k < decodedSize; ++k) fprintf(stderr, "%c", decodedBytes[k]);
 	fprintf(stderr, "\n");
 #endif
-//    envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes: "
+//    envir() << "RTSPClientConnection(" << getId() << "," << getClientOutputSocket() << ")::handleRequestBytes: "
 //               "Base64-decoded " << numBytesToDecode << " input bytes into " << decodedSize << " new bytes\n";
 	
 	// Copy the new decoded bytes in place of the old ones (we can do this because there are fewer decoded bytes than original):
@@ -910,7 +939,7 @@ void RTSPClientConnection::handleRequestBytesBody(void) {
       // If there was a "Content-Length:" header, then make sure we've received all of the data that it specified:
       if (ptr + newBytesRead < tmpPtr + 2 + contentLength) break; // we still need more data; subsequent reads will give it to us 
 
-      envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes: "
+      envir() << "RTSPClientConnection(" << getId() << "," << getClientOutputSocket() << ")::handleRequestBytes: "
               << cmdName << " request parsing ok\n";
       if (strcmp(cmdName, "OPTIONS") && strcmp(cmdName, "GET_PARAMETER")) { // do not log contents of OPTIONS request
         fLastCRLF[0] = '\n'; // temporarily, for logging
@@ -1050,7 +1079,7 @@ void RTSPClientConnection::handleRequestBytesBody(void) {
       if (parseSucceeded) {
         fLastCRLF[0] = '\n'; // temporarily, for logging
         fLastCRLF[1] = '\0'; // temporarily, for logging
-        envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes: "
+        envir() << "RTSPClientConnection(" << getId() << "," << getClientOutputSocket() << ")::handleRequestBytes: "
                    "HTTP "<< cmdName << " request parsing ok\n" << (char*)fRequestBuffer;
         fLastCRLF[0] = '\r'; // restore
         fLastCRLF[1] = '\n'; // restore
@@ -1090,7 +1119,7 @@ void RTSPClientConnection::handleRequestBytesBody(void) {
       } else {
         fLastCRLF[0] = '\n'; // temporarily, for logging
         fLastCRLF[1] = '\0'; // temporarily, for logging
-        envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes: "
+        envir() << "RTSPClientConnection(" << getId() << "," << getClientOutputSocket() << ")::handleRequestBytes: "
                    "request parsing failed\n" << (char*)fRequestBuffer;
         fLastCRLF[0] = '\r'; // restore
         fLastCRLF[1] = '\n'; // restore
@@ -1126,7 +1155,7 @@ void RTSPClientConnection::handleRequestBytesEndOfLoop(Boolean playAfterSetup,st
 #endif
     } else {
         TimeAccounter::Guard guard(account_id_send,envir());
-        send(fClientOutputSocket, (char const*)fResponseBuffer, numBytesToWrite, MSG_NOSIGNAL);
+        send(getClientOutputSocket(), (char const*)fResponseBuffer, numBytesToWrite, MSG_NOSIGNAL);
    }
     
     if (playAfterSetup) {
@@ -1152,24 +1181,32 @@ void RTSPClientConnection::handleRequestBytesFinish(void) {
   --fRecursionCount;
   // If it has a scheduledDelayedTask, don't delete the instance or close the sockets. The sockets can be reused in the task.
   if (fIsActive) {
-//    envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end\n";
+//    envir() << "RTSPClientConnection(" << getId() << "," << getClientOutputSocket() << ")::handleRequestBytes end\n";
   } else
 #ifdef IMPLEMENT_REGISTER_COMMAND
   if (fScheduledDelayedTask > 0) {
-    envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: "
+    envir() << "RTSPClientConnection(" << getId() << "," << getClientOutputSocket() << ")::handleRequestBytes end: "
                "I would like to close but there are still " << fScheduledDelayedTask << " scheduled delayed tasks\n";
   } else
 #endif
   {
     closeSocketsRTSP(); // close sockets once and for all
-//    envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: "
-//               "closeSocketsRTSP() called\n";
-    if (fRecursionCount <= 0) {
+    envir() << "RTSPClientConnection(" << getId() << "," << getClientOutputSocket() << ")::handleRequestBytes end: "
+               "closeSocketsRTSP() called\n";
+    if (fRecursionCount > 0) {
+//      closeSocketsRTSP();
+//      envir() << "RTSPClientConnection(" << getId() << "," << getClientOutputSocket() << ")::handleRequestBytes end: "
+//                 "closeSocketsRTSP() called\n";
+    } else {
         // later envir() and getId() shall not crash:
       const auto keep_this = shared_from_this();
       fOurServer.removeClientConnection(*this);
-//      envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::handleRequestBytes end: "
-//                 "removeFromServer() called\n";
+        // handle no more requests on the input socket
+      envir().taskScheduler().disableBackgroundHandling(getClientInputSocket());
+//      envir() << "RTSPClientConnection(" << getId() << "," << getClientOutputSocket() << ")::handleRequestBytes end: "
+//                 "removeFromServer() and disableBackgroundHandling(" << getClientInputSocket() << ") called\n";
+      // keep_this goes out of scope and RTSPClientConnection will get destructed either here
+      // or when the last shared_ptr dies.
     }
     // Note: The "fRecursionCount" test is for a pathological situation where we reenter the event loop and get called recursively
     // while handling a command (e.g., while handling a "DESCRIBE", to get a SDP description).
@@ -1254,7 +1291,7 @@ static Boolean parseAuthorizationHeader(char const* buf,
 
 Boolean RTSPClientConnection
 ::authenticationOK(char const* cmdName, char const* urlSuffix, char const* fullRequestStr) {
-  if (!getOurRTSPServer().specialClientAccessCheck(fClientInputSocket, fClientAddr, urlSuffix)) {
+  if (!getOurRTSPServer().specialClientAccessCheck(getClientInputSocket(), fClientAddr, urlSuffix)) {
     setRTSPResponse("401 Unauthorized");
     return False;
   }
@@ -1306,7 +1343,7 @@ Boolean RTSPClientConnection
   if (success) {
     // The user has been authenticated.
     // Now allow subclasses a chance to validate the user against the IP address and/or URL suffix.
-    if (!getOurRTSPServer().specialClientUserAccessCheck(fClientInputSocket, fClientAddr, urlSuffix, username)) {
+    if (!getOurRTSPServer().specialClientUserAccessCheck(getClientInputSocket(), fClientAddr, urlSuffix, username)) {
       // Note: We don't return a "WWW-Authenticate" header here, because the user is valid,
       // even though the server has decided that they should not have access.
       setRTSPResponse("401 Unauthorized");
@@ -1330,7 +1367,7 @@ Boolean RTSPClientConnection
 	   dateHeader(),
 	   fCurrentAuthenticator.realm(), fCurrentAuthenticator.nonce());
   if (!isInitial401) { // this is an actual authentication failure
-    getOurRTSPServer().specialHandlingOfAuthenticationFailure(fClientInputSocket, fClientAddr, urlSuffix);
+    getOurRTSPServer().specialHandlingOfAuthenticationFailure(getClientInputSocket(), fClientAddr, urlSuffix);
   }
   return False;
 }
@@ -1405,29 +1442,34 @@ void RTSPClientConnection
 ::changeClientInputSocket(const int newSocketNum, ServerTLSState const* newTLSState,
 			  UsageEnvironment &new_env, unsigned char const* extraData, unsigned extraDataSize) {
   new_env.taskScheduler().assertSameThread();
-  if (fClientInputSocket != fOurSocket) abort();
-    // fClientInputSocket will be excluded from select() and handling, but still be used for writing.
-    // We will get no client disconnections from fClientInputSocket, perhaps EPIPE when writing after the client has closed.
+  if (getClientInputSocket() != getClientOutputSocket()) {
+    new_env << "FATAL: RTSPClientConnection(" << getId() << ")::changeClientInputSocket(" << newSocketNum << "): "
+               "input socket(" << getClientInputSocket() << ") and output socket(" << getClientOutputSocket() << ") are different, "
+               "refusing to accomodate a third socket\n";
+    abort();
+  }
+    // getClientInputSocket() will be excluded from select() and handling, but still be used for writing.
+    // We will get no client disconnections from getClientInputSocket(), perhaps EPIPE when writing after the client has closed.
     // Reading will be done from newSocketNum, which will be select()ed and handled.
     // This is the way of http(s) tunneling: 2 connections(=sockets), one for input, one for output.
   if (&envir() == &new_env) {
-    new_env.taskScheduler().disableBackgroundHandling(fClientInputSocket);
-    new_env << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << newSocketNum << "): "
-               "disabled handling for " << fClientInputSocket << " in this same thread (but keeping the socket because we need it for writing)\n";
+    new_env.taskScheduler().disableBackgroundHandling(getClientOutputSocket());
+    new_env << "RTSPClientConnection(" << getId() << "," << getClientOutputSocket() << ")::changeClientInputSocket(" << newSocketNum << "): "
+               "disabled handling for " << getClientOutputSocket() << " in this same thread (but keeping the socket because we need it for writing)\n";
     new_env.taskScheduler().setBackgroundHandling(newSocketNum, SOCKET_READABLE|SOCKET_EXCEPTION,
        [&env=new_env,self=weak_from_this()](int) {
          auto c(self.lock());
          if (c) std::static_pointer_cast<RTSPClientConnection>(c)->incomingRequestHandler();
          else env << "WARNING: RTSPClientConnection::changeClientInputSocket::l: this would have crashed\n";
        });
-    new_env << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << newSocketNum << "): "
+    new_env << "RTSPClientConnection(" << getId() << "," << getClientOutputSocket() << ")::changeClientInputSocket(" << newSocketNum << "): "
                "enabled handling for " << newSocketNum << " in this same thread\n";
     // Change the socket number:
-    fClientInputSocket = newSocketNum;
+    setClientInputSocket(newSocketNum);
     // Change the TLS state:
 #ifndef NO_OPENSSL
     if (fPOSTSocketTLS.isOpen()) {
-      new_env << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << newSocketNum << "): "
+      new_env << "RTSPClientConnection(" << getId() << "," << getClientOutputSocket() << ")::changeClientInputSocket(" << newSocketNum << "): "
                  "WARNING: assigning state to fPOSTSocketTLS although it has already been setup\n";
     }
 #endif
@@ -1443,13 +1485,13 @@ void RTSPClientConnection
         }
         handleRequestBytes(extraDataSize);
       } else {
-        envir() << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << newSocketNum << ")::l: "
+        envir() << "RTSPClientConnection(" << getId() << "," << getClientOutputSocket() << ")::changeClientInputSocket(" << newSocketNum << ")::l: "
                    "BIG WARNING: discarding " << extraDataSize << " bytes of request data because buffer has only " << fRequestBufferBytesLeft << " free bytes\n";
       }
     }
   } else {
     new_env.taskScheduler().disableBackgroundHandling(newSocketNum);
-    new_env << "RTSPClientConnection(" << getId() << "," << fOurSocket << ")::changeClientInputSocket(" << newSocketNum << "): "
+    new_env << "RTSPClientConnection(" << getId() << "," << getClientOutputSocket() << ")::changeClientInputSocket(" << newSocketNum << "): "
                "disabled handling for " << newSocketNum << " in the new thread " << new_env.taskScheduler().my_thread_id
             << ", and scheduling enabling of handling into the old thread " << envir().taskScheduler().my_thread_id << "\n";
       // access and copy extraData in the new thread:
@@ -1469,9 +1511,9 @@ void RTSPClientConnection
           return;
         }
         envi.taskScheduler().assertSameThread();
-        envi.taskScheduler().disableBackgroundHandling(self->fClientInputSocket);
-        envi << "RTSPClientConnection(" << self->getId() << "," << self->fOurSocket << ")::changeClientInputSocket(" << newSocketNum << "): "
-                "disabled handling for " << self->fClientInputSocket << " in the old thread " << envi.taskScheduler().my_thread_id
+        envi.taskScheduler().disableBackgroundHandling(self->getClientOutputSocket());
+        envi << "RTSPClientConnection(" << self->getId() << "," << self->getClientOutputSocket() << ")::changeClientInputSocket(" << newSocketNum << "): "
+                "disabled handling for " << self->getClientOutputSocket() << " in the old thread " << envi.taskScheduler().my_thread_id
              << " (but keeping the socket because we need it for writing)\n";
         envi.taskScheduler().setBackgroundHandling(newSocketNum, SOCKET_READABLE|SOCKET_EXCEPTION,
           [&env=envi,weak_self2=weak_self](int) {
@@ -1479,14 +1521,14 @@ void RTSPClientConnection
             if (self) self->incomingRequestHandler();
             else env << "WARNING: RTSPClientConnection::changeClientInputSocket::l::l: this would have crashed\n";
           });
-        envi << "RTSPClientConnection(" << self->getId() << "," << self->fOurSocket << ")::changeClientInputSocket(" << newSocketNum << ")::l: "
+        envi << "RTSPClientConnection(" << self->getId() << "," << self->getClientOutputSocket() << ")::changeClientInputSocket(" << newSocketNum << ")::l: "
                 "enabled incoming request handling for " << newSocketNum << " in the old thread " << envi.taskScheduler().my_thread_id << "\n";
         // Change the socket number:
-        self->fClientInputSocket = newSocketNum;
+        self->setClientInputSocket(newSocketNum);
         // Change the TLS state:
 #ifndef NO_OPENSSL
         if (self->fPOSTSocketTLS.isOpen()) {
-          envi << "RTSPClientConnection(" << self->getId() << "," << self->fOurSocket << ")::changeClientInputSocket(" << newSocketNum << "): "
+          envi << "RTSPClientConnection(" << self->getId() << "," << self->getClientOutputSocket() << ")::changeClientInputSocket(" << newSocketNum << "): "
                   "WARNING: assigning state to fPOSTSocketTLS although it has already been setup\n";
         }
 #endif
@@ -1504,7 +1546,7 @@ void RTSPClientConnection
             }
             self->handleRequestBytes(extraDataSize);
           } else {
-            envi << "RTSPClientConnection(" << self->getId() << "," << self->fOurSocket << ")::changeClientInputSocket(" << newSocketNum << ")::l: "
+            envi << "RTSPClientConnection(" << self->getId() << "," << self->getClientOutputSocket() << ")::changeClientInputSocket(" << newSocketNum << ")::l: "
                     "BIG WARNING: discarding " << extraDataSize << " bytes of request data because buffer has only " << self->fRequestBufferBytesLeft << " free bytes\n";
           }
         }
@@ -1805,7 +1847,7 @@ void RTSPClientSession
 			 clientRTPPortNum, clientRTCPPortNum,
 			 rtpChannelId, rtcpChannelId);
     if ((streamingMode == RTP_TCP && rtpChannelId == 0xFF) ||
-        (streamingMode != RTP_TCP && our_client_connection->getClientOutputSocket() != our_client_connection->fClientInputSocket)) {
+        (streamingMode != RTP_TCP && our_client_connection->getClientOutputSocket() != our_client_connection->getClientInputSocket())) {
       // An anomolous situation, caused by a buggy client.  Either:
       //     1/ TCP streaming was requested, but with no "interleaving=" fields.  (QuickTime Player sometimes does this.), or
       //     2/ TCP streaming was not requested, but we're doing RTSP-over-HTTP tunneling (which implies TCP streaming).
@@ -1862,7 +1904,7 @@ void RTSPClientSession
     // Make sure that we transmit on the same interface that's used by the client
     // (in case we're a multi-homed server):
     struct sockaddr_storage sourceAddr; SOCKLEN_T namelen = sizeof sourceAddr;
-    getsockname(our_client_connection->fClientInputSocket, (struct sockaddr*)&sourceAddr, &namelen);
+    getsockname(our_client_connection->getClientInputSocket(), (struct sockaddr*)&sourceAddr, &namelen);
     
     subsession->getStreamParameters(fOurSessionId, our_client_connection->fClientAddr,
 				    clientRTPPort, clientRTCPPort,
@@ -2072,7 +2114,7 @@ void RTSPClientSession
 		 ServerMediaSubsession* subsession, char const* fullRequestStr) {
   envir().taskScheduler().assertSameThread();
   char* rtspURL
-    = getOurRTSPServer().rtspURL(fOurServerMediaSession.get(), ourClientConnection.fClientInputSocket);
+    = getOurRTSPServer().rtspURL(fOurServerMediaSession.get(), ourClientConnection.getClientInputSocket());
   unsigned rtspURLSize = strlen(rtspURL);
   
   // Parse the client's "Scale:" header, if any:
