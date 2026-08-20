@@ -33,8 +33,6 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <Groupsock.hh>
 #endif
 
-#include "GenericMediaServer.hh"
-
 #include <functional>
 
 class RTSPClient;

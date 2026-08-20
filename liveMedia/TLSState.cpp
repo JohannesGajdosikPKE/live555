@@ -60,14 +60,6 @@ int TLSState::read(u_int8_t* buffer, unsigned bufferSize) {
 #endif
 }
 
-void TLSState::nullify() {
-#ifndef NO_OPENSSL
-  isNeeded = fHasBeenSetup = False;
-  fCtx = NULL;
-  fCon = NULL;
-#endif
-}
-
 #ifndef NO_OPENSSL
 void TLSState::initLibrary() {
   static Boolean SSLLibraryHasBeenInitialized = False;

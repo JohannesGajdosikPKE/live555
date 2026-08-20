@@ -58,15 +58,15 @@ void ServerTLSState
 #endif
 }
 
-void ServerTLSState::assignStateFrom(ServerTLSState const& from) {
+void ServerTLSState::assignStateFrom(ServerTLSState &from) {
 #ifndef NO_OPENSSL
-  isNeeded = from.isNeeded;
-  fHasBeenSetup = from.fHasBeenSetup;
-  fCtx = from.fCtx;
-  fCon = from.fCon;
+  isNeeded = from.isNeeded; from.isNeeded = False;
+  fHasBeenSetup = from.fHasBeenSetup; from.fHasBeenSetup = False;
+  fCtx = from.fCtx; from.fCtx = nullptr;
+  fCon = from.fCon; from.fCon = nullptr;
 
-  fCertificateFileName = from.fCertificateFileName;
-  fPrivateKeyFileName = from.fPrivateKeyFileName;
+  fCertificateFileName = from.fCertificateFileName; from.fCertificateFileName = nullptr;
+  fPrivateKeyFileName = from.fPrivateKeyFileName; from.fPrivateKeyFileName = nullptr;
 #endif
 }
 
@@ -663,7 +663,7 @@ ClientConnection
 ::ClientConnection(UsageEnvironment &threaded_env, GenericMediaServer& ourServer, int clientSocket, struct sockaddr_storage const& clientAddr, Boolean useTLS)
   : threaded_env(threaded_env), fOurServer(ourServer), id(GenerateId()), fOurSocket(clientSocket), fClientAddr(clientAddr), fTLS(threaded_env) {
   envir().taskScheduler().assertSameThread();
-  fInputTLS = fOutputTLS = &fTLS;
+  fInputTLS = &fTLS;
     char peer_host_str[INET6_ADDRSTRLEN + 1];
     char peer_port_str[7 + 1];
     if (getnameinfo((struct sockaddr*)&clientAddr, sizeof(struct sockaddr_storage),

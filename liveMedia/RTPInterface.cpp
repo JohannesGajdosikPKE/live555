@@ -21,7 +21,6 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // Implementation
 
 #include "RTPInterface.hh"
-#include "GenericMediaServer.hh"
 #include <GroupsockHelper.hh>
 #include <atomic>
 #include <memory>

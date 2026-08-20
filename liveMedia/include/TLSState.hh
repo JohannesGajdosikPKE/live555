@@ -40,8 +40,6 @@ public:
 
   int write(const char* data, unsigned count);
   int read(u_int8_t* buffer, unsigned bufferSize);
-
-  void nullify(); // clear the state so that the destructor will have no effect
 #ifndef NO_OPENSSL
   bool isOpen(void) const {return fCon;}
 #endif

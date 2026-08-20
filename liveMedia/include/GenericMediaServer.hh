@@ -52,7 +52,7 @@ public:
   virtual ~ServerTLSState();
 
   void setCertificateAndPrivateKeyFileNames(char const* certFileName, char const* privKeyFileName);
-  void assignStateFrom(ServerTLSState const& from);
+  void assignStateFrom(ServerTLSState &from);
 
   int accept(int socketNum); // returns: <0 (error), 0 (pending), >0 (success)
 
@@ -104,7 +104,6 @@ protected:
     // Optional support for TLS:
   ServerTLSState fTLS;
   ServerTLSState* fInputTLS; // by default, just points to "fTLS", but subclasses may change
-  ServerTLSState* fOutputTLS; // ditto
 };
 
 // The state of an individual client session (using one or more sequential TCP connections) handled by a server:

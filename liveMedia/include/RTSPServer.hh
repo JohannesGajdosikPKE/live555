@@ -108,8 +108,8 @@ protected:
   void closeSocketsRTSP();
   void handleAlternativeRequestByte1(u_int8_t requestByte);
   Boolean authenticationOK(char const* cmdName, char const* urlSuffix, char const* fullRequestStr);
-  void changeClientInputSocket(int newSocketNum, ServerTLSState const* newTLSState,
-                               UsageEnvironment &new_env, unsigned char const* extraData, unsigned extraDataSize);
+  void changeClientInputSocket(int newSocketNum, ServerTLSState* newTLSState,
+                               unsigned char const* extraData, unsigned extraDataSize);
     // used to implement RTSP-over-HTTP tunneling
 #ifdef IMPLEMENT_REGISTER_COMMAND
   static void continueHandlingREGISTER(ParamsForREGISTER* params);
@@ -130,6 +130,7 @@ protected:
   int getClientOutputSocket(void) const {return fClientOutputSocket;}
   int fClientOutputSocket;
   ServerTLSState fPOSTSocketTLS; // used only for RTSP-over-HTTPS
+  ServerTLSState* fOutputTLS; // may point to fTLS or fPOSTSocketTLS
   int fAddressFamily;
   Boolean fIsActive;
   unsigned char* fLastCRLF;
@@ -310,11 +311,6 @@ protected:
 public: // redefined virtual functions
   virtual Boolean isRTSPServer() const;
   virtual void addServerMediaSession(const std::shared_ptr<ServerMediaSession> &serverMediaSession);
-
-public: // should be protected, but some old compilers complain otherwise
-//  class RTSPClientSession; // forward
-//  using GenericMediaServer::getClientConnection;
-
 
 protected: // redefined virtual functions
   // If you subclass "RTSPClientConnection", then you must also redefine this virtual function in order
